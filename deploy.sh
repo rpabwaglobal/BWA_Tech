@@ -147,20 +147,5 @@ echo " │  Firewall:   se outros PCs não acessarem: sudo ufw allow ${APP_PORT}
 echo " └─────────────────────────────────────────────────────────────────┘"
 echo ""
 
-read -r -p "  Abrir no navegador agora? [S/n]: " ABRIR
-case "${ABRIR:-s}" in
-    [sS]|[sS][iI][mM]) 
-        if command -v xdg-open >/dev/null 2>&1; then
-            xdg-open "http://localhost:${APP_PORT}" 2>/dev/null || true
-        elif command -v sensible-browser >/dev/null 2>&1; then
-            sensible-browser "http://localhost:${APP_PORT}" 2>/dev/null || true
-        else
-            echo "  Abra manualmente: http://localhost:${APP_PORT}"
-        fi
-        ;;
-    *) ;;
-esac
-echo ""
-echo "  Pressione Enter para sair..."
-read -r
+# Encerrar sem abrir navegador nem pausar a sessão (útil para uso via SSH/CI)
 exit 0
