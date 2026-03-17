@@ -167,15 +167,5 @@ echo  └───────────────────────�
 color 07
 echo.
 
-set /p "ABRIR=  Abrir no navegador agora? [S/n]: "
-if /i "%ABRIR%"=="" goto do_open
-if /i "%ABRIR%"=="s" goto do_open
-if /i "%ABRIR%"=="sim" goto do_open
-goto end
-:do_open
-start "" "http://localhost:%APP_PORT%"
-:end
-echo.
-echo  Pressione qualquer tecla para sair...
-pause >nul
+rem Encerrar sem abrir navegador nem pausar a sessão
 exit /b 0
