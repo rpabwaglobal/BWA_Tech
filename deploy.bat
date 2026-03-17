@@ -167,5 +167,3 @@ echo  └───────────────────────�
 color 07
 echo.
 
-rem Encerrar sem abrir navegador nem pausar a sessão
-exit /b 0
