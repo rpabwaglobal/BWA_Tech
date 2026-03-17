@@ -137,6 +137,12 @@ export default function Sprints() {
     return cards.filter((c) => sprintProjects.some((p) => p.id === c.projeto));
   };
 
+  // Helper para interpretar datas (YYYY-MM-DD) como datas locais (sem fuso)
+  const parseLocalDate = (dateString: string) => {
+    const [year, month, day] = dateString.split('-').map(Number);
+    return new Date(year, month - 1, day);
+  };
+
   // Calcular estatísticas dos cards de uma sprint
   const getSprintCardStats = (sprintId: string) => {
     const sprintCards = getCardsForSprint(sprintId);
@@ -149,7 +155,7 @@ export default function Sprints() {
     ).length;
     const emAtraso = sprintCards.filter((c) => {
       if (!c.data_fim) return false;
-      const dataFim = new Date(c.data_fim);
+      const dataFim = parseLocalDate(c.data_fim);
       return dataFim < today && c.status !== 'finalizado' && c.status !== 'inviabilizado';
     }).length;
 
@@ -166,10 +172,8 @@ export default function Sprints() {
     const finalizadas: Sprint[] = [];
 
     sprintsToCategorize.forEach((sprint) => {
-      const start = new Date(sprint.data_inicio);
-      const end = new Date(sprint.data_fim);
-      start.setHours(0, 0, 0, 0);
-      end.setHours(0, 0, 0, 0);
+      const start = parseLocalDate(sprint.data_inicio);
+      const end = parseLocalDate(sprint.data_fim);
 
       if (sprint.finalizada) {
         // Sempre considerar sprints marcadas como finalizadas no backend como finalizadas
