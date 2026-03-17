@@ -440,7 +440,7 @@ const CustomEdge = ({ id, sourceX, sourceY, targetX, targetY, sourcePosition, ta
             }}
             className="cursor-pointer"
           >
-            <div className="bg-white rounded-full p-1 shadow-lg border-2 border-red-500 hover:bg-red-50 transition-colors">
+            <div className="bg-[var(--color-card)] rounded-full p-1 shadow-lg border-2 border-red-500 hover:bg-[var(--color-muted)] transition-colors">
               <Trash2 className="h-4 w-4 text-red-500" />
             </div>
           </div>
@@ -1427,7 +1427,7 @@ export default function People() {
                 <span>{getRoleLabel(user.role)}</span>
           </div>
         </Badge>
-            <div className="font-medium text-sm text-black">
+            <div className="font-medium text-sm text-[var(--color-foreground)]">
               {getDisplayName(user)}
             </div>
           </div>

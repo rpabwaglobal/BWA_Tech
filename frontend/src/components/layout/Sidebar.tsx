@@ -3,6 +3,7 @@ import { useAuth } from '@/context/AuthContext';
 import { useSidebar } from '@/context/SidebarContext';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
+import { useTheme } from '@/context/ThemeContext';
 import {
   LayoutDashboard,
   Zap,
@@ -36,6 +37,7 @@ export default function Sidebar() {
   const { collapsed, toggle } = useSidebar();
   const location = useLocation();
   const { user, logout, profilePictureUrl } = useAuth();
+  const { theme } = useTheme();
 
   const getInitials = (name: string) => {
     return name.substring(0, 2).toUpperCase();
@@ -72,11 +74,15 @@ export default function Sidebar() {
     >
       <div className="flex h-full flex-col">
         {/* Header - 64px (8 * 8) */}
-        <div className="flex h-[64px] items-center justify-between border-b border-[var(--color-border)] px-[16px]">
+        <div className="flex h-[64px] items-center border-b border-[var(--color-border)] px-[16px]">
           {!collapsed && (
-            <h1 className="text-xl font-bold text-[var(--color-foreground)]">
-              BWA Tech
-            </h1>
+            <div className="flex-1 flex items-center justify-center">
+              <img
+                src={theme === 'dark' ? '/assets/bwa-white.png' : '/assets/bwa-black.png'}
+                alt="BWA Tech"
+                className="h-[28px] w-auto"
+              />
+            </div>
           )}
           <Button
             variant="ghost"

@@ -1,35 +1,41 @@
 @import "tailwindcss";
 
 @theme {
-  /* === CORES === */
-  --color-background: hsl(0 0% 98%);
-  --color-foreground: hsl(220 9% 29%);
-  
-  --color-card: hsl(0 0% 100%);
-  --color-card-foreground: hsl(220 9% 29%);
-  
-  --color-popover: hsl(0 0% 100%);
-  --color-popover-foreground: hsl(220 9% 29%);
-  
-  --color-primary: hsl(211 100% 50%);
-  --color-primary-foreground: hsl(0 0% 98%);
-  
-  --color-secondary: hsl(220 9% 96%);
-  --color-secondary-foreground: hsl(220 9% 29%);
-  
-  --color-muted: hsl(220 9% 96%);
-  --color-muted-foreground: hsl(220 9% 46%);
-  
-  --color-accent: hsl(220 9% 96%);
-  --color-accent-foreground: hsl(220 9% 29%);
-  
-  --color-destructive: hsl(0 84% 60%);
-  --color-destructive-foreground: hsl(0 0% 98%);
-  
-  --color-border: hsl(220 9% 90%);
-  --color-input: hsl(220 9% 90%);
-  --color-ring: hsl(211 100% 50%);
-  
+  /* === CORES - MODO CLARO (Material 3 inspirado) === */
+  --color-background: hsl(210 40% 98%);
+  --color-foreground: hsl(222 47% 11%);
+
+  /* Superfícies em camadas (surface-0 é o próprio background) */
+  --color-surface-0: hsl(210 40% 98%);
+  --color-surface-1: hsl(0 0% 100%);
+  --color-surface-2: hsl(210 40% 97%);
+  --color-surface-3: hsl(210 40% 96%);
+
+  --color-card: var(--color-surface-1);
+  --color-card-foreground: var(--color-foreground);
+
+  --color-popover: var(--color-surface-1);
+  --color-popover-foreground: var(--color-foreground);
+
+  --color-primary: hsl(222 84% 56%);
+  --color-primary-foreground: hsl(210 40% 98%);
+
+  --color-secondary: hsl(210 40% 96%);
+  --color-secondary-foreground: hsl(222 47% 20%);
+
+  --color-muted: hsl(214 32% 94%);
+  --color-muted-foreground: hsl(215 16% 47%);
+
+  --color-accent: hsl(210 40% 96%);
+  --color-accent-foreground: hsl(222 47% 20%);
+
+  --color-destructive: hsl(0 72% 51%);
+  --color-destructive-foreground: hsl(210 40% 98%);
+
+  --color-border: hsl(214 32% 91%);
+  --color-input: hsl(214 32% 91%);
+  --color-ring: var(--color-primary);
+
   /* === BORDER RADIUS (múltiplos de 4) === */
   --radius-sm: 4px;
   --radius-md: 8px;
@@ -49,6 +55,43 @@
   /* === SIDEBAR === */
   --sidebar-width: 256px;
   --sidebar-collapsed: 64px;
+}
+
+/* Tema escuro: aplicado quando a classe .dark estiver na raíz (html ou body) */
+.dark {
+  /* Background quase preto com leve matiz azulada (Material 3) */
+  --color-background: hsl(222 47% 5%);
+  --color-foreground: hsl(210 40% 96%);
+
+  --color-surface-0: hsl(222 47% 5%);
+  --color-surface-1: hsl(222 47% 8%);
+  --color-surface-2: hsl(222 47% 12%);
+  --color-surface-3: hsl(222 47% 16%);
+
+  --color-card: var(--color-surface-1);
+  --color-card-foreground: var(--color-foreground);
+
+  --color-popover: var(--color-surface-2);
+  --color-popover-foreground: var(--color-foreground);
+
+  --color-primary: hsl(222 84% 66%);
+  --color-primary-foreground: hsl(222 47% 10%);
+
+  --color-secondary: hsl(217 33% 17%);
+  --color-secondary-foreground: hsl(210 40% 96%);
+
+  --color-muted: hsl(215 25% 16%);
+  --color-muted-foreground: hsl(215 20% 72%);
+
+  --color-accent: hsl(217 33% 20%);
+  --color-accent-foreground: hsl(210 40% 96%);
+
+  --color-destructive: hsl(0 72% 60%);
+  --color-destructive-foreground: hsl(210 40% 98%);
+
+  --color-border: hsl(215 25% 22%);
+  --color-input: hsl(215 25% 22%);
+  --color-ring: var(--color-primary);
 }
 
 @layer base {

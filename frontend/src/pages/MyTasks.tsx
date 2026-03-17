@@ -241,7 +241,7 @@ function TaskCard({
   };
 
   return (
-    <div className="bg-white rounded-lg border border-[var(--color-border)] shadow-sm p-4 hover:shadow-md transition-shadow">
+    <div className="bg-[var(--color-card)] rounded-lg border border-[var(--color-border)] shadow-sm p-4 hover:shadow-md transition-shadow">
       {/* Header */}
       <div className="mb-3">
         <h3

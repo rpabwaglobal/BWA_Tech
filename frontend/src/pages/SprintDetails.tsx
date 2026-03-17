@@ -1678,15 +1678,15 @@ export default function SprintDetails() {
   const getPriorityColor = (prioridade: string) => {
     switch (prioridade) {
       case 'absoluta':
-        return 'border-l-red-600 bg-red-50/50';
+        return 'border-l-red-600 bg-red-50/50 dark:border-l-red-400 dark:bg-red-500/20';
       case 'alta':
-        return 'border-l-orange-500 bg-orange-50/50';
+        return 'border-l-orange-500 bg-orange-50/50 dark:border-l-orange-400 dark:bg-orange-500/20';
       case 'media':
-        return 'border-l-yellow-500 bg-yellow-50/50';
+        return 'border-l-yellow-500 bg-yellow-50/50 dark:border-l-amber-300 dark:bg-amber-400/20';
       case 'baixa':
-        return 'border-l-green-500 bg-green-50/50';
+        return 'border-l-green-500 bg-green-50/50 dark:border-l-emerald-400 dark:bg-emerald-500/20';
       default:
-        return 'border-l-gray-300';
+        return 'border-l-gray-300 dark:border-l-slate-500';
     }
   };
 
