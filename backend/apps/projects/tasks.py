@@ -201,14 +201,43 @@ def verificar_fechamento_automatico_semana():
 @shared_task
 def finalizar_sprints_por_data():
     """
-    Finaliza sprints cuja data_fim já passou: executa a replicação de projetos
-    com cards não entregues para a próxima sprint. Roda uma vez por dia (Beat).
+    Finaliza sprints automaticamente apenas quando a data_fim JÁ PASSOU
+    E o horário limite do dia também foi alcançado.
+
+    - Usa o campo global WeeklyPriorityConfig.horario_limite como horário de corte.
+    - Antes disso, mesmo após meia-noite, a sprint continua aberta.
+    - A sprint também pode ser finalizada manualmente via botão na página da sprint.
     """
-    hoje = timezone.now().date()
-    sprints = Sprint.objects.filter(data_fim__lt=hoje, finalizada=False).order_by('data_fim')
+    from apps.projects.models import WeeklyPriorityConfig
+    from datetime import datetime
+
+    agora = timezone.localtime()  # datetime com timezone
+    hoje = agora.date()
+
+    # Horário limite configurado globalmente
+    config = WeeklyPriorityConfig.get_config()
+    horario_limite = config.horario_limite  # time
+
+    # Considerar sprints cuja data_fim é ANTES de hoje,
+    # OU data_fim é hoje mas o horário limite já passou
+    sprints = Sprint.objects.filter(finalizada=False).order_by('data_fim')
+
     processadas = 0
     sem_destino = 0
+
     for sprint in sprints:
+        data_fim = sprint.data_fim
+
+        # Montar datetime limite da sprint (data_fim + horario_limite)
+        limite_dt = timezone.make_aware(
+            datetime.combine(data_fim, horario_limite),
+            timezone.get_current_timezone(),
+        )
+
+        # Só finalizar automaticamente se já passou do limite
+        if agora < limite_dt:
+            continue
+
         result = finalizar_sprint_replicacao(sprint, criado_por_user=None)
         if result is None:
             sprint.finalizada = True
@@ -220,4 +249,5 @@ def finalizar_sprints_por_data():
             sem_destino += 1
         else:
             processadas += 1
+
     return f'Sprints finalizadas por data: {processadas} replicadas, {sem_destino} sem destino.'
