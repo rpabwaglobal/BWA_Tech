@@ -146,6 +146,3 @@ echo " │  Parar:      docker compose down                                 │"
 echo " │  Firewall:   se outros PCs não acessarem: sudo ufw allow ${APP_PORT}/tcp  │"
 echo " └─────────────────────────────────────────────────────────────────┘"
 echo ""
-
-# Encerrar sem abrir navegador nem pausar a sessão (útil para uso via SSH/CI)
-exit 0
