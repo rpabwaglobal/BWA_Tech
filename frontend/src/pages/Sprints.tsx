@@ -159,6 +159,8 @@ export default function Sprints() {
   // Categorizar sprints
   const categorizeSprints = (sprintsToCategorize: Sprint[]) => {
     const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
     const emAndamento: Sprint[] = [];
     const planejadas: Sprint[] = [];
     const finalizadas: Sprint[] = [];
@@ -166,24 +168,31 @@ export default function Sprints() {
     sprintsToCategorize.forEach((sprint) => {
       const start = new Date(sprint.data_inicio);
       const end = new Date(sprint.data_fim);
+      start.setHours(0, 0, 0, 0);
+      end.setHours(0, 0, 0, 0);
 
-      if (today >= start && today <= end) {
-        emAndamento.push(sprint);
+      if (sprint.finalizada) {
+        // Sempre considerar sprints marcadas como finalizadas no backend como finalizadas
+        finalizadas.push(sprint);
       } else if (today < start) {
+        // Não finalizada e ainda não começou
         planejadas.push(sprint);
       } else {
-        finalizadas.push(sprint);
+        // Não finalizada e já começou (mesmo que data_fim tenha passado) → Em andamento
+        emAndamento.push(sprint);
       }
     });
 
     // Ordenar planejadas por data de início (mais próximas primeiro)
-    planejadas.sort((a, b) => 
-      new Date(a.data_inicio).getTime() - new Date(b.data_inicio).getTime()
+    planejadas.sort(
+      (a, b) =>
+        new Date(a.data_inicio).getTime() - new Date(b.data_inicio).getTime()
     );
 
     // Ordenar finalizadas por data de fim (mais recentes primeiro)
-    finalizadas.sort((a, b) => 
-      new Date(b.data_fim).getTime() - new Date(a.data_fim).getTime()
+    finalizadas.sort(
+      (a, b) =>
+        new Date(b.data_fim).getTime() - new Date(a.data_fim).getTime()
     );
 
     return { emAndamento, planejadas, finalizadas };
