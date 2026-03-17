@@ -1607,19 +1607,26 @@ export default function SprintDetails() {
     const start = new Date(sprint.data_inicio);
     const end = new Date(sprint.data_fim);
 
+    if (sprint.finalizada) {
+      return { label: 'Finalizada', variant: 'success' as const };
+    }
+
     if (today < start) {
       return { label: 'Futura', variant: 'secondary' as const };
-    } else if (today > end) {
-      return { label: 'Finalizada', variant: 'success' as const };
-    } else {
+    }
+
+    if (today > end) {
+      // Data já passou, mas ainda não foi marcada como finalizada no backend
+      // Considerar "Em Andamento" até o backend marcar como finalizada
       return { label: 'Em Andamento', variant: 'default' as const };
     }
+
+    return { label: 'Em Andamento', variant: 'default' as const };
   };
 
   const isSprintFinished = (sprint: Sprint) => {
-    const today = new Date();
-    const end = new Date(sprint.data_fim);
-    return today > end;
+    // Sprint é considerada finalizada apenas quando o backend marca finalizada=True
+    return !!sprint.finalizada;
   };
 
   // Verificar se um projeto pertence a uma sprint finalizada

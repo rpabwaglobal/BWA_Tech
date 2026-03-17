@@ -694,9 +694,8 @@ export default function ProjectDetails() {
   // Verificar se a sprint está finalizada
   const isSprintFinished = (sprint: Sprint | null): boolean => {
     if (!sprint) return false;
-    const today = new Date();
-    const end = new Date(sprint.data_fim);
-    return today > end;
+    // Considerar finalizada apenas quando o backend marcar finalizada=true
+    return !!sprint.finalizada;
   };
 
   const sprintIsFinished = isSprintFinished(sprint);
