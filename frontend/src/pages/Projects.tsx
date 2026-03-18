@@ -88,6 +88,9 @@ export default function Projects() {
   const [pendingTab, setPendingTab] = useState<'demandas' | 'datas'>('demandas');
   const [dateChangeRequests, setDateChangeRequests] = useState<CardDueDateChangeRequest[]>([]);
   const [loadingDateChangeRequests, setLoadingDateChangeRequests] = useState(false);
+
+  const canEvaluate =
+    user?.role === 'supervisor' || user?.role === 'gerente' || user?.role === 'admin';
   
   const [alertDialogOpen, setAlertDialogOpen] = useState(false);
   const [alertMessage, setAlertMessage] = useState('');
@@ -129,8 +132,8 @@ export default function Projects() {
       setSprints(Array.isArray(sprintsData) ? sprintsData : []);
       setCards(Array.isArray(cardsData) ? cardsData : []);
       setUsers(Array.isArray(usersData) ? usersData : []);
-      // carregar solicitações pendentes de mudança de data para supervisores
-      if (user?.role === 'supervisor' || user?.role === 'gerente' || user?.role === 'admin') {
+      // carregar solicitações pendentes de mudança de data para quem pode avaliar
+      if (canEvaluate) {
         setLoadingDateChangeRequests(true);
         try {
           const reqs = await cardDateChangeRequestService.list({ status: 'pending' });
@@ -721,8 +724,8 @@ export default function Projects() {
         </Button>
       </div>
 
-      {/* Painel de Pendências (Demandas vs Solicitações) - apenas supervisor/admin */}
-      {(user?.role === 'supervisor' || user?.role === 'gerente' || user?.role === 'admin') && (
+      {/* Painel de Pendências (Demandas vs Solicitações) - visível para todos; ações restritas */}
+      {user && (
         <Card className="mb-[24px]">
           <Tabs value={pendingTab} onValueChange={(v) => setPendingTab(v as any)}>
             <CardHeader>
@@ -738,12 +741,14 @@ export default function Projects() {
                   >
                     Demandas a avaliar ({sugestoesCards.length})
                   </TabsTrigger>
-                  <TabsTrigger
-                    value="datas"
-                    className="rounded-[8px] border border-[var(--color-border)] bg-transparent text-[var(--color-muted-foreground)] px-3 py-2 data-[state=active]:bg-[var(--color-background)] data-[state=active]:text-[var(--color-foreground)] data-[state=active]:shadow-none data-[state=active]:font-semibold"
-                  >
-                    Solicitações de data ({dateChangeRequests.length})
-                  </TabsTrigger>
+                  {canEvaluate && (
+                    <TabsTrigger
+                      value="datas"
+                      className="rounded-[8px] border border-[var(--color-border)] bg-transparent text-[var(--color-muted-foreground)] px-3 py-2 data-[state=active]:bg-[var(--color-background)] data-[state=active]:text-[var(--color-foreground)] data-[state=active]:shadow-none data-[state=active]:font-semibold"
+                    >
+                      Solicitações de data ({dateChangeRequests.length})
+                    </TabsTrigger>
+                  )}
                 </TabsList>
               </div>
             </CardHeader>
@@ -807,17 +812,19 @@ export default function Projects() {
                                 </Button>
                               </>
                             )}
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                openEvaluationDialog(card);
-                              }}
-                            >
-                              <Eye className="h-4 w-4 mr-2" />
-                              Avaliar
-                            </Button>
+                            {canEvaluate && (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  openEvaluationDialog(card);
+                                }}
+                              >
+                                <Eye className="h-4 w-4 mr-2" />
+                                Avaliar
+                              </Button>
+                            )}
                           </div>
                         </div>
                       );
@@ -826,50 +833,52 @@ export default function Projects() {
                 )}
               </TabsContent>
 
-              <TabsContent value="datas">
-                {loadingDateChangeRequests ? (
-                  <div className="flex items-center justify-center py-8 text-[var(--color-muted-foreground)]">
-                    <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                    Carregando solicitações...
-                  </div>
-                ) : dateChangeRequests.length === 0 ? (
-                  <p className="text-center py-[32px] text-[var(--color-muted-foreground)]">
-                    Não há solicitações pendentes no momento.
-                  </p>
-                ) : (
-                  <div className="space-y-[8px] max-h-[400px] overflow-y-auto pr-2">
-                    {dateChangeRequests.map((req) => (
-                      <div
-                        key={req.id}
-                        className="flex items-center justify-between gap-3 p-[12px] border border-[var(--color-border)] rounded-[8px] hover:bg-[var(--color-accent)] transition-colors min-w-0"
-                      >
-                        <div className="flex-1 min-w-0">
-                          <div className="font-medium text-[var(--color-foreground)] truncate">
-                            {req.card_detail?.nome || `Card #${req.card}`}
-                          </div>
-                          <div className="text-sm text-[var(--color-muted-foreground)] mt-1">
-                            Solicitante: {req.requested_by_name || req.requested_by}
-                          </div>
-                          <div className="text-sm text-[var(--color-muted-foreground)] mt-1">
-                            Nova data: {formatDate(req.requested_date)}
-                          </div>
-                          {req.reason && (
-                            <div className="text-sm text-[var(--color-muted-foreground)] mt-1 line-clamp-2">
-                              Motivo: {req.reason}
+              {canEvaluate && (
+                <TabsContent value="datas">
+                  {loadingDateChangeRequests ? (
+                    <div className="flex items-center justify-center py-8 text-[var(--color-muted-foreground)]">
+                      <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                      Carregando solicitações...
+                    </div>
+                  ) : dateChangeRequests.length === 0 ? (
+                    <p className="text-center py-[32px] text-[var(--color-muted-foreground)]">
+                      Não há solicitações pendentes no momento.
+                    </p>
+                  ) : (
+                    <div className="space-y-[8px] max-h-[400px] overflow-y-auto pr-2">
+                      {dateChangeRequests.map((req) => (
+                        <div
+                          key={req.id}
+                          className="flex items-center justify-between gap-3 p-[12px] border border-[var(--color-border)] rounded-[8px] hover:bg-[var(--color-accent)] transition-colors min-w-0"
+                        >
+                          <div className="flex-1 min-w-0">
+                            <div className="font-medium text-[var(--color-foreground)] truncate">
+                              {req.card_detail?.nome || `Card #${req.card}`}
                             </div>
-                          )}
+                            <div className="text-sm text-[var(--color-muted-foreground)] mt-1">
+                              Solicitante: {req.requested_by_name || req.requested_by}
+                            </div>
+                            <div className="text-sm text-[var(--color-muted-foreground)] mt-1">
+                              Nova data: {formatDate(req.requested_date)}
+                            </div>
+                            {req.reason && (
+                              <div className="text-sm text-[var(--color-muted-foreground)] mt-1 line-clamp-2">
+                                Motivo: {req.reason}
+                              </div>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-2 shrink-0">
+                            <Button variant="outline" onClick={() => handleRejectDateChange(req.id)}>
+                              Recusar
+                            </Button>
+                            <Button onClick={() => handleApproveDateChange(req.id)}>Aprovar</Button>
+                          </div>
                         </div>
-                        <div className="flex items-center gap-2 shrink-0">
-                          <Button variant="outline" onClick={() => handleRejectDateChange(req.id)}>
-                            Recusar
-                          </Button>
-                          <Button onClick={() => handleApproveDateChange(req.id)}>Aprovar</Button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </TabsContent>
+                      ))}
+                    </div>
+                  )}
+                </TabsContent>
+              )}
             </CardContent>
           </Tabs>
         </Card>
@@ -1346,8 +1355,8 @@ export default function Projects() {
                 <Button type="button" variant="outline" onClick={() => setDemandViewDialogOpen(false)}>
                   Fechar
                 </Button>
-                {/* Botão Avaliar apenas para supervisores */}
-                {selectedDemand && (user?.role === 'supervisor' || user?.role === 'gerente' || user?.role === 'admin') && (
+                {/* Botão Avaliar apenas para quem pode avaliar */}
+                {selectedDemand && canEvaluate && (
                   <Button
                     type="button"
                     onClick={() => {
