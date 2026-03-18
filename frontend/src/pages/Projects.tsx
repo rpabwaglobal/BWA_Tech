@@ -723,7 +723,7 @@ export default function Projects() {
 
       {/* Painel de Pendências (Demandas vs Solicitações) - apenas supervisor/admin */}
       {(user?.role === 'supervisor' || user?.role === 'admin') && (
-        <Card className="mb-[24px]">
+        <div className="mb-[24px]">
           <Tabs value={pendingTab} onValueChange={(v) => setPendingTab(v as any)}>
             <CardHeader>
               <div className="flex items-start justify-between gap-4">
@@ -731,11 +731,17 @@ export default function Projects() {
                   <CardTitle>Pendências</CardTitle>
                   <CardDescription>Demandas a avaliar e solicitações de alteração de datas</CardDescription>
                 </div>
-                <TabsList className="shrink-0">
-                  <TabsTrigger value="demandas">
+                <TabsList className="shrink-0 bg-transparent p-0 h-auto">
+                  <TabsTrigger
+                    value="demandas"
+                    className="rounded-[8px] border border-[var(--color-border)] bg-transparent text-[var(--color-muted-foreground)] px-3 py-2 data-[state=active]:bg-[var(--color-background)] data-[state=active]:text-[var(--color-foreground)] data-[state=active]:shadow-none data-[state=active]:font-semibold"
+                  >
                     Demandas a avaliar ({sugestoesCards.length})
                   </TabsTrigger>
-                  <TabsTrigger value="datas">
+                  <TabsTrigger
+                    value="datas"
+                    className="rounded-[8px] border border-[var(--color-border)] bg-transparent text-[var(--color-muted-foreground)] px-3 py-2 data-[state=active]:bg-[var(--color-background)] data-[state=active]:text-[var(--color-foreground)] data-[state=active]:shadow-none data-[state=active]:font-semibold"
+                  >
                     Solicitações de data ({dateChangeRequests.length})
                   </TabsTrigger>
                 </TabsList>
@@ -866,7 +872,7 @@ export default function Projects() {
               </TabsContent>
             </CardContent>
           </Tabs>
-        </Card>
+        </div>
       )}
 
       {/* Lista de Projetos */}
