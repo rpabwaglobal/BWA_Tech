@@ -2,6 +2,26 @@ from django.db import models
 from django.conf import settings
 
 
+class GeekDayConfig(models.Model):
+    """
+    Configuração global do GeekDay.
+
+    Usado para manter o "ciclo" atual do sorteio, permitindo resetar o sorteio
+    sem apagar o histórico.
+    """
+    current_cycle = models.PositiveIntegerField(default=1, verbose_name='Ciclo Atual')
+    updated_at = models.DateTimeField(auto_now=True, verbose_name='Atualizado em')
+
+    class Meta:
+        verbose_name = 'Configuração Geek Day'
+        verbose_name_plural = 'Configurações Geek Day'
+
+    @classmethod
+    def get_config(cls):
+        config, _ = cls.objects.get_or_create(pk=1)
+        return config
+
+
 class GeekDayDraw(models.Model):
     """Modelo para rastrear sorteios do Geek Day"""
     usuario = models.ForeignKey(
@@ -22,6 +42,11 @@ class GeekDayDraw(models.Model):
         auto_now_add=True,
         verbose_name='Data do Sorteio'
     )
+    data_apresentacao = models.DateField(
+        blank=True,
+        null=True,
+        verbose_name='Data de Apresentação'
+    )
     marcado_manual = models.BooleanField(
         default=False,
         verbose_name='Marcado Manualmente',
@@ -31,6 +56,11 @@ class GeekDayDraw(models.Model):
         blank=True,
         null=True,
         verbose_name='Observações'
+    )
+    cycle = models.PositiveIntegerField(
+        default=1,
+        verbose_name='Ciclo',
+        help_text='Ciclo do sorteio para permitir reset sem apagar histórico'
     )
 
     class Meta:

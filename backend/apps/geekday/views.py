@@ -5,7 +5,7 @@ from rest_framework.permissions import IsAuthenticated
 from django.db.models import Q, Count, Max
 from django.utils import timezone
 from django.conf import settings
-from .models import GeekDayDraw
+from .models import GeekDayDraw, GeekDayConfig
 from .serializers import GeekDayDrawSerializer, GeekDayUserStatusSerializer
 
 
@@ -18,6 +18,9 @@ class GeekDayDrawViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         return GeekDayDraw.objects.select_related('usuario', 'sorteado_por').all()
+
+    def _current_cycle(self) -> int:
+        return GeekDayConfig.get_config().current_cycle
 
     @action(detail=False, methods=['get'])
     def users_status(self, request):
@@ -42,11 +45,11 @@ class GeekDayDrawViewSet(viewsets.ModelViewSet):
         )
         total_sorteios_dict = {item['usuario']: item['total'] for item in total_sorteios}
         
-        # Verificar se já foi sorteado (último sorteio existe e não foi resetado)
-        # Consideramos que um usuário "já foi sorteado" se tem pelo menos um sorteio
-        # e o último sorteio não foi há mais de X dias (ou sempre, dependendo da regra)
-        # Por enquanto, vamos considerar que se tem sorteio, já foi sorteado
-        ja_sorteado_ids = set(ultimos_sorteios_dict.keys())
+        # Já sorteado no ciclo atual (reset não apaga histórico)
+        cycle = self._current_cycle()
+        ja_sorteado_ids = set(
+            GeekDayDraw.objects.filter(cycle=cycle).values_list('usuario_id', flat=True).distinct()
+        )
         
         result = []
         for user in users:
@@ -87,8 +90,11 @@ class GeekDayDrawViewSet(viewsets.ModelViewSet):
         
         try:
             # Buscar usuários que ainda não foram sorteados (exceto admin)
-            # Usar a mesma lógica do users_status para consistência
-            usuarios_ja_sorteados_ids = list(GeekDayDraw.objects.values_list('usuario_id', flat=True).distinct())
+            # Usar a mesma lógica do users_status para consistência (por ciclo)
+            cycle = self._current_cycle()
+            usuarios_ja_sorteados_ids = list(
+                GeekDayDraw.objects.filter(cycle=cycle).values_list('usuario_id', flat=True).distinct()
+            )
             
             # Buscar todos os usuários exceto admin
             todos_usuarios = User.objects.exclude(role='admin')
@@ -131,7 +137,9 @@ class GeekDayDrawViewSet(viewsets.ModelViewSet):
             draw = GeekDayDraw.objects.create(
                 usuario=usuario_sorteado,
                 sorteado_por=request.user,
-                marcado_manual=False
+                marcado_manual=False,
+                data_apresentacao=request.data.get('data_apresentacao') or None,
+                cycle=cycle,
             )
             
             serializer = self.get_serializer(draw)
@@ -160,6 +168,7 @@ class GeekDayDrawViewSet(viewsets.ModelViewSet):
         
         usuario_id = request.data.get('usuario_id')
         observacoes = request.data.get('observacoes', '')
+        data_apresentacao = request.data.get('data_apresentacao') or None
         
         if not usuario_id:
             return Response(
@@ -190,11 +199,14 @@ class GeekDayDrawViewSet(viewsets.ModelViewSet):
             )
         
         # Criar registro
+        cycle = self._current_cycle()
         draw = GeekDayDraw.objects.create(
             usuario=usuario,
             sorteado_por=request.user,
             marcado_manual=True,
-            observacoes=observacoes
+            observacoes=observacoes,
+            data_apresentacao=data_apresentacao,
+            cycle=cycle,
         )
         
         serializer = self.get_serializer(draw)
@@ -229,8 +241,9 @@ class GeekDayDrawViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_404_NOT_FOUND
             )
         
-        # Deletar o último sorteio do usuário
-        ultimo_sorteio = GeekDayDraw.objects.filter(usuario=usuario).order_by('-data_sorteio').first()
+        # Deletar o último sorteio do usuário no ciclo atual
+        cycle = self._current_cycle()
+        ultimo_sorteio = GeekDayDraw.objects.filter(usuario=usuario, cycle=cycle).order_by('-data_sorteio').first()
         
         if not ultimo_sorteio:
             return Response(
@@ -267,10 +280,12 @@ class GeekDayDrawViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_403_FORBIDDEN
             )
         
-        count = GeekDayDraw.objects.all().delete()[0]
+        config = GeekDayConfig.get_config()
+        config.current_cycle = config.current_cycle + 1
+        config.save(update_fields=['current_cycle', 'updated_at'])
         return Response({
-            'message': f'{count} registro(s) de sorteio removido(s).',
-            'count': count
+            'message': 'Sorteios resetados com sucesso (histórico preservado).',
+            'cycle': config.current_cycle
         })
 
     @action(detail=False, methods=['get'])
@@ -278,6 +293,7 @@ class GeekDayDrawViewSet(viewsets.ModelViewSet):
         """
         Retorna histórico de sorteios
         """
+        # Histórico completo, mais recente -> mais antigo
         queryset = self.get_queryset().order_by('-data_sorteio')
         serializer = self.get_serializer(queryset, many=True)
         return Response(serializer.data)

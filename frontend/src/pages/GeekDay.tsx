@@ -9,6 +9,7 @@ import { geekdayService, type GeekDayUserStatus, type GeekDayDraw } from '@/serv
 import { Loader2, Check, RotateCcw, Trophy } from 'lucide-react';
 import { formatDate } from '@/lib/dateUtils';
 import { cn } from '@/lib/utils';
+import { DateInput } from '@/components/ui/date-input';
 import { PrizeWheel } from '@mertercelik/react-prize-wheel';
 import type { Sector, PrizeWheelRef } from '@mertercelik/react-prize-wheel';
 import '@mertercelik/react-prize-wheel/style.css';
@@ -49,6 +50,7 @@ export default function GeekDay() {
   const [showResetDialog, setShowResetDialog] = useState(false);
   const [resetting, setResetting] = useState(false);
   const [confirmingWinner, setConfirmingWinner] = useState(false);
+  const [winnerPresentationDate, setWinnerPresentationDate] = useState<string>('');
   const [activeId, setActiveId] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
   const wheelRef = useRef<PrizeWheelRef>(null);
@@ -224,6 +226,7 @@ export default function GeekDay() {
     setIsSpinning(true);
     setWinner(null);
     setShowWinnerDialog(false);
+    setWinnerPresentationDate('');
   };
 
   const handleSpinEnd = (sector: Sector) => {
@@ -236,6 +239,7 @@ export default function GeekDay() {
       // O ganhador é definido pela roleta
       setWinner(usuarioSorteado);
       setShowWinnerDialog(true);
+      setWinnerPresentationDate('');
     }
   };
 
@@ -252,13 +256,18 @@ export default function GeekDay() {
     setConfirmingWinner(true);
     try {
       // Marcar o usuário escolhido pela roleta como sorteado no backend
-      const resultado = await geekdayService.marcarComoSorteado(String(winner.id), 'Sorteado pela roleta');
+      const resultado = await geekdayService.marcarComoSorteado(
+        String(winner.id),
+        'Sorteado pela roleta',
+        winnerPresentationDate || null
+      );
       console.log('Sorteio confirmado no backend:', resultado);
       
       // Fechar o modal e limpar o winner
       setShowWinnerDialog(false);
       const winnerId = winner.id;
       setWinner(null);
+      setWinnerPresentationDate('');
       
       // Aguardar um pouco para garantir que o backend processou completamente
       await new Promise(resolve => setTimeout(resolve, 300));
@@ -280,6 +289,7 @@ export default function GeekDay() {
       // Mesmo com erro, fechar o modal
       setShowWinnerDialog(false);
       setWinner(null);
+      setWinnerPresentationDate('');
     } finally {
       setConfirmingWinner(false);
     }
@@ -834,6 +844,11 @@ export default function GeekDay() {
                             <p className="text-sm text-[var(--color-muted-foreground)]">
                               {formatDate(draw.data_sorteio)}
                             </p>
+                            {draw.data_apresentacao && (
+                              <Badge variant="outline" className="text-xs">
+                                Apresentação: {formatDate(draw.data_apresentacao)}
+                              </Badge>
+                            )}
                             {draw.marcado_manual && (
                               <Badge variant="secondary" className="text-xs">
                                 Manual
@@ -862,6 +877,7 @@ export default function GeekDay() {
           // Não permitir fechar enquanto está confirmando
           setShowWinnerDialog(false);
           setWinner(null);
+          setWinnerPresentationDate('');
         }
       }}>
         <DialogContent className="sm:max-w-md">
@@ -894,6 +910,15 @@ export default function GeekDay() {
             <p className="text-sm text-[var(--color-muted-foreground)] text-center">
               {winner && getRoleDisplayName(winner.role || 'desenvolvedor')}
             </p>
+          </div>
+          <div className="space-y-2">
+            <label className="text-sm font-medium">
+              Data de apresentação (opcional)
+            </label>
+            <DateInput
+              value={winnerPresentationDate}
+              onChange={(e) => setWinnerPresentationDate(e.target.value)}
+            />
           </div>
           <DialogFooter>
             <Button

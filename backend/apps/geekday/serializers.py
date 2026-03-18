@@ -26,7 +26,9 @@ class GeekDayDrawSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'usuario', 'usuario_name', 'usuario_profile_picture',
             'sorteado_por', 'sorteado_por_name', 'data_sorteio',
-            'marcado_manual', 'observacoes'
+            'data_apresentacao',
+            'marcado_manual', 'observacoes',
+            'cycle',
         ]
         read_only_fields = ['data_sorteio']
 
