@@ -2102,6 +2102,9 @@ export default function SprintDetails() {
           <div className="flex gap-[16px] overflow-x-auto pb-[16px] flex-1 min-h-0">
             {sprintProjects
               .filter((project) => {
+                // Ocultar projeto especial "Sugestões" do Kanban da sprint
+                if (project.nome === 'Sugestões') return false;
+
                 // Se há busca ativa, verificar se o projeto ou algum card corresponde
                 if (cardSearchQuery.trim()) {
                   const query = cardSearchQuery.toLowerCase();
