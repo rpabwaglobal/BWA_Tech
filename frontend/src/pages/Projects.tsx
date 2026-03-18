@@ -19,6 +19,7 @@ import { projectService, type Project } from '@/services/projectService';
 import { cardService, CARD_AREAS, CARD_TYPES, CARD_PRIORITIES, CARD_STATUSES, type Card as CardType } from '@/services/cardService';
 import { sprintService, type Sprint } from '@/services/sprintService';
 import { userService, type User } from '@/services/userService';
+import { kanbanStageService, type KanbanStage } from '@/services/kanbanStageService';
 import { formatDate } from '@/lib/dateUtils';
 import { Plus, FolderKanban, Calendar, User as UserIcon, CheckCircle2, Clock, XCircle, AlertCircle, Eye, Loader2, Pencil, Trash2, ArrowRight } from 'lucide-react';
 import { Avatar, AvatarImage, AvatarFallback } from '@/components/ui/avatar';
@@ -108,6 +109,12 @@ export default function Projects() {
   });
   const [projectFormLoading, setProjectFormLoading] = useState(false);
   const [projectFormError, setProjectFormError] = useState('');
+
+  // Seleção de etapas iniciais ao criar projeto (somente supervisor)
+  const DEFAULT_STAGE_KEYS_ORDER = ['a_desenvolver', 'em_desenvolvimento', 'parado_pendencias', 'em_homologacao', 'finalizado', 'inviabilizado'];
+  const [projectStageSelectionLoading, setProjectStageSelectionLoading] = useState(false);
+  const [projectGlobalStages, setProjectGlobalStages] = useState<KanbanStage[]>([]);
+  const [selectedInitialStageKeys, setSelectedInitialStageKeys] = useState<string[]>([]);
   
   // Estados para paginação infinita de cada subseção
   const [projetosEmSprintPage, setProjetosEmSprintPage] = useState(1);
@@ -199,7 +206,7 @@ export default function Projects() {
     }
   };
 
-  const openCreateProjectDialog = () => {
+  const openCreateProjectDialog = async () => {
     setEditingProject(null);
     setProjectFormData({
       nome: '',
@@ -207,6 +214,28 @@ export default function Projects() {
       sprint: '',
     });
     setProjectFormError('');
+
+    if (user?.role === 'supervisor') {
+      setProjectStageSelectionLoading(true);
+      try {
+        const global = await kanbanStageService.getAll();
+        setProjectGlobalStages(global);
+        const defaults = DEFAULT_STAGE_KEYS_ORDER.filter((k) =>
+          global.some((s) => s.key === k),
+        );
+        setSelectedInitialStageKeys(defaults);
+      } catch (e) {
+        console.error('Erro ao carregar etapas globais:', e);
+        setProjectGlobalStages([]);
+        setSelectedInitialStageKeys([]);
+      } finally {
+        setProjectStageSelectionLoading(false);
+      }
+    } else {
+      setProjectGlobalStages([]);
+      setSelectedInitialStageKeys([]);
+    }
+
     setProjectDialogOpen(true);
   };
 
@@ -227,10 +256,48 @@ export default function Projects() {
     setProjectFormLoading(true);
 
     try {
+      const selectedStageKeys = selectedInitialStageKeys;
+
       if (editingProject) {
         await projectService.update(editingProject.id, projectFormData);
       } else {
-        await projectService.create(projectFormData);
+        const created = await projectService.create(projectFormData);
+
+        // Se for supervisor e ele escolheu etapas iniciais, aplicamos a configuração
+        if (user?.role === 'supervisor' && selectedStageKeys?.length && created?.id) {
+          try {
+            const selectedSet = new Set(selectedStageKeys);
+            const defaultKeys = DEFAULT_STAGE_KEYS_ORDER;
+
+            const orderedSelectedKeys = [
+              ...defaultKeys.filter((k) => selectedSet.has(k)),
+              ...projectGlobalStages
+                .filter((s) => selectedSet.has(s.key) && !defaultKeys.includes(s.key))
+                .map((s) => s.key),
+            ];
+
+            // Remover etapas padrão não selecionadas (projeto recém-criado está vazio)
+            const keysToRemove = defaultKeys.filter((k) => !selectedSet.has(k));
+            await Promise.all(
+              keysToRemove.map((key) =>
+                projectService.removeKanbanStage(created.id, key).catch(() => null),
+              ),
+            );
+
+            // Adicionar quaisquer etapas selecionadas que não sejam parte do padrão
+            const keysToAdd = orderedSelectedKeys.filter((k) => !defaultKeys.includes(k));
+            await Promise.all(
+              keysToAdd.map((key) =>
+                projectService.addKanbanStage(created.id, key).catch(() => null),
+              ),
+            );
+
+            // Definir ordem final
+            await projectService.updateKanbanConfigReorder(created.id, orderedSelectedKeys);
+          } catch (e) {
+            console.error('Erro ao aplicar etapas iniciais:', e);
+          }
+        }
       }
       setProjectDialogOpen(false);
       loadData();
@@ -1767,6 +1834,61 @@ export default function Projects() {
                 ))}
               </select>
             </div>
+
+            {/* Etapas iniciais (somente supervisor) */}
+            {user?.role === 'supervisor' && !editingProject && (
+              <div className="space-y-[8px]">
+                <Label>Etapas iniciais do Kanban</Label>
+                {projectStageSelectionLoading ? (
+                  <div className="flex items-center gap-[8px] text-sm text-[var(--color-muted-foreground)]">
+                    <Loader2 className="h-[16px] w-[16px] animate-spin" />
+                    Carregando etapas...
+                  </div>
+                ) : (
+                  <>
+                    <div className="max-h-[200px] overflow-y-auto space-y-[8px] p-[12px] rounded-[10px] border border-[var(--color-border)] bg-[var(--color-muted)]/20">
+                      {projectGlobalStages
+                        .slice()
+                        .sort((a, b) => {
+                          const ai = DEFAULT_STAGE_KEYS_ORDER.indexOf(a.key);
+                          const bi = DEFAULT_STAGE_KEYS_ORDER.indexOf(b.key);
+                          const ax = ai === -1 ? 999 : ai;
+                          const bx = bi === -1 ? 999 : bi;
+                          if (ax !== bx) return ax - bx;
+                          return a.key.localeCompare(b.key);
+                        })
+                        .map((stage) => {
+                          const checked = selectedInitialStageKeys.includes(stage.key);
+                          return (
+                            <label
+                              key={stage.key}
+                              className="flex items-center gap-[10px] cursor-pointer select-none"
+                            >
+                              <input
+                                type="checkbox"
+                                checked={checked}
+                                onChange={(e) => {
+                                  const isChecked = e.target.checked;
+                                  setSelectedInitialStageKeys((prev) => {
+                                    if (isChecked) {
+                                      return Array.from(new Set([...prev, stage.key]));
+                                    }
+                                    return prev.filter((k) => k !== stage.key);
+                                  });
+                                }}
+                              />
+                              <span className="text-sm">{stage.label}</span>
+                            </label>
+                          );
+                        })}
+                    </div>
+                    <p className="text-xs text-[var(--color-muted-foreground)]">
+                      Se nenhuma etapa for selecionada, o projeto será criado com as etapas padrão.
+                    </p>
+                  </>
+                )}
+              </div>
+            )}
 
             {projectFormError && (
               <div className="p-[8px] text-sm text-[var(--color-destructive)] bg-red-50 border border-red-200 rounded-[8px]">

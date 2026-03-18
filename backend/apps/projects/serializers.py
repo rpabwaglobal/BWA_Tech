@@ -1,8 +1,13 @@
 from rest_framework import serializers
+import re
+import unicodedata
 from .models import (
     Sprint,
     Project,
+    KanbanStage,
+    ProjectKanbanStageConfig,
     Card,
+    CardStatus,
     CardTodo,
     Event,
     CardLog,
@@ -143,6 +148,10 @@ class CardSerializer(serializers.ModelSerializer):
     area_display = serializers.CharField(source='get_area_display', read_only=True)
     tipo_display = serializers.CharField(source='get_tipo_display', read_only=True)
     events_count = serializers.IntegerField(source='events.count', read_only=True)
+
+    # Permite status que existam em `KanbanStage` (novo sistema), mantendo compatibilidade
+    # com os status legados já persistidos.
+    status = serializers.CharField(required=False, allow_blank=False)
     
     # Campos explícitos para garantir que sejam sempre processados
     complexidade_selected_items = serializers.JSONField(required=False, allow_null=False, default=list)
@@ -153,6 +162,20 @@ class CardSerializer(serializers.ModelSerializer):
         """Garantir que sempre seja uma lista"""
         if value is None:
             return []
+        return value
+
+    def validate_status(self, value):
+        # Quando o campo não vem no payload, não validamos aqui.
+        if value is None:
+            return value
+
+        # Aceitar tanto etapas globais cadastradas quanto status legados.
+        legacy_statuses = {choice for choice, _ in CardStatus.choices}
+        if value in legacy_statuses:
+            return value
+
+        if not KanbanStage.objects.filter(key=value).exists():
+            raise serializers.ValidationError('Status inválido.')
         return value
     
     def validate_complexidade_custom_items(self, value):
@@ -580,3 +603,52 @@ class CardDueDateChangeRequestSerializer(serializers.ModelSerializer):
         ]
         # requested_by deve ser preenchido pelo backend (perform_create).
         read_only_fields = ['requested_by', 'status', 'reviewed_by', 'reviewed_at', 'created_at', 'updated_at']
+
+
+class KanbanStageSerializer(serializers.ModelSerializer):
+    # `key` é gerada a partir do `label` quando não for enviada pelo frontend.
+    key = serializers.CharField(required=False, allow_blank=True)
+
+    class Meta:
+        model = KanbanStage
+        fields = [
+            'id',
+            'key',
+            'label',
+            'is_terminal',
+            'requires_required_data',
+            'created_at',
+            'updated_at',
+        ]
+        read_only_fields = ['id', 'created_at', 'updated_at']
+
+    def validate(self, attrs):
+        label = attrs.get('label')
+        key = attrs.get('key')
+        if label and (not key or not str(key).strip()):
+            # slug simples compatível com status atuais (underscore + lowercase)
+            normalized = unicodedata.normalize('NFKD', label)
+            without_accents = ''.join(ch for ch in normalized if not unicodedata.combining(ch))
+            slug = re.sub(r'[^a-zA-Z0-9]+', '_', without_accents).strip('_').lower()
+            attrs['key'] = slug
+        return attrs
+
+
+class ProjectKanbanStageConfigSerializer(serializers.ModelSerializer):
+    stage = KanbanStageSerializer(read_only=True)
+    stage_key = serializers.CharField(source='stage.key', read_only=True)
+    stage_label = serializers.CharField(source='stage.label', read_only=True)
+
+    class Meta:
+        model = ProjectKanbanStageConfig
+        fields = [
+            'id',
+            'project',
+            'order',
+            'stage',
+            'stage_key',
+            'stage_label',
+            'created_at',
+            'updated_at',
+        ]
+        read_only_fields = ['id', 'project', 'created_at', 'updated_at', 'stage']

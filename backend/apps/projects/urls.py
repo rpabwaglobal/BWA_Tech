@@ -3,6 +3,7 @@ from rest_framework.routers import DefaultRouter
 from .views import (
     SprintViewSet, ProjectViewSet, CardViewSet, CardTodoViewSet, EventViewSet, CardLogViewSet, 
     NotificationViewSet, WeeklyPriorityViewSet, WeeklyPriorityConfigViewSet, CardDueDateChangeRequestViewSet
+    ,KanbanStageViewSet
 )
 
 router = DefaultRouter()
@@ -16,6 +17,7 @@ router.register(r'notifications', NotificationViewSet, basename='notification')
 router.register(r'weekly-priorities', WeeklyPriorityViewSet, basename='weeklypriority')
 router.register(r'weekly-priority-config', WeeklyPriorityConfigViewSet, basename='weeklypriorityconfig')
 router.register(r'card-date-change-requests', CardDueDateChangeRequestViewSet, basename='carddatechangerequest')
+router.register(r'kanban-stages', KanbanStageViewSet, basename='kanbanstage')
 
 urlpatterns = [
     path('', include(router.urls)),

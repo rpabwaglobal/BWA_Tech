@@ -3,12 +3,14 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from django_filters.rest_framework import DjangoFilterBackend
-from django.db.models import Q
+from django.db.models import Q, Max
 from django.utils import timezone
 from datetime import datetime, timedelta
 from .models import (
     Sprint,
     Project,
+    KanbanStage,
+    ProjectKanbanStageConfig,
     Card,
     CardTodo,
     Event,
@@ -24,6 +26,7 @@ from .serializers import (
     SprintSerializer, ProjectSerializer, CardSerializer, CardTodoSerializer, EventSerializer, 
     CardLogSerializer, NotificationSerializer, WeeklyPrioritySerializer, WeeklyPriorityConfigSerializer,
     CardDueDateChangeRequestSerializer,
+    KanbanStageSerializer,
 )
 
 
@@ -71,6 +74,237 @@ class ProjectViewSet(viewsets.ModelViewSet):
     search_fields = ['nome', 'descricao']
     ordering_fields = ['created_at', 'data_criacao', 'data_entrega']
     ordering = ['-created_at']
+
+    def perform_create(self, serializer):
+        """
+        Garante que todo projeto novo já nasça com a configuração padrão de etapas,
+        mantendo compatibilidade para quem não seleciona etapas no frontend.
+        """
+        project = serializer.save()
+
+        default_stage_keys_order = [
+            'a_desenvolver',
+            'em_desenvolvimento',
+            'parado_pendencias',
+            'em_homologacao',
+            'finalizado',
+            'inviabilizado',
+        ]
+
+        for idx, stage_key in enumerate(default_stage_keys_order):
+            stage = KanbanStage.objects.filter(key=stage_key).first()
+            if not stage:
+                continue
+            cfg, _ = ProjectKanbanStageConfig.objects.get_or_create(project=project, stage=stage, defaults={'order': idx})
+            if cfg.order != idx:
+                ProjectKanbanStageConfig.objects.filter(project=project, stage=stage).update(order=idx)
+
+    def _is_supervisor_editor(self, request):
+        return request.user.role in ['supervisor', 'admin']
+
+    @action(detail=True, methods=['get'], url_path='kanban-config')
+    def kanban_config(self, request, pk=None):
+        """
+        Retorna as etapas/colunas configuradas para o projeto em ordem.
+        """
+        project = self.get_object()
+        configs = (
+            ProjectKanbanStageConfig.objects.select_related('stage')
+            .filter(project=project)
+            .order_by('order', 'stage__key')
+        )
+        stages = [
+            {
+                'key': cfg.stage.key,
+                'label': cfg.stage.label,
+                'order': cfg.order,
+                'is_terminal': cfg.stage.is_terminal,
+                'requires_required_data': cfg.stage.requires_required_data,
+            }
+            for cfg in configs
+        ]
+        return Response({'project': project.id, 'stages': stages})
+
+    @action(detail=True, methods=['post'], url_path='kanban-config/reorder')
+    def kanban_config_reorder(self, request, pk=None):
+        if not self._is_supervisor_editor(request):
+            return Response(
+                {'detail': 'Apenas supervisor ou admin podem reordenar etapas.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        project = self.get_object()
+        stage_keys_order = request.data.get('stage_keys_order')
+        if not isinstance(stage_keys_order, list) or not all(isinstance(k, str) for k in stage_keys_order):
+            return Response({'detail': 'stage_keys_order deve ser uma lista de strings.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Apenas reordenar o que já está configurado para o projeto
+        existing_keys = set(
+            ProjectKanbanStageConfig.objects.filter(project=project).values_list('stage__key', flat=True)
+        )
+        stage_keys_order = [k for k in stage_keys_order if k in existing_keys]
+
+        for idx, key in enumerate(stage_keys_order):
+            ProjectKanbanStageConfig.objects.filter(project=project, stage__key=key).update(order=idx)
+
+        return Response({'detail': 'Ordem atualizada.'})
+
+    @action(detail=True, methods=['post'], url_path='kanban-config/add')
+    def kanban_config_add(self, request, pk=None):
+        if not self._is_supervisor_editor(request):
+            return Response(
+                {'detail': 'Apenas supervisor ou admin podem adicionar etapas.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        project = self.get_object()
+        stage_key = request.data.get('stage_key')
+        if not isinstance(stage_key, str) or not stage_key.strip():
+            return Response({'detail': 'stage_key é obrigatório.'}, status=status.HTTP_400_BAD_REQUEST)
+        stage_key = stage_key.strip()
+
+        try:
+            stage = KanbanStage.objects.get(key=stage_key)
+        except KanbanStage.DoesNotExist:
+            return Response({'detail': 'Etapa global não encontrada.'}, status=status.HTTP_404_NOT_FOUND)
+
+        last_order = (
+            ProjectKanbanStageConfig.objects.filter(project=project).aggregate(Max('order'))['order__max']
+            if ProjectKanbanStageConfig.objects.filter(project=project).exists()
+            else None
+        )
+        next_order = (last_order + 1) if last_order is not None else 0
+
+        cfg, created = ProjectKanbanStageConfig.objects.get_or_create(
+            project=project,
+            stage=stage,
+            defaults={'order': next_order},
+        )
+        if not created:
+            # Se já existe, ajusta a ordem para o final
+            cfg.order = next_order
+            cfg.save(update_fields=['order'])
+
+        return Response({'detail': 'Etapa adicionada.'})
+
+    @action(detail=True, methods=['post'], url_path='kanban-config/remove')
+    def kanban_config_remove(self, request, pk=None):
+        if not self._is_supervisor_editor(request):
+            return Response(
+                {'detail': 'Apenas supervisor ou admin podem remover etapas.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        project = self.get_object()
+        stage_key = request.data.get('stage_key')
+        move_to_key = request.data.get('move_to_key')
+
+        if not isinstance(stage_key, str) or not stage_key.strip():
+            return Response({'detail': 'stage_key é obrigatório.'}, status=status.HTTP_400_BAD_REQUEST)
+        stage_key = stage_key.strip()
+
+        cfg = ProjectKanbanStageConfig.objects.filter(project=project, stage__key=stage_key).first()
+        if not cfg:
+            return Response({'detail': 'Etapa não está configurada para este projeto.'}, status=status.HTTP_404_NOT_FOUND)
+
+        cards_count = Card.objects.filter(projeto=project, status=stage_key).count()
+        if cards_count > 0 and (move_to_key is None or not str(move_to_key).strip()):
+            return Response(
+                {
+                    'detail': 'Esta etapa possui cards. Eles precisam ser movidos antes de remover.',
+                    'cards_count': cards_count,
+                    'stage_key': stage_key,
+                },
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        if cards_count > 0:
+            move_to_key = str(move_to_key).strip()
+            # validar destino
+            dest_cfg = ProjectKanbanStageConfig.objects.filter(project=project, stage__key=move_to_key).first()
+            if not dest_cfg:
+                return Response(
+                    {'detail': 'move_to_key deve ser uma etapa que ainda esteja configurada no projeto.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            Card.objects.filter(projeto=project, status=stage_key).update(status=move_to_key)
+
+        cfg.delete()
+        return Response({'detail': 'Etapa removida.'})
+
+    @action(detail=True, methods=['post'], url_path='kanban-config/move-cards')
+    def kanban_config_move_cards(self, request, pk=None):
+        """
+        Move cards em bulk entre etapas (status) dentro de um mesmo projeto.
+        """
+        if not self._is_supervisor_editor(request):
+            return Response(
+                {'detail': 'Apenas supervisor ou admin podem mover cards entre etapas.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        project = self.get_object()
+        from_stage_key = request.data.get('from_stage_key')
+        to_stage_key = request.data.get('to_stage_key')
+
+        if not isinstance(from_stage_key, str) or not from_stage_key.strip():
+            return Response({'detail': 'from_stage_key é obrigatório.'}, status=status.HTTP_400_BAD_REQUEST)
+        if not isinstance(to_stage_key, str) or not to_stage_key.strip():
+            return Response({'detail': 'to_stage_key é obrigatório.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        from_stage_key = from_stage_key.strip()
+        to_stage_key = to_stage_key.strip()
+
+        from_cfg = ProjectKanbanStageConfig.objects.filter(project=project, stage__key=from_stage_key).first()
+        to_cfg = ProjectKanbanStageConfig.objects.filter(project=project, stage__key=to_stage_key).first()
+
+        if not from_cfg:
+            return Response(
+                {'detail': 'from_stage_key não está configurada neste projeto.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if not to_cfg:
+            return Response(
+                {'detail': 'to_stage_key não está configurada neste projeto.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        cards_qs = Card.objects.filter(projeto=project, status=from_stage_key).only('id', 'nome')
+        cards = list(cards_qs)
+        if not cards:
+            return Response({'detail': 'Nenhum card encontrado para mover.', 'moved_count': 0})
+
+        Card.objects.filter(projeto=project, status=from_stage_key).update(status=to_stage_key)
+
+        logs = [
+            CardLog(
+                card_id=card.id,
+                tipo_evento=CardLogEventType.MOVIMENTADO,
+                descricao=f'Status movido: {from_stage_key} -> {to_stage_key}',
+                usuario=request.user,
+            )
+            for card in cards
+        ]
+        CardLog.objects.bulk_create(logs)
+
+        return Response({'detail': 'Cards movidos.', 'moved_count': len(cards)})
+
+
+class KanbanStageViewSet(viewsets.ModelViewSet):
+    queryset = KanbanStage.objects.all().order_by('key')
+    serializer_class = KanbanStageSerializer
+    permission_classes = [IsAuthenticated]
+
+    def _is_supervisor_editor(self, request):
+        return request.user.role in ['supervisor', 'admin']
+
+    def perform_create(self, serializer):
+        if not self._is_supervisor_editor(self.request):
+            from rest_framework.exceptions import PermissionDenied
+
+            raise PermissionDenied('Apenas supervisor ou admin podem criar etapas do Kanban.')
+        serializer.save()
 
 
 class CardViewSet(viewsets.ModelViewSet):

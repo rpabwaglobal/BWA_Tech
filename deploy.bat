@@ -97,6 +97,19 @@ echo.
 color 07
 
 :: ─── 4. Aguardar backend responder ──────────────────────────────────
+echo  [4/7] Rodando migrações (manage.py migrate)...
+docker compose exec -T backend python manage.py migrate
+if errorlevel 1 (
+    color 0C
+    echo.
+    echo  [ERRO] Não foi possível rodar as migrações.
+    color 07
+    pause
+    exit /b 1
+)
+echo  [OK] Migrações aplicadas.
+echo.
+
 echo  [4/7] Aguardando backend ficar pronto ^(migracoes + collectstatic na 1a vez^)...
 echo  [INFO] Espera inicial 35s para migrate/collectstatic...
 ping -n 36 127.0.0.1 >nul 2>&1

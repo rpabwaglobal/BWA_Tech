@@ -37,9 +37,11 @@ import {
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { projectService } from '@/services/projectService';
-import { cardService, CARD_AREAS, CARD_TYPES, CARD_PRIORITIES, CARD_STATUSES } from '@/services/cardService';
+import { cardService, CARD_AREAS, CARD_TYPES, CARD_PRIORITIES } from '@/services/cardService';
 import { sprintService } from '@/services/sprintService';
 import { cardTodoService } from '@/services/cardTodoService';
+import { kanbanStageService } from '@/services/kanbanStageService';
+import type { KanbanStage as KanbanStageType } from '@/services/kanbanStageService';
 import { getTodosByArea } from '@/constants/cardTodos';
 import type { Project } from '@/services/projectService';
 import type { Card as CardType } from '@/services/cardService';
@@ -61,6 +63,7 @@ import {
   ChevronDown,
   ChevronUp,
   Pencil,
+  Settings,
 } from 'lucide-react';
 import { formatDate, formatDateTime } from '@/lib/dateUtils';
 import { CardLogsModal } from '@/components/CardLogsModal';
@@ -68,14 +71,52 @@ import { PendenciaModal } from '@/components/PendenciaModal';
 import { ConclusaoModal } from '@/components/ConclusaoModal';
 import { cardLogService } from '@/services/cardLogService';
 
-const PROJECT_STAGES = [
-  { id: 'a_desenvolver', label: 'A Desenvolver', color: 'bg-gray-100' },
-  { id: 'em_desenvolvimento', label: 'Em Desenvolvimento', color: 'bg-blue-100' },
-  { id: 'parado_pendencias', label: 'Parado por Pendências', color: 'bg-orange-100' },
-  { id: 'em_homologacao', label: 'Homologação', color: 'bg-purple-100' },
-  { id: 'finalizado', label: 'Concluído', color: 'bg-green-100' },
-  { id: 'inviabilizado', label: 'Inviabilizado', color: 'bg-red-100' },
+const DEFAULT_PROJECT_STAGES = [
+  {
+    id: 'a_desenvolver',
+    label: 'A Desenvolver',
+    color: 'bg-gray-100',
+    is_terminal: false,
+    requires_required_data: false,
+  },
+  {
+    id: 'em_desenvolvimento',
+    label: 'Em Desenvolvimento',
+    color: 'bg-blue-100',
+    is_terminal: false,
+    requires_required_data: true,
+  },
+  {
+    id: 'parado_pendencias',
+    label: 'Parado por Pendências',
+    color: 'bg-orange-100',
+    is_terminal: false,
+    requires_required_data: true,
+  },
+  {
+    id: 'em_homologacao',
+    label: 'Em Homologação',
+    color: 'bg-purple-100',
+    is_terminal: false,
+    requires_required_data: true,
+  },
+  {
+    id: 'finalizado',
+    label: 'Concluído',
+    color: 'bg-green-100',
+    is_terminal: true,
+    requires_required_data: true,
+  },
+  {
+    id: 'inviabilizado',
+    label: 'Inviabilizado',
+    color: 'bg-red-100',
+    is_terminal: true,
+    requires_required_data: false,
+  },
 ];
+
+type ProjectStage = (typeof DEFAULT_PROJECT_STAGES)[number];
 
 function DragOverlayCard({ card }: { card: CardType }) {
   const getCardStatusIcon = (status: string) => {
@@ -197,7 +238,7 @@ function KanbanColumn({
   disabled = false,
   userRole,
 }: {
-  stage: typeof PROJECT_STAGES[0];
+  stage: ProjectStage;
   cards: CardType[];
   onCardClick: (card: CardType) => void;
   onCardDelete: (e: React.MouseEvent, cardId: string) => void;
@@ -446,8 +487,26 @@ export default function ProjectDetails() {
   const [project, setProject] = useState<Project | null>(null);
   const [sprint, setSprint] = useState<Sprint | null>(null);
   const [cards, setCards] = useState<CardType[]>([]);
+  const [stages, setStages] = useState<ProjectStage[]>(DEFAULT_PROJECT_STAGES);
   const [users, setUsers] = useState<UserType[]>([]);
   const [loading, setLoading] = useState(true);
+
+  // Configuração de etapas (Kanban) do projeto - apenas supervisor
+  const [configProjectDialogOpen, setConfigProjectDialogOpen] = useState(false);
+  const [configLoading, setConfigLoading] = useState(false);
+  const [globalStages, setGlobalStages] = useState<KanbanStageType[]>([]);
+  const [newStageLabel, setNewStageLabel] = useState('');
+  const [newStageIsTerminal, setNewStageIsTerminal] = useState(false);
+  const [newStageRequiresRequiredData, setNewStageRequiresRequiredData] = useState(false);
+
+  const [stageKeyToAdd, setStageKeyToAdd] = useState<string>('');
+
+  const [removeStageConflict, setRemoveStageConflict] = useState<{
+    stageKey: string;
+    cardsCount: number;
+  } | null>(null);
+  const [removeStageMoveToKey, setRemoveStageMoveToKey] = useState<string>('');
+  const [removeStageMoveDialogOpen, setRemoveStageMoveDialogOpen] = useState(false);
   const [activeCard, setActiveCard] = useState<CardType | null>(null);
   
   // Card dialog state
@@ -665,10 +724,11 @@ export default function ProjectDetails() {
   const loadData = async () => {
     if (!id) return;
     try {
-      const [projectData, cardsData, usersData] = await Promise.all([
+      const [projectData, cardsData, usersData, kanbanConfigData] = await Promise.all([
         projectService.getById(id),
         cardService.getByProject(id),
         userService.getAll(),
+        projectService.getKanbanConfig(id).catch(() => null),
       ]);
       console.log('Project data:', projectData);
       console.log('Cards data:', cardsData);
@@ -676,6 +736,32 @@ export default function ProjectDetails() {
       setProject(projectData);
       setCards(cardsData);
       setUsers(usersData);
+
+      // Carregar etapas configuradas para este projeto
+      if (kanbanConfigData?.stages?.length) {
+        const stageToColor = (stageId: string): string => {
+          const fallback = DEFAULT_PROJECT_STAGES.find((s) => s.id === stageId);
+          if (fallback) return fallback.color;
+          // Paleta fallback determinística (sem Tailwind dinâmica)
+          const palette = ['bg-gray-100', 'bg-blue-100', 'bg-orange-100', 'bg-purple-100', 'bg-green-100', 'bg-red-100'];
+          let hash = 0;
+          for (let i = 0; i < stageId.length; i++) hash = stageId.charCodeAt(i) + ((hash << 5) - hash);
+          const idx = Math.abs(hash) % palette.length;
+          return palette[idx];
+        };
+
+        setStages(
+          kanbanConfigData.stages.map((s: any) => ({
+            id: s.key,
+            label: s.label,
+            color: stageToColor(s.key),
+            is_terminal: !!s.is_terminal,
+            requires_required_data: !!s.requires_required_data,
+          })),
+        );
+      } else {
+        setStages(DEFAULT_PROJECT_STAGES);
+      }
       
       // Buscar informações da sprint se o projeto tiver uma sprint
       if (projectData.sprint) {
@@ -802,7 +888,7 @@ export default function ProjectDetails() {
 
   // Função para obter o nome da etapa em português
   const getStageLabel = (stageId: string): string => {
-    const stage = PROJECT_STAGES.find(s => s.id === stageId);
+    const stage = stages.find((s) => s.id === stageId);
     return stage ? stage.label : stageId;
   };
 
@@ -837,7 +923,7 @@ export default function ProjectDetails() {
 
   // Verificar se uma etapa exige dados obrigatórios
   const requiresRequiredData = (stageId: string): boolean => {
-    return ['em_desenvolvimento', 'parado_pendencias', 'em_homologacao', 'finalizado'].includes(stageId);
+    return stages.find((s) => s.id === stageId)?.requires_required_data ?? false;
   };
 
   // Função para criar log de card
@@ -969,7 +1055,7 @@ export default function ProjectDetails() {
     let newStageId: string;
     
     // Verificar se o destino é uma coluna válida
-    const validStages = PROJECT_STAGES.map((s) => s.id);
+    const validStages = stages.map((s) => s.id);
     if (validStages.includes(overId)) {
       // Solto diretamente na coluna
       newStageId = overId;
@@ -1340,6 +1426,157 @@ export default function ProjectDetails() {
     setCardDialogOpen(true);
   };
 
+  const normalizeStagesFromApi = (apiStages: any[] | undefined | null): ProjectStage[] => {
+    if (!apiStages || !apiStages.length) return DEFAULT_PROJECT_STAGES;
+
+    const stageToColor = (stageId: string): string => {
+      const fallback = DEFAULT_PROJECT_STAGES.find((s) => s.id === stageId);
+      if (fallback) return fallback.color;
+      const palette = ['bg-gray-100', 'bg-blue-100', 'bg-orange-100', 'bg-purple-100', 'bg-green-100', 'bg-red-100'];
+      let hash = 0;
+      for (let i = 0; i < stageId.length; i++) hash = stageId.charCodeAt(i) + ((hash << 5) - hash);
+      const idx = Math.abs(hash) % palette.length;
+      return palette[idx];
+    };
+
+    return apiStages.map((s: any) => ({
+      id: s.key,
+      label: s.label,
+      color: stageToColor(s.key),
+      is_terminal: !!s.is_terminal,
+      requires_required_data: !!s.requires_required_data,
+    }));
+  };
+
+  const refreshProjectStages = async () => {
+    if (!id) return;
+    try {
+      const cfg = await projectService.getKanbanConfig(id);
+      setStages(normalizeStagesFromApi(cfg?.stages));
+    } catch (error) {
+      console.error('Erro ao recarregar config de etapas:', error);
+      setStages(DEFAULT_PROJECT_STAGES);
+    }
+  };
+
+  const openConfigProjectDialog = async () => {
+    if (user?.role !== 'supervisor') return;
+    setConfigProjectDialogOpen(true);
+    setConfigLoading(true);
+    try {
+      if (!id) return;
+      const [global, cfg] = await Promise.all([
+        kanbanStageService.getAll(),
+        projectService.getKanbanConfig(id),
+      ]);
+      setGlobalStages(global);
+      setStages(normalizeStagesFromApi(cfg?.stages));
+    } catch (error) {
+      console.error('Erro ao carregar configuração do projeto:', error);
+    } finally {
+      setConfigLoading(false);
+    }
+  };
+
+  const applyStagesOrder = async (nextStages: ProjectStage[]) => {
+    if (!id) return;
+    setStages(nextStages);
+    try {
+      const stageKeysOrder = nextStages.map((s) => s.id);
+      await projectService.updateKanbanConfigReorder(id, stageKeysOrder);
+    } catch (error) {
+      console.error('Erro ao atualizar ordem das etapas:', error);
+      await refreshProjectStages();
+    }
+  };
+
+  const moveStageBy = async (index: number, delta: number) => {
+    const targetIndex = index + delta;
+    if (targetIndex < 0 || targetIndex >= stages.length) return;
+
+    const next = [...stages];
+    const [moved] = next.splice(index, 1);
+    next.splice(targetIndex, 0, moved);
+    await applyStagesOrder(next);
+  };
+
+  const handleAddExistingStage = async () => {
+    if (!id) return;
+    const stageKey = stageKeyToAdd;
+    if (!stageKey) return;
+    try {
+      await projectService.addKanbanStage(id, stageKey);
+      await refreshProjectStages();
+    } catch (error) {
+      console.error('Erro ao adicionar etapa:', error);
+    }
+  };
+
+  const handleCreateStageAndAddToProject = async () => {
+    if (!id) return;
+    const label = newStageLabel.trim();
+    if (!label) return;
+
+    try {
+      const created = await kanbanStageService.create({
+        label,
+        is_terminal: newStageIsTerminal,
+        requires_required_data: newStageRequiresRequiredData,
+      });
+      // Reset inputs
+      setNewStageLabel('');
+      setNewStageIsTerminal(false);
+      setNewStageRequiresRequiredData(false);
+
+      // Adicionar ao projeto
+      await projectService.addKanbanStage(id, created.key);
+      await refreshProjectStages();
+      const global = await kanbanStageService.getAll().catch(() => []);
+      setGlobalStages(global);
+    } catch (error) {
+      console.error('Erro ao criar/adicionar etapa:', error);
+    }
+  };
+
+  const handleRequestRemoveStage = async (stageKey: string) => {
+    if (!id) return;
+    try {
+      await projectService.removeKanbanStage(id, stageKey);
+      await refreshProjectStages();
+    } catch (error: any) {
+      const status = error?.response?.status;
+      const data = error?.response?.data;
+      if (status === 409 && data?.cards_count) {
+        setRemoveStageConflict({ stageKey, cardsCount: data.cards_count });
+
+        const destinationOptions = stages.filter((s) => s.id !== stageKey);
+        setRemoveStageMoveToKey(destinationOptions[0]?.id || '');
+        setRemoveStageMoveDialogOpen(true);
+      } else {
+        console.error('Erro ao remover etapa:', error);
+      }
+    }
+  };
+
+  const handleConfirmMoveAndRemove = async () => {
+    if (!id || !removeStageConflict) return;
+    if (!removeStageMoveToKey) return;
+
+    try {
+      await projectService.removeKanbanStage(
+        id,
+        removeStageConflict.stageKey,
+        removeStageMoveToKey,
+      );
+      setRemoveStageMoveDialogOpen(false);
+      setRemoveStageConflict(null);
+      setRemoveStageMoveToKey('');
+      await refreshProjectStages();
+    } catch (error) {
+      console.error('Erro ao mover e remover etapa:', error);
+    }
+  };
+
   const handleCardSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setCardFormError('');
@@ -1700,13 +1937,27 @@ export default function ProjectDetails() {
                 )}
               </div>
               {/* Botão de criar card - visível para todos e em azul */}
-              <Button
-                variant="default"
-                onClick={openCreateCardDialog}
-              >
-                <Plus className="h-4 w-4 mr-2" />
-                Criar Card
-              </Button>
+              <div className="flex items-center gap-[8px]">
+                <Button
+                  variant="default"
+                  onClick={openCreateCardDialog}
+                >
+                  <Plus className="h-4 w-4 mr-2" />
+                  Criar Card
+                </Button>
+                {/* Configurar Projeto (somente supervisor) */}
+                {user?.role === 'supervisor' && (
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    className="h-[40px] w-[40px]"
+                    onClick={openConfigProjectDialog}
+                    aria-label="Configurar Projeto"
+                  >
+                    <Settings className="h-[18px] w-[18px]" />
+                  </Button>
+                )}
+              </div>
             </div>
           </div>
           {/* Botão de deletar projeto (apenas para admin/supervisor e projetos inviabilizados) */}
@@ -1808,7 +2059,7 @@ export default function ProjectDetails() {
           onDragEnd={handleDragEnd}
         >
           <div className="flex gap-[16px] overflow-x-auto pb-[16px] flex-1 min-h-0">
-            {PROJECT_STAGES.map((stage) => (
+            {stages.map((stage) => (
               <KanbanColumn
                 key={stage.id}
                 stage={stage}
@@ -2017,8 +2268,10 @@ export default function ProjectDetails() {
                   required
                   disabled={!!(editingCard && (editingCard.status === 'finalizado' || editingCard.status === 'inviabilizado')) || sprintIsFinished}
                 >
-                  {CARD_STATUSES.map((status) => (
-                    <option key={status.value} value={status.value}>{status.label}</option>
+                  {(stages.length ? stages : DEFAULT_PROJECT_STAGES).map((stage) => (
+                    <option key={stage.id} value={stage.id}>
+                      {stage.label}
+                    </option>
                   ))}
                 </select>
               </div>
@@ -2454,6 +2707,251 @@ export default function ProjectDetails() {
               ) : (
                 'Excluir Projeto'
               )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Configurar Projeto (supervisor) - Etapas do Kanban */}
+      <Dialog
+        open={configProjectDialogOpen}
+        onOpenChange={(open) => {
+          setConfigProjectDialogOpen(open);
+          if (!open) {
+            setRemoveStageMoveDialogOpen(false);
+            setRemoveStageConflict(null);
+            setRemoveStageMoveToKey('');
+            setStageKeyToAdd('');
+            setNewStageLabel('');
+            setNewStageIsTerminal(false);
+            setNewStageRequiresRequiredData(false);
+          }
+        }}
+      >
+        <DialogContent
+          className="max-w-[860px] h-[80vh] overflow-y-auto"
+          onClose={() => setConfigProjectDialogOpen(false)}
+        >
+          <DialogHeader>
+            <DialogTitle>Configurar Projeto</DialogTitle>
+            <DialogDescription>
+              Defina quais etapas aparecem no Kanban e em que ordem.
+            </DialogDescription>
+          </DialogHeader>
+
+          {configLoading ? (
+            <div className="flex items-center justify-center py-[24px]">
+              <Loader2 className="h-[32px] w-[32px] animate-spin text-[var(--color-primary)]" />
+            </div>
+          ) : (
+            <div className="space-y-[16px]">
+              <div className="space-y-[8px]">
+                <div className="flex items-center justify-between gap-[16px]">
+                  <h3 className="text-sm font-medium">Etapas atuais</h3>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={refreshProjectStages}
+                  >
+                    Recarregar
+                  </Button>
+                </div>
+
+                <div className="space-y-[8px]">
+                  {stages.map((stage, index) => (
+                    <div
+                      key={stage.id}
+                      className="flex items-center justify-between gap-[12px] p-[12px] rounded-[10px] border border-[var(--color-border)] bg-[var(--color-background)]"
+                    >
+                      <div className="flex items-center gap-[10px] min-w-0">
+                        <span className={`w-[10px] h-[10px] rounded-full ${stage.color}`} />
+                        <div className="min-w-0">
+                          <div className="font-medium text-sm truncate">{stage.label}</div>
+                          <div className="text-xs text-[var(--color-muted-foreground)] truncate">
+                            {stage.id}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-[8px] flex-shrink-0">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="icon"
+                          className="h-[34px] w-[34px]"
+                          onClick={() => moveStageBy(index, -1)}
+                          disabled={index === 0}
+                        >
+                          <ChevronUp className="h-[16px] w-[16px]" />
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="icon"
+                          className="h-[34px] w-[34px]"
+                          onClick={() => moveStageBy(index, 1)}
+                          disabled={index === stages.length - 1}
+                        >
+                          <ChevronDown className="h-[16px] w-[16px]" />
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="destructive"
+                          size="sm"
+                          onClick={() => handleRequestRemoveStage(stage.id)}
+                        >
+                          Remover
+                        </Button>
+                      </div>
+                    </div>
+                  ))}
+
+                  {stages.length === 0 && (
+                    <div className="text-sm text-[var(--color-muted-foreground)]">
+                      Nenhuma etapa configurada.
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-[16px]">
+                <div className="space-y-[8px]">
+                  <h3 className="text-sm font-medium">Adicionar etapa existente</h3>
+
+                  <div className="space-y-[8px]">
+                    <Label htmlFor="add-stage">Etapa</Label>
+                    <select
+                      id="add-stage"
+                      className="flex h-[40px] w-full rounded-[8px] border border-[var(--color-input)] bg-[var(--color-background)] px-[12px] text-sm"
+                      value={stageKeyToAdd}
+                      onChange={(e) => setStageKeyToAdd(e.target.value)}
+                    >
+                      <option value="">Selecione...</option>
+                      {globalStages
+                        .filter((s) => !stages.some((ps) => ps.id === s.key))
+                        .map((s) => (
+                          <option key={s.key} value={s.key}>
+                            {s.label}
+                          </option>
+                        ))}
+                    </select>
+
+                    <Button
+                      type="button"
+                      disabled={!stageKeyToAdd}
+                      onClick={handleAddExistingStage}
+                    >
+                      Adicionar
+                    </Button>
+                  </div>
+                </div>
+
+                <div className="space-y-[8px]">
+                  <h3 className="text-sm font-medium">Criar nova etapa</h3>
+
+                  <div className="space-y-[8px]">
+                    <Label htmlFor="new-stage-label">Label</Label>
+                    <Input
+                      id="new-stage-label"
+                      value={newStageLabel}
+                      onChange={(e) => setNewStageLabel(e.target.value)}
+                      placeholder="Ex.: Em revisão"
+                    />
+
+                    <div className="flex items-center gap-[12px]">
+                      <label className="flex items-center gap-[8px] text-sm">
+                        <input
+                          type="checkbox"
+                          checked={newStageIsTerminal}
+                          onChange={(e) => setNewStageIsTerminal(e.target.checked)}
+                        />
+                        Etapa de finalização
+                      </label>
+                      <label className="flex items-center gap-[8px] text-sm">
+                        <input
+                          type="checkbox"
+                          checked={newStageRequiresRequiredData}
+                          onChange={(e) => setNewStageRequiresRequiredData(e.target.checked)}
+                        />
+                        Requer dados obrigatórios
+                      </label>
+                    </div>
+
+                    <Button
+                      type="button"
+                      onClick={handleCreateStageAndAddToProject}
+                      disabled={!newStageLabel.trim()}
+                    >
+                      Criar e adicionar
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Remover etapa com cards (movendo antes) */}
+      <Dialog
+        open={removeStageMoveDialogOpen}
+        onOpenChange={(open) => {
+          setRemoveStageMoveDialogOpen(open);
+          if (!open) {
+            setRemoveStageConflict(null);
+            setRemoveStageMoveToKey('');
+          }
+        }}
+      >
+        <DialogContent onClose={() => setRemoveStageMoveDialogOpen(false)} className="max-w-[520px]">
+          <DialogHeader>
+            <DialogTitle>Remover etapa</DialogTitle>
+            <DialogDescription className="whitespace-pre-line">
+              {removeStageConflict
+                ? `Esta etapa possui ${removeStageConflict.cardsCount} card(s).\nSelecione para onde mover antes de remover.`
+                : ''}
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-[8px] mt-[16px]">
+            <Label htmlFor="move-to-stage">Mover para</Label>
+            <select
+              id="move-to-stage"
+              className="flex h-[40px] w-full rounded-[8px] border border-[var(--color-input)] bg-[var(--color-background)] px-[12px] text-sm"
+              value={removeStageMoveToKey}
+              onChange={(e) => setRemoveStageMoveToKey(e.target.value)}
+            >
+              {removeStageConflict?.stageKey &&
+                stages
+                  .filter((s) => s.id !== removeStageConflict.stageKey)
+                  .map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.label}
+                    </option>
+                  ))}
+            </select>
+          </div>
+
+          <DialogFooter className="gap-[8px] mt-[16px]">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                setRemoveStageMoveDialogOpen(false);
+                setRemoveStageConflict(null);
+                setRemoveStageMoveToKey('');
+              }}
+            >
+              Cancelar
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              disabled={!removeStageMoveToKey}
+              onClick={handleConfirmMoveAndRemove}
+            >
+              Mover e remover
             </Button>
           </DialogFooter>
         </DialogContent>

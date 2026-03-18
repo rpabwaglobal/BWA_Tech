@@ -64,6 +64,22 @@ import { calcularDiasTotais, calcularDiasUteis, formatDate, formatDateTime, isCa
 type CardSortField = 'nome' | 'created_at' | 'responsavel_name' | 'prioridade' | 'status' | 'area' | 'tipo';
 type CardSortDirection = 'asc' | 'desc';
 
+type ProjectStageConfig = {
+  id: string;
+  label: string;
+  is_terminal: boolean;
+  requires_required_data: boolean;
+};
+
+const DEFAULT_SPRINT_STAGE_CONFIGS: ProjectStageConfig[] = [
+  { id: 'a_desenvolver', label: 'A Desenvolver', is_terminal: false, requires_required_data: false },
+  { id: 'em_desenvolvimento', label: 'Em Desenvolvimento', is_terminal: false, requires_required_data: true },
+  { id: 'parado_pendencias', label: 'Parado por Pendências', is_terminal: false, requires_required_data: true },
+  { id: 'em_homologacao', label: 'Em Homologação', is_terminal: false, requires_required_data: true },
+  { id: 'finalizado', label: 'Finalizado', is_terminal: true, requires_required_data: true },
+  { id: 'inviabilizado', label: 'Inviabilizado', is_terminal: true, requires_required_data: false },
+];
+
 // Nome exibido para usuários: Primeiro nome + primeiro sobrenome
 const getShortDisplayName = (user: UserType): string => {
   const firstRaw = user.first_name?.trim() ?? '';
@@ -86,6 +102,9 @@ export default function SprintDetails() {
   const [sprint, setSprint] = useState<Sprint | null>(null);
   const [projects, setProjects] = useState<Project[]>([]);
   const [cards, setCards] = useState<CardType[]>([]);
+  const [projectKanbanStagesByProjectId, setProjectKanbanStagesByProjectId] = useState<
+    Record<string, ProjectStageConfig[]>
+  >({});
   const [users, setUsers] = useState<UserType[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -314,6 +333,38 @@ export default function SprintDetails() {
       setProjects(sprintProjects);
       setCards(cardsData);
       setUsers(usersData);
+
+      // Carregar configurações de Kanban por projeto (para respeitar etapas configuradas)
+      try {
+        const configs = await Promise.all(
+          sprintProjects.map(async (p) => {
+            try {
+              const cfg = await projectService.getKanbanConfig(p.id);
+              const apiStages = cfg?.stages;
+              if (Array.isArray(apiStages) && apiStages.length) {
+                const normalized: ProjectStageConfig[] = apiStages.map((s: any) => ({
+                  id: s.key,
+                  label: s.label,
+                  is_terminal: !!s.is_terminal,
+                  requires_required_data: !!s.requires_required_data,
+                }));
+                return { projectId: p.id, stages: normalized };
+              }
+            } catch (e) {
+              // fallback individual
+            }
+            return { projectId: p.id, stages: DEFAULT_SPRINT_STAGE_CONFIGS };
+          }),
+        );
+
+        const map: Record<string, ProjectStageConfig[]> = {};
+        configs.forEach((c) => {
+          map[String(c.projectId)] = c.stages;
+        });
+        setProjectKanbanStagesByProjectId(map);
+      } catch (e) {
+        setProjectKanbanStagesByProjectId({});
+      }
 
       // Initialize sprint form data if editing
       setSprintFormData({
@@ -931,6 +982,8 @@ export default function SprintDetails() {
     }
     setEditingCard(null);
     setSelectedProjectForCard(projectId);
+    const allowedStages = projectKanbanStagesByProjectId[projectId];
+    const initialStatus = allowedStages?.[0]?.id ?? 'a_desenvolver';
     setCardFormData({
       nome: '',
       descricao: '',
@@ -938,7 +991,7 @@ export default function SprintDetails() {
       area: '',
       tipo: 'feature',
       prioridade: 'media',
-      status: 'a_desenvolver',
+      status: initialStatus,
       responsavel: '',
       data_inicio: '',
       data_fim: '',
@@ -1060,8 +1113,14 @@ export default function SprintDetails() {
 
   // Função auxiliar para obter label do status
   const getStageLabel = (status: string): string => {
-    const stage = CARD_STATUSES.find(s => s.value === status);
-    return stage?.label || status;
+    const projectStages = selectedProjectForCard
+      ? projectKanbanStagesByProjectId[selectedProjectForCard]
+      : undefined;
+    const stageFromConfig = projectStages?.find((s) => s.id === status);
+    if (stageFromConfig) return stageFromConfig.label;
+
+    const stageLegacy = CARD_STATUSES.find((s) => s.value === status);
+    return stageLegacy?.label || status;
   };
 
   // Detectar alterações no card
@@ -1170,7 +1229,15 @@ export default function SprintDetails() {
 
   // Verificar se uma etapa exige dados obrigatórios
   const requiresRequiredData = (stageId: string): boolean => {
-    return ['em_desenvolvimento', 'parado_pendencias', 'em_homologacao', 'finalizado'].includes(stageId);
+    const projectStages = selectedProjectForCard
+      ? projectKanbanStagesByProjectId[selectedProjectForCard]
+      : undefined;
+
+    return (
+      projectStages?.find((s) => s.id === stageId)?.requires_required_data ??
+      DEFAULT_SPRINT_STAGE_CONFIGS.find((s) => s.id === stageId)?.requires_required_data ??
+      false
+    );
   };
 
   // Calcular sugestão de data de entrega baseada na estimativa de complexidade
@@ -2185,36 +2252,11 @@ export default function SprintDetails() {
                 });
               }
               
-              // Separar cards por status - sempre executar, mesmo sem cards
-              // Usar projectCards (todos os cards do projeto) ao invés de filteredCards para garantir que todos sejam exibidos
-              // A filtragem será aplicada apenas na busca, mas todos os cards devem aparecer nas seções corretas
-              const cardsEmHomologacao = filteredCards.filter(
-                (card) => card.status === 'em_homologacao'
-              );
-              const cardsEmDesenvolvimento = filteredCards.filter(
-                (card) => card.status === 'em_desenvolvimento'
-              );
-              const cardsADesenvolver = filteredCards.filter(
-                (card) => card.status === 'a_desenvolver'
-              );
-              const cardsParadoPendencias = filteredCards.filter(
-                (card) => card.status === 'parado_pendencias'
-              );
-              const cardsFinalizado = filteredCards.filter(
-                (card) => card.status === 'finalizado'
-              );
-              const cardsInviabilizado = filteredCards.filter(
-                (card) => card.status === 'inviabilizado'
-              );
-              const outrosCards = filteredCards.filter(
-                (card) => 
-                  card.status !== 'em_homologacao' && 
-                  card.status !== 'em_desenvolvimento' && 
-                  card.status !== 'a_desenvolver' &&
-                  card.status !== 'parado_pendencias' &&
-                  card.status !== 'finalizado' &&
-                  card.status !== 'inviabilizado'
-              );
+              // Etapas configuradas para este projeto (ordem definida pelo supervisor)
+              const configuredStages =
+                projectKanbanStagesByProjectId[String(project.id)]?.length
+                  ? projectKanbanStagesByProjectId[String(project.id)]
+                  : DEFAULT_SPRINT_STAGE_CONFIGS;
 
               return (
                 <div
@@ -2287,65 +2329,25 @@ export default function SprintDetails() {
 
                   {/* Cards do Projeto */}
                   <div className="p-[16px] space-y-[16px] flex-1 min-h-0 overflow-y-auto">
-                    {/* Seção: Em Homologação - Sempre visível */}
-                    <div className="space-y-[8px]">
-                      <h4 className="text-xs font-semibold text-[var(--color-muted-foreground)] uppercase tracking-wide px-[4px]">
-                        Em Homologação
-                      </h4>
-                      <div className="space-y-[8px]">
-                        {cardsEmHomologacao.length > 0 ? (
-                          cardsEmHomologacao.map(renderCard)
-                        ) : (
-                          <div className="text-center py-[16px] text-xs text-[var(--color-muted-foreground)]">
-                            Nenhum card
+                    {configuredStages.map((stage) => {
+                      const stageCards = filteredCards.filter((card) => card.status === stage.id);
+                      return (
+                        <div key={stage.id} className="space-y-[8px]">
+                          <h4 className="text-xs font-semibold text-[var(--color-muted-foreground)] uppercase tracking-wide px-[4px]">
+                            {stage.label}
+                          </h4>
+                          <div className="space-y-[8px]">
+                            {stageCards.length > 0 ? (
+                              stageCards.map(renderCard)
+                            ) : (
+                              <div className="text-center py-[16px] text-xs text-[var(--color-muted-foreground)]">
+                                Nenhum card
+                              </div>
+                            )}
                           </div>
-                        )}
-                      </div>
-                    </div>
-
-                    {/* Seção: Em Desenvolvimento - Sempre visível */}
-                    <div className="space-y-[8px]">
-                      <h4 className="text-xs font-semibold text-[var(--color-muted-foreground)] uppercase tracking-wide px-[4px]">
-                        Em Desenvolvimento
-                      </h4>
-                      <div className="space-y-[8px]">
-                        {cardsEmDesenvolvimento.length > 0 ? (
-                          cardsEmDesenvolvimento.map(renderCard)
-                        ) : (
-                          <div className="text-center py-[16px] text-xs text-[var(--color-muted-foreground)]">
-                            Nenhum card
-                          </div>
-                        )}
-                      </div>
-                    </div>
-
-                    {/* Seção: A Desenvolver - Sempre visível */}
-                    <div className="space-y-[8px]">
-                      <h4 className="text-xs font-semibold text-[var(--color-muted-foreground)] uppercase tracking-wide px-[4px]">
-                        A Desenvolver
-                      </h4>
-                      <div className="space-y-[8px]">
-                        {cardsADesenvolver.length > 0 ? (
-                          cardsADesenvolver.map(renderCard)
-                        ) : (
-                          <div className="text-center py-[16px] text-xs text-[var(--color-muted-foreground)]">
-                            Nenhum card
-                          </div>
-                        )}
-                      </div>
-                    </div>
-
-                    {/* Outros cards (se houver) */}
-                    {outrosCards.length > 0 && (
-                      <div className="space-y-[8px]">
-                        <h4 className="text-xs font-semibold text-[var(--color-muted-foreground)] uppercase tracking-wide px-[4px]">
-                          Outros
-                        </h4>
-                        <div className="space-y-[8px]">
-                          {outrosCards.map(renderCard)}
                         </div>
-                      </div>
-                    )}
+                      );
+                    })}
                   </div>
                 </div>
               );
@@ -2670,8 +2672,15 @@ export default function SprintDetails() {
                   required
                   disabled={!!(editingCard && (editingCard.status === 'finalizado' || editingCard.status === 'inviabilizado'))}
                 >
-                  {CARD_STATUSES.map((status) => (
-                    <option key={status.value} value={status.value}>{status.label}</option>
+                  {(
+                    selectedProjectForCard &&
+                    projectKanbanStagesByProjectId[selectedProjectForCard]?.length
+                      ? projectKanbanStagesByProjectId[selectedProjectForCard]
+                      : DEFAULT_SPRINT_STAGE_CONFIGS
+                  ).map((stage) => (
+                    <option key={stage.id} value={stage.id}>
+                      {stage.label}
+                    </option>
                   ))}
                 </select>
               </div>

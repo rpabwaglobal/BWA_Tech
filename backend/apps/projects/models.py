@@ -155,6 +155,65 @@ class CardStatus(models.TextChoices):
     INVIABILIZADO = 'inviabilizado', 'Inviabilizado'
 
 
+class KanbanStage(models.Model):
+    """
+    Etapa/coluna global do Kanban.
+
+    A `key` deve ser compatível com os valores atuais (Card.status já usa strings como
+    'a_desenvolver', 'em_desenvolvimento', etc).
+    """
+
+    key = models.CharField(max_length=50, unique=True, verbose_name='Key (status)')
+    label = models.CharField(max_length=100, verbose_name='Label')
+
+    # Comportamento (usado na UI para lógica terminal e campos obrigatórios)
+    is_terminal = models.BooleanField(default=False, verbose_name='Etapa Terminal')
+    requires_required_data = models.BooleanField(default=False, verbose_name='Requer Dados Obrigatórios')
+
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name='Data de Criação')
+    updated_at = models.DateTimeField(auto_now=True, verbose_name='Data de Atualização')
+
+    class Meta:
+        verbose_name = 'Etapa do Kanban'
+        verbose_name_plural = 'Etapas do Kanban'
+        ordering = ['key']
+
+    def __str__(self):
+        return f'{self.label} ({self.key})'
+
+
+class ProjectKanbanStageConfig(models.Model):
+    """
+    Configura quais etapas um projeto terá e em que ordem elas aparecem.
+    """
+
+    project = models.ForeignKey(
+        Project,
+        on_delete=models.CASCADE,
+        related_name='kanban_stage_configs',
+        verbose_name='Projeto',
+    )
+    stage = models.ForeignKey(
+        KanbanStage,
+        on_delete=models.CASCADE,
+        related_name='project_configs',
+        verbose_name='Etapa',
+    )
+    order = models.PositiveIntegerField(default=0, verbose_name='Ordem')
+
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name='Data de Criação')
+    updated_at = models.DateTimeField(auto_now=True, verbose_name='Data de Atualização')
+
+    class Meta:
+        verbose_name = 'Configuração de Etapas do Kanban por Projeto'
+        verbose_name_plural = 'Configurações de Etapas do Kanban por Projeto'
+        unique_together = [('project', 'stage')]
+        ordering = ['order', 'stage__key']
+
+    def __str__(self):
+        return f'{self.project.nome}: {self.stage.label} ({self.order})'
+
+
 class Priority(models.TextChoices):
     BAIXA = 'baixa', 'Baixa'
     MEDIA = 'media', 'Média'
