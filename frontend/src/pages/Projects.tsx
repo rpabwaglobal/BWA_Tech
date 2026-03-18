@@ -723,7 +723,7 @@ export default function Projects() {
 
       {/* Painel de Pendências (Demandas vs Solicitações) - apenas supervisor/admin */}
       {(user?.role === 'supervisor' || user?.role === 'admin') && (
-        <div className="mb-[24px]">
+        <Card className="mb-[24px]">
           <Tabs value={pendingTab} onValueChange={(v) => setPendingTab(v as any)}>
             <CardHeader>
               <div className="flex items-start justify-between gap-4">
@@ -872,7 +872,7 @@ export default function Projects() {
               </TabsContent>
             </CardContent>
           </Tabs>
-        </div>
+        </Card>
       )}
 
       {/* Lista de Projetos */}
