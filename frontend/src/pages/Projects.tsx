@@ -1579,8 +1579,9 @@ export default function Projects() {
             <DialogTitle>O que você quer criar?</DialogTitle>
             <DialogDescription>Escolha uma opção</DialogDescription>
           </DialogHeader>
-          <div className="grid gap-3 mt-2">
+          <div className="grid grid-cols-2 gap-3 mt-2">
             <Button
+              className="h-28 w-full rounded-[12px]"
               onClick={() => {
                 setCreateDemandChoiceOpen(false);
                 openSuggestionDialog();
@@ -1590,6 +1591,7 @@ export default function Projects() {
             </Button>
             <Button
               variant="outline"
+              className="h-28 w-full rounded-[12px]"
               onClick={() => {
                 setCreateDemandChoiceOpen(false);
                 setDateChangeRequestModalOpen(true);
