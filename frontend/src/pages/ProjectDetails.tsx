@@ -2271,22 +2271,9 @@ export default function ProjectDetails() {
                   onChange={(e) => setCardFormData({ ...cardFormData, data_inicio: e.target.value })}
                   disabled={true}
                 />
-                <div className="flex items-center justify-between gap-2">
-                  <p className="text-xs text-[var(--color-muted-foreground)]">
-                    Preenchida automaticamente com a data e hora atual
-                  </p>
-                  {editingCard?.responsavel && String(editingCard.responsavel) === String(user?.id) && editingCard?.data_fim && (
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      className="h-7"
-                      onClick={() => setDueDateRequestOpen(true)}
-                    >
-                      Solicitar mudança de data
-                    </Button>
-                  )}
-                </div>
+                <p className="text-xs text-[var(--color-muted-foreground)]">
+                  Preenchida automaticamente com a data e hora atual
+                </p>
               </div>
 
               <div className="space-y-[8px]">
@@ -2323,6 +2310,19 @@ export default function ProjectDetails() {
                     return undefined;
                   })()}
                 />
+                {editingCard?.responsavel && String(editingCard.responsavel) === String(user?.id) && editingCard?.data_fim && (
+                  <div className="flex items-center justify-end">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="h-8"
+                      onClick={() => setDueDateRequestOpen(true)}
+                    >
+                      Solicitar mudança de data
+                    </Button>
+                  </div>
+                )}
                 {cardFormData.status === 'em_desenvolvimento' && (
                   <p className="text-xs text-[var(--color-muted-foreground)]">
                     * Obrigatório para cards em desenvolvimento (sugerida baseada na estimativa de complexidade)
