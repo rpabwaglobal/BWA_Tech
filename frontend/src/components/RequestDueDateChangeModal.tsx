@@ -42,7 +42,9 @@ export function RequestDueDateChangeModal({ open, onOpenChange, preselectedCardI
       try {
         const data = await cardService.getByResponsavel(String(user.id));
         const eligible = (Array.isArray(data) ? data : [])
-          .filter((c) => !!c.data_fim)
+          // Cards concluídos não entram na lista de solicitação de mudança de data.
+          // Mantém apenas cards com data_fim e que não estejam finalizados/inviabilizados.
+          .filter((c) => !!c.data_fim && !['finalizado', 'inviabilizado'].includes(c.status))
           .sort((a, b) => (a.nome || '').localeCompare(b.nome || '', 'pt-BR'));
         setCards(eligible);
       } catch (e) {
