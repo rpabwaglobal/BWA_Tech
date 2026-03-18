@@ -6,6 +6,9 @@ from django.db import transaction
 
 from .models import Sprint, Project, Card, CardStatus, ProjectStatus
 
+def _norm_nome_projeto(nome: str) -> str:
+    return (nome or "").strip().casefold()
+
 
 def get_proxima_sprint(sprint):
     """
@@ -54,21 +57,34 @@ def finalizar_sprint_replicacao(sprint, criado_por_user=None):
     with transaction.atomic():
         projetos_criados = 0
         cards_copiados = 0
+        projetos_reutilizados = 0
+
+        # Cache por nome normalizado para evitar duplicação na sprint destino
+        projetos_destino_por_nome = {
+            _norm_nome_projeto(p.nome): p
+            for p in Project.objects.filter(sprint=proxima).select_related("sprint")
+        }
 
         for project in sprint.projects.all():
             cards_pendentes = project.cards.exclude(status__in=nao_entregues)
             if not cards_pendentes.exists():
                 continue
 
-            novo_projeto = Project.objects.create(
-                nome=project.nome,
-                descricao=project.descricao or '',
-                sprint=proxima,
-                gerente_atribuido=project.gerente_atribuido,
-                desenvolvedor=project.desenvolvedor,
-                status=ProjectStatus.CRIADO,
-            )
-            projetos_criados += 1
+            nome_norm = _norm_nome_projeto(project.nome)
+            novo_projeto = projetos_destino_por_nome.get(nome_norm)
+            if novo_projeto:
+                projetos_reutilizados += 1
+            else:
+                novo_projeto = Project.objects.create(
+                    nome=project.nome,
+                    descricao=project.descricao or '',
+                    sprint=proxima,
+                    gerente_atribuido=project.gerente_atribuido,
+                    desenvolvedor=project.desenvolvedor,
+                    status=ProjectStatus.CRIADO,
+                )
+                projetos_destino_por_nome[nome_norm] = novo_projeto
+                projetos_criados += 1
 
             for card in cards_pendentes:
                 Card.objects.create(
@@ -98,5 +114,6 @@ def finalizar_sprint_replicacao(sprint, criado_por_user=None):
         'proxima_sprint_id': str(proxima.id),
         'proxima_sprint_nome': proxima.nome,
         'projetos_criados': projetos_criados,
+        'projetos_reutilizados': projetos_reutilizados,
         'cards_copiados': cards_copiados,
     }
