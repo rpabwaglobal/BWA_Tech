@@ -130,7 +130,7 @@ export default function Projects() {
       setCards(Array.isArray(cardsData) ? cardsData : []);
       setUsers(Array.isArray(usersData) ? usersData : []);
       // carregar solicitações pendentes de mudança de data para supervisores
-      if (user?.role === 'supervisor' || user?.role === 'admin') {
+      if (user?.role === 'supervisor' || user?.role === 'gerente' || user?.role === 'admin') {
         setLoadingDateChangeRequests(true);
         try {
           const reqs = await cardDateChangeRequestService.list({ status: 'pending' });
@@ -722,7 +722,7 @@ export default function Projects() {
       </div>
 
       {/* Painel de Pendências (Demandas vs Solicitações) - apenas supervisor/admin */}
-      {(user?.role === 'supervisor' || user?.role === 'admin') && (
+      {(user?.role === 'supervisor' || user?.role === 'gerente' || user?.role === 'admin') && (
         <Card className="mb-[24px]">
           <Tabs value={pendingTab} onValueChange={(v) => setPendingTab(v as any)}>
             <CardHeader>
@@ -1347,7 +1347,7 @@ export default function Projects() {
                   Fechar
                 </Button>
                 {/* Botão Avaliar apenas para supervisores */}
-                {selectedDemand && (user?.role === 'supervisor' || user?.role === 'admin') && (
+                {selectedDemand && (user?.role === 'supervisor' || user?.role === 'gerente' || user?.role === 'admin') && (
                   <Button
                     type="button"
                     onClick={() => {

@@ -112,7 +112,7 @@ class CardViewSet(viewsets.ModelViewSet):
         
         if is_demanda:
             # Para demandas: apenas o criador pode editar (ou supervisor/admin)
-            if user.role not in ['supervisor', 'admin']:
+            if user.role not in ['supervisor', 'gerente', 'admin']:
                 # Comparar IDs para evitar problemas de comparação de objetos
                 criado_por_id = instance.criado_por.id if instance.criado_por else None
                 user_id = user.id if user else None
@@ -139,7 +139,7 @@ class CardViewSet(viewsets.ModelViewSet):
         
         if is_demanda:
             # Para demandas: apenas o criador pode deletar (ou supervisor/admin)
-            if user.role not in ['supervisor', 'admin']:
+            if user.role not in ['supervisor', 'gerente', 'admin']:
                 # Comparar IDs para evitar problemas de comparação de objetos
                 criado_por_id = instance.criado_por.id if instance.criado_por else None
                 user_id = user.id if user else None
@@ -639,7 +639,7 @@ class CardDueDateChangeRequestViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['post'])
     def approve(self, request, pk=None):
-        if request.user.role not in ['supervisor', 'admin']:
+        if request.user.role not in ['supervisor', 'gerente', 'admin']:
             return Response({'detail': 'Apenas supervisor ou admin podem aprovar solicitações.'}, status=status.HTTP_403_FORBIDDEN)
 
         req = self.get_object()
@@ -677,7 +677,7 @@ class CardDueDateChangeRequestViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['post'])
     def reject(self, request, pk=None):
-        if request.user.role not in ['supervisor', 'admin']:
+        if request.user.role not in ['supervisor', 'gerente', 'admin']:
             return Response({'detail': 'Apenas supervisor ou admin podem recusar solicitações.'}, status=status.HTTP_403_FORBIDDEN)
 
         req = self.get_object()
