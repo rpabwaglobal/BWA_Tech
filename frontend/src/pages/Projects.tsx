@@ -113,7 +113,7 @@ export default function Projects() {
       const [projectsData, sprintsData, cardsData, usersData] = await Promise.all([
         projectService.getAll(),
         sprintService.getAll(),
-        cardService.getAll(),
+        cardService.getAllWithSuggestions(),
         userService.getAll(),
       ]);
       // Garantir que os dados são arrays

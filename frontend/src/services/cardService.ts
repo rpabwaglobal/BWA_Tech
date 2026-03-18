@@ -127,8 +127,26 @@ type PaginatedResponse<T> = {
   results: T[];
 };
 
+const isSuggestionCard = (card: Card): boolean => {
+  return card?.projeto_detail?.nome === 'Sugestões';
+};
+
+const filterSuggestionCards = (cards: Card[], includeSuggestions: boolean): Card[] => {
+  if (includeSuggestions) return cards;
+  return cards.filter((c) => !isSuggestionCard(c));
+};
+
 export const cardService = {
   async getAll(): Promise<Card[]> {
+    return cardService.getAllWithOptions({ includeSuggestions: false });
+  },
+
+  async getAllWithSuggestions(): Promise<Card[]> {
+    return cardService.getAllWithOptions({ includeSuggestions: true });
+  },
+
+  async getAllWithOptions(options?: { includeSuggestions?: boolean }): Promise<Card[]> {
+    const includeSuggestions = !!options?.includeSuggestions;
     const allCards: Card[] = [];
     let nextUrl: string | null = '/cards/';
     
@@ -138,12 +156,12 @@ export const cardService = {
       
       if (Array.isArray(response.data)) {
         // Se não for paginado, retornar diretamente
-        return response.data;
+        return filterSuggestionCards(response.data, includeSuggestions);
       }
       
       // Se for paginado, adicionar os resultados e verificar se há próxima página
       const paginatedData = response.data as PaginatedResponse<Card>;
-      allCards.push(...(paginatedData.results || []));
+      allCards.push(...filterSuggestionCards((paginatedData.results || []), includeSuggestions));
       
       // Se houver próxima página, extrair o caminho da URL
       if (paginatedData.next) {
