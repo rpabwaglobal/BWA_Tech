@@ -112,7 +112,7 @@ class CardViewSet(viewsets.ModelViewSet):
         
         if is_demanda:
             # Para demandas: apenas o criador pode editar (ou supervisor/admin)
-            if user.role not in ['supervisor', 'gerente', 'admin']:
+            if user.role not in ['supervisor', 'admin']:
                 # Comparar IDs para evitar problemas de comparação de objetos
                 criado_por_id = instance.criado_por.id if instance.criado_por else None
                 user_id = user.id if user else None
@@ -139,7 +139,7 @@ class CardViewSet(viewsets.ModelViewSet):
         
         if is_demanda:
             # Para demandas: apenas o criador pode deletar (ou supervisor/admin)
-            if user.role not in ['supervisor', 'gerente', 'admin']:
+            if user.role not in ['supervisor', 'admin']:
                 # Comparar IDs para evitar problemas de comparação de objetos
                 criado_por_id = instance.criado_por.id if instance.criado_por else None
                 user_id = user.id if user else None

@@ -89,8 +89,9 @@ export default function Projects() {
   const [dateChangeRequests, setDateChangeRequests] = useState<CardDueDateChangeRequest[]>([]);
   const [loadingDateChangeRequests, setLoadingDateChangeRequests] = useState(false);
 
-  const canEvaluate =
-    user?.role === 'supervisor' || user?.role === 'gerente' || user?.role === 'admin';
+  // Regra diferente para "demandas" vs "solicitações de reajuste de data".
+  const canEvaluateDemands = user?.role === 'supervisor';
+  const canEvaluateDateRequests = user?.role === 'supervisor' || user?.role === 'gerente' || user?.role === 'admin';
   
   const [alertDialogOpen, setAlertDialogOpen] = useState(false);
   const [alertMessage, setAlertMessage] = useState('');
@@ -133,7 +134,7 @@ export default function Projects() {
       setCards(Array.isArray(cardsData) ? cardsData : []);
       setUsers(Array.isArray(usersData) ? usersData : []);
       // carregar solicitações pendentes de mudança de data para quem pode avaliar
-      if (canEvaluate) {
+      if (canEvaluateDateRequests) {
         setLoadingDateChangeRequests(true);
         try {
           const reqs = await cardDateChangeRequestService.list({ status: 'pending' });
@@ -741,7 +742,7 @@ export default function Projects() {
                   >
                     Demandas a avaliar ({sugestoesCards.length})
                   </TabsTrigger>
-                  {canEvaluate && (
+                  {canEvaluateDateRequests && (
                     <TabsTrigger
                       value="datas"
                       className="rounded-[8px] border border-[var(--color-border)] bg-transparent text-[var(--color-muted-foreground)] px-3 py-2 data-[state=active]:bg-[var(--color-background)] data-[state=active]:text-[var(--color-foreground)] data-[state=active]:shadow-none data-[state=active]:font-semibold"
@@ -812,7 +813,7 @@ export default function Projects() {
                                 </Button>
                               </>
                             )}
-                            {canEvaluate && (
+                            {canEvaluateDemands && (
                               <Button
                                 variant="outline"
                                 size="sm"
@@ -833,7 +834,7 @@ export default function Projects() {
                 )}
               </TabsContent>
 
-              {canEvaluate && (
+              {canEvaluateDateRequests && (
                 <TabsContent value="datas">
                   {loadingDateChangeRequests ? (
                     <div className="flex items-center justify-center py-8 text-[var(--color-muted-foreground)]">
@@ -1355,8 +1356,8 @@ export default function Projects() {
                 <Button type="button" variant="outline" onClick={() => setDemandViewDialogOpen(false)}>
                   Fechar
                 </Button>
-                {/* Botão Avaliar apenas para quem pode avaliar */}
-                {selectedDemand && canEvaluate && (
+                {/* Botão Avaliar apenas para supervisor (demandas) */}
+                {selectedDemand && canEvaluateDemands && (
                   <Button
                     type="button"
                     onClick={() => {
