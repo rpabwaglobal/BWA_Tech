@@ -639,7 +639,7 @@ class CardDueDateChangeRequestViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['post'])
     def approve(self, request, pk=None):
-        if request.user.role not in ['supervisor', 'gerente', 'admin']:
+        if request.user.role not in ['supervisor', 'admin']:
             return Response({'detail': 'Apenas supervisor ou admin podem aprovar solicitações.'}, status=status.HTTP_403_FORBIDDEN)
 
         req = self.get_object()
@@ -677,7 +677,7 @@ class CardDueDateChangeRequestViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['post'])
     def reject(self, request, pk=None):
-        if request.user.role not in ['supervisor', 'gerente', 'admin']:
+        if request.user.role not in ['supervisor', 'admin']:
             return Response({'detail': 'Apenas supervisor ou admin podem recusar solicitações.'}, status=status.HTTP_403_FORBIDDEN)
 
         req = self.get_object()

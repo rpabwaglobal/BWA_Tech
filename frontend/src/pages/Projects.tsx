@@ -90,8 +90,10 @@ export default function Projects() {
   const [loadingDateChangeRequests, setLoadingDateChangeRequests] = useState(false);
 
   // Regra diferente para "demandas" vs "solicitações de reajuste de data".
-  const canEvaluateDemands = user?.role === 'supervisor';
-  const canEvaluateDateRequests = user?.role === 'supervisor' || user?.role === 'gerente' || user?.role === 'admin';
+  // Demandas: somente supervisor/admin.
+  // Solicitação de data: somente supervisor/admin.
+  const canEvaluateDemands = user?.role === 'supervisor' || user?.role === 'admin';
+  const canEvaluateDateRequests = user?.role === 'supervisor' || user?.role === 'admin';
   
   const [alertDialogOpen, setAlertDialogOpen] = useState(false);
   const [alertMessage, setAlertMessage] = useState('');
