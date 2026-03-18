@@ -83,10 +83,32 @@ echo ""
 echo " [OK] Containers iniciados (porta $APP_PORT)."
 echo ""
 
-# ─── 4. Aguardar backend responder ──────────────────────────────────
-echo " [4/7] Aguardando backend ficar pronto (migrações + collectstatic na 1ª vez)..."
-echo " [INFO] Espera inicial 35s para migrate/collectstatic..."
-sleep 35
+# ─── 4. Rodar migrações + aguardar backend responder ────────────────
+echo " [4/7] Rodando migrações e aguardando backend ficar pronto..."
+echo " [INFO] Espera inicial 10s para o backend subir..."
+sleep 10
+
+echo " [INFO] Executando migrations (manage.py migrate)..."
+MIG_TENT=0
+MIG_MAX=10
+set +e
+while [ "$MIG_TENT" -lt "$MIG_MAX" ]; do
+    MIG_TENT=$((MIG_TENT + 1))
+    docker compose exec -T backend python manage.py migrate
+    MIG_ERR=$?
+    if [ "$MIG_ERR" -eq 0 ]; then
+        echo " [OK] Migrações aplicadas."
+        break
+    fi
+    echo " [AVISO] migrate falhou (tentativa ${MIG_TENT}/${MIG_MAX}). Tentando novamente em 5s..."
+    sleep 5
+done
+set -e
+if [ "$MIG_ERR" -ne 0 ]; then
+    echo " [ERRO] Não foi possível rodar as migrações após ${MIG_MAX} tentativas."
+    echo "        Verifique: docker compose logs backend"
+    exit 1
+fi
 
 MAX_TENT=50
 if command -v curl >/dev/null 2>&1; then
