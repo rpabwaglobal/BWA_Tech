@@ -134,7 +134,7 @@ export function CardLogsModal({ cardId, isOpen, onClose, refreshTrigger }: CardL
 
   return (
     <div
-      className={`fixed right-[8px] top-[8px] h-[calc(100vh-16px)] w-[480px] bg-[var(--color-background)] border border-[var(--color-border)] rounded-[8px] shadow-2xl z-[50] transform transition-transform duration-300 ease-in-out pointer-events-auto ${
+      className={`fixed right-[8px] top-[8px] h-[calc(100vh-16px)] w-[480px] bg-[var(--color-background)] border border-[var(--color-border)] rounded-[8px] shadow-2xl z-[70] transform transition-transform duration-300 ease-in-out pointer-events-auto ${
         isOpen ? 'translate-x-0' : 'translate-x-full'
       }`}
       onClick={(e) => e.stopPropagation()}
