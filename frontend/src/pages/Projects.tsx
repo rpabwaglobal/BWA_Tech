@@ -94,6 +94,9 @@ export default function Projects() {
   // Solicitação de data: somente supervisor/admin.
   const canEvaluateDemands = user?.role === 'supervisor' || user?.role === 'admin';
   const canEvaluateDateRequests = user?.role === 'supervisor' || user?.role === 'admin';
+
+  // As duas tabs (Demandas e Solicitações de data) devem aparecer para todos.
+  // Apenas aprovar/recusar continua restrito.
   
   const [alertDialogOpen, setAlertDialogOpen] = useState(false);
   const [alertMessage, setAlertMessage] = useState('');
@@ -135,19 +138,16 @@ export default function Projects() {
       setSprints(Array.isArray(sprintsData) ? sprintsData : []);
       setCards(Array.isArray(cardsData) ? cardsData : []);
       setUsers(Array.isArray(usersData) ? usersData : []);
-      // carregar solicitações pendentes de mudança de data para quem pode avaliar
-      if (canEvaluateDateRequests) {
-        setLoadingDateChangeRequests(true);
-        try {
-          const reqs = await cardDateChangeRequestService.list({ status: 'pending' });
-          setDateChangeRequests(Array.isArray(reqs) ? reqs : []);
-        } catch {
-          setDateChangeRequests([]);
-        } finally {
-          setLoadingDateChangeRequests(false);
-        }
-      } else {
+      // Carregar solicitações pendentes para exibir a lista a todos os usuários.
+      // Aprovar/Recusar continua restrito no front (e no backend).
+      setLoadingDateChangeRequests(true);
+      try {
+        const reqs = await cardDateChangeRequestService.list({ status: 'pending' });
+        setDateChangeRequests(Array.isArray(reqs) ? reqs : []);
+      } catch {
         setDateChangeRequests([]);
+      } finally {
+        setLoadingDateChangeRequests(false);
       }
       
     } catch (error) {
@@ -728,8 +728,7 @@ export default function Projects() {
       </div>
 
       {/* Painel de Pendências (Demandas vs Solicitações) - visível para todos; ações restritas */}
-      {user && (
-        <Card className="mb-[24px]">
+      <Card className="mb-[24px]">
           <Tabs value={pendingTab} onValueChange={(v) => setPendingTab(v as any)}>
             <CardHeader>
               <div className="flex items-start justify-between gap-4">
@@ -737,27 +736,27 @@ export default function Projects() {
                   <CardTitle>Pendências</CardTitle>
                   <CardDescription>Demandas a avaliar e solicitações de alteração de datas</CardDescription>
                 </div>
-                <TabsList className="shrink-0 bg-transparent p-0 h-auto">
-                  <TabsTrigger
-                    value="demandas"
-                    className="rounded-[8px] border border-[var(--color-border)] bg-transparent text-[var(--color-muted-foreground)] px-3 py-2 data-[state=active]:bg-[var(--color-background)] data-[state=active]:text-[var(--color-foreground)] data-[state=active]:shadow-none data-[state=active]:font-semibold"
-                  >
-                    Demandas a avaliar ({sugestoesCards.length})
-                  </TabsTrigger>
-                  {canEvaluateDateRequests && (
+                <div className="rounded-[12px] border border-[var(--color-border)] bg-transparent p-[6px]">
+                  <TabsList className="w-full flex gap-[6px] bg-transparent p-0 h-auto">
+                    <TabsTrigger
+                      value="demandas"
+                      className="flex-1 rounded-[10px] border border-transparent bg-transparent px-3 py-2 text-sm text-[var(--color-muted-foreground)] transition-colors hover:bg-[var(--color-accent)] hover:text-[var(--color-foreground)] data-[state=active]:border-[var(--color-border)] data-[state=active]:bg-[var(--color-background)] data-[state=active]:text-[var(--color-foreground)] data-[state=active]:font-semibold"
+                    >
+                      Demandas a avaliar ({sugestoesCards.length})
+                    </TabsTrigger>
                     <TabsTrigger
                       value="datas"
-                      className="rounded-[8px] border border-[var(--color-border)] bg-transparent text-[var(--color-muted-foreground)] px-3 py-2 data-[state=active]:bg-[var(--color-background)] data-[state=active]:text-[var(--color-foreground)] data-[state=active]:shadow-none data-[state=active]:font-semibold"
+                      className="flex-1 rounded-[10px] border border-transparent bg-transparent px-3 py-2 text-sm text-[var(--color-muted-foreground)] transition-colors hover:bg-[var(--color-accent)] hover:text-[var(--color-foreground)] data-[state=active]:border-[var(--color-border)] data-[state=active]:bg-[var(--color-background)] data-[state=active]:text-[var(--color-foreground)] data-[state=active]:font-semibold"
                     >
                       Solicitações de data ({dateChangeRequests.length})
                     </TabsTrigger>
-                  )}
-                </TabsList>
+                  </TabsList>
+                </div>
               </div>
             </CardHeader>
 
             <CardContent>
-              <TabsContent value="demandas">
+              <TabsContent value="demandas" className="mt-0">
                 {sugestoesCards.length === 0 ? (
                   <p className="text-center py-[32px] text-[var(--color-muted-foreground)]">
                     Não há demandas para serem avaliadas no momento.
@@ -836,8 +835,7 @@ export default function Projects() {
                 )}
               </TabsContent>
 
-              {canEvaluateDateRequests && (
-                <TabsContent value="datas">
+              <TabsContent value="datas" className="mt-0">
                   {loadingDateChangeRequests ? (
                     <div className="flex items-center justify-center py-8 text-[var(--color-muted-foreground)]">
                       <Loader2 className="h-4 w-4 animate-spin mr-2" />
@@ -871,21 +869,26 @@ export default function Projects() {
                             )}
                           </div>
                           <div className="flex items-center gap-2 shrink-0">
-                            <Button variant="outline" onClick={() => handleRejectDateChange(req.id)}>
-                              Recusar
-                            </Button>
-                            <Button onClick={() => handleApproveDateChange(req.id)}>Aprovar</Button>
+                            {canEvaluateDateRequests ? (
+                              <>
+                                <Button variant="outline" onClick={() => handleRejectDateChange(req.id)}>
+                                  Recusar
+                                </Button>
+                                <Button onClick={() => handleApproveDateChange(req.id)}>Aprovar</Button>
+                              </>
+                            ) : (
+                              <Badge variant="secondary">Somente avaliadores</Badge>
+                            )}
                           </div>
                         </div>
                       ))}
                     </div>
                   )}
                 </TabsContent>
-              )}
             </CardContent>
           </Tabs>
         </Card>
-      )}
+      
 
       {/* Lista de Projetos */}
       <div className="space-y-[24px]">

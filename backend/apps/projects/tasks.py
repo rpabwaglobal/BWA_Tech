@@ -199,6 +199,43 @@ def verificar_fechamento_automatico_semana():
 
 
 @shared_task
+def fechar_sprint_em_hora(sprint_id: int, expected_close_at_iso: str):
+    """
+    Fecha uma sprint exatamente no horário agendado (Celery ETA).
+
+    - expected_close_at_iso: datetime timezone-aware em ISO8601.
+    - Valida que sprint ainda não está finalizada e que a data bate com sprint.data_fim.
+    """
+    try:
+        sprint = Sprint.objects.get(pk=sprint_id)
+    except Sprint.DoesNotExist:
+        return 'sprint not found'
+
+    if sprint.finalizada:
+        return 'already finalized'
+
+    expected_dt = datetime.fromisoformat(expected_close_at_iso)
+    if expected_dt.tzinfo is None:
+        expected_dt = timezone.make_aware(expected_dt, timezone.get_current_timezone())
+
+    # Se a sprint mudou a data depois do agendamento, não fecha.
+    if expected_dt.date() != sprint.data_fim:
+        return 'date mismatch'
+
+    now = timezone.now()
+    if now < expected_dt:
+        # Celery deveria executar no eta, mas guardamos para segurança.
+        return 'not yet time'
+
+    result = finalizar_sprint_replicacao(sprint, criado_por_user=None)
+    if result is None:
+        sprint.finalizada = True
+        sprint.save(update_fields=['finalizada', 'updated_at'])
+
+    return 'sprint closed'
+
+
+@shared_task
 def finalizar_sprints_por_data():
     """
     Finaliza sprints automaticamente apenas quando a data_fim JÁ PASSOU
@@ -218,9 +255,9 @@ def finalizar_sprints_por_data():
     config = WeeklyPriorityConfig.get_config()
     horario_limite = config.horario_limite  # time
 
-    # Considerar sprints cuja data_fim é ANTES de hoje,
-    # OU data_fim é hoje mas o horário limite já passou
-    sprints = Sprint.objects.filter(finalizada=False).order_by('data_fim')
+    # Considerar apenas sprints que já chegaram na data_fim (data já passou).
+    # O horário (horario_limite) ainda é validado abaixo via limite_dt.
+    sprints = Sprint.objects.filter(finalizada=False, data_fim__lte=hoje).order_by('data_fim')
 
     processadas = 0
     sem_destino = 0

@@ -1,6 +1,9 @@
 from django.db import models
 from django.conf import settings
 from django.core.validators import MinValueValidator
+from django.utils import timezone
+from datetime import datetime
+import logging
 
 
 class Sprint(models.Model):
@@ -28,6 +31,53 @@ class Sprint(models.Model):
 
     def __str__(self):
         return f"{self.nome} ({self.data_inicio} - {self.data_fim})"
+
+    def save(self, *args, **kwargs):
+        """
+        Agende o fechamento automático exatamente no horário previsto.
+
+        A hora vem de WeeklyPriorityConfig.horario_limite (config global da semana).
+        """
+        previous = None
+        if self.pk:
+            previous = Sprint.objects.filter(pk=self.pk).values('finalizada', 'data_fim').first()
+
+        super().save(*args, **kwargs)
+
+        # Só agenda se ainda não está finalizada e há data_fim.
+        if self.finalizada or not self.data_fim:
+            return
+
+        data_fim_changed = previous is None or previous.get('data_fim') != self.data_fim
+
+        # Agenda novamente apenas quando a data muda (evita flood de tasks).
+        if not data_fim_changed:
+            return
+
+        # Capturar a hora limite atual para este agendamento.
+        horario_limite = WeeklyPriorityConfig.get_config().horario_limite
+        expected_close_at = timezone.make_aware(
+            datetime.combine(self.data_fim, horario_limite),
+            timezone.get_current_timezone(),
+        )
+
+        # Import local para evitar dependência cíclica durante o boot.
+        from .tasks import fechar_sprint_em_hora
+
+        eta = expected_close_at if expected_close_at > timezone.now() else timezone.now()
+        try:
+            fechar_sprint_em_hora.apply_async(
+                args=[self.id, expected_close_at.isoformat()],
+                eta=eta,
+            )
+        except Exception as e:
+            # Evita quebrar a persistência da sprint caso o broker (Redis/Celery)
+            # ainda não esteja disponível no ambiente de desenvolvimento.
+            logging.getLogger(__name__).warning(
+                "Falha ao agendar fechamento ETA da sprint %s: %s",
+                self.id,
+                str(e),
+            )
 
 
 class ProjectStatus(models.TextChoices):

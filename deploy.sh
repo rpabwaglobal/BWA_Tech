@@ -146,6 +146,11 @@ fi
 docker compose exec -T backend python manage.py ensure_superadmin_role >/dev/null 2>&1 || true
 echo ""
 
+# ─── 5.1 Agendar fechamento automático de sprints ────────────────────
+echo " [5.1/7] Agendando fechamento exato das sprints (ETA)..."
+docker compose exec -T backend python manage.py agendar_fechamento_sprints_abertas >/dev/null 2>&1 || true
+echo ""
+
 # ─── 6. Status dos serviços ────────────────────────────────────────
 echo " [6/7] Status dos serviços:"
 echo ""
