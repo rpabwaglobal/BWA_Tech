@@ -724,21 +724,25 @@ export default function Projects() {
       {/* Painel de Pendências (Demandas vs Solicitações) - apenas supervisor/admin */}
       {(user?.role === 'supervisor' || user?.role === 'admin') && (
         <Card className="mb-[24px]">
-          <CardHeader>
-            <CardTitle>Pendências</CardTitle>
-            <CardDescription>Demandas a avaliar e solicitações de alteração de datas</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <Tabs value={pendingTab} onValueChange={(v) => setPendingTab(v as any)}>
-              <TabsList>
-                <TabsTrigger value="demandas">
-                  Demandas a avaliar ({sugestoesCards.length})
-                </TabsTrigger>
-                <TabsTrigger value="datas">
-                  Solicitações de data ({dateChangeRequests.length})
-                </TabsTrigger>
-              </TabsList>
+          <Tabs value={pendingTab} onValueChange={(v) => setPendingTab(v as any)}>
+            <CardHeader>
+              <div className="flex items-start justify-between gap-4">
+                <div className="min-w-0">
+                  <CardTitle>Pendências</CardTitle>
+                  <CardDescription>Demandas a avaliar e solicitações de alteração de datas</CardDescription>
+                </div>
+                <TabsList className="shrink-0">
+                  <TabsTrigger value="demandas">
+                    Demandas a avaliar ({sugestoesCards.length})
+                  </TabsTrigger>
+                  <TabsTrigger value="datas">
+                    Solicitações de data ({dateChangeRequests.length})
+                  </TabsTrigger>
+                </TabsList>
+              </div>
+            </CardHeader>
 
+            <CardContent>
               <TabsContent value="demandas">
                 {sugestoesCards.length === 0 ? (
                   <p className="text-center py-[32px] text-[var(--color-muted-foreground)]">
@@ -860,8 +864,8 @@ export default function Projects() {
                   </div>
                 )}
               </TabsContent>
-            </Tabs>
-          </CardContent>
+            </CardContent>
+          </Tabs>
         </Card>
       )}
 
@@ -1579,9 +1583,9 @@ export default function Projects() {
             <DialogTitle>O que você quer criar?</DialogTitle>
             <DialogDescription>Escolha uma opção</DialogDescription>
           </DialogHeader>
-          <div className="grid grid-cols-2 gap-3 mt-2">
+          <div className="grid grid-cols-2 gap-4 mt-4">
             <Button
-              className="h-28 w-full rounded-[12px]"
+              className="h-28 w-full rounded-[12px] px-4 py-3 text-sm"
               onClick={() => {
                 setCreateDemandChoiceOpen(false);
                 openSuggestionDialog();
@@ -1591,13 +1595,13 @@ export default function Projects() {
             </Button>
             <Button
               variant="outline"
-              className="h-28 w-full rounded-[12px]"
+              className="h-28 w-full rounded-[12px] px-4 py-3 text-sm"
               onClick={() => {
                 setCreateDemandChoiceOpen(false);
                 setDateChangeRequestModalOpen(true);
               }}
             >
-              Solicitar reajuste de data em card
+              Solicitar ajuste de data
             </Button>
           </div>
         </DialogContent>
