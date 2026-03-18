@@ -578,4 +578,5 @@ class CardDueDateChangeRequestSerializer(serializers.ModelSerializer):
             'reviewed_by', 'reviewed_by_name', 'reviewed_at',
             'created_at', 'updated_at',
         ]
-        read_only_fields = ['status', 'reviewed_by', 'reviewed_at', 'created_at', 'updated_at']
+        # requested_by deve ser preenchido pelo backend (perform_create).
+        read_only_fields = ['requested_by', 'status', 'reviewed_by', 'reviewed_at', 'created_at', 'updated_at']

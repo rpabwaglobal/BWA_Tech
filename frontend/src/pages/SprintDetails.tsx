@@ -2968,8 +2968,7 @@ export default function SprintDetails() {
                     <Button
                       type="button"
                       variant="outline"
-                      size="sm"
-                      className="h-8"
+                      className="h-[40px] px-[16px] text-sm"
                       onClick={() => setDueDateRequestOpen(true)}
                     >
                       Solicitar mudança de data

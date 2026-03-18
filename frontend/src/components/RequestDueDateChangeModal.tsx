@@ -72,12 +72,90 @@ export function RequestDueDateChangeModal({ open, onOpenChange, preselectedCardI
       onOpenChange(false);
       onCreated?.();
     } catch (err: any) {
-      const detail = err?.response?.data?.detail;
-      const msg =
-        typeof detail === 'string'
-          ? detail
-          : 'Não foi possível criar a solicitação. Verifique se o card está atribuído a você e possui data de entrega.';
-      setError(msg);
+      const respData = err?.response?.data ?? {};
+
+      const responsavelAtual = selectedCard?.responsavel_name
+        ? String(selectedCard.responsavel_name)
+        : selectedCard?.responsavel
+          ? String(selectedCard.responsavel)
+          : 'não disponível';
+      const dataFimAtual = selectedCard?.data_fim ? String(selectedCard.data_fim) : 'não preenchida';
+
+      // O backend pode retornar mensagens em formatos diferentes:
+      // - PermissionDenied => { detail: "..." }
+      // - ValidationError => { card: ["..."] } (sem vir em "detail")
+      const candidateMessages: string[] = [];
+
+      if (typeof respData?.detail === 'string') {
+        candidateMessages.push(respData.detail);
+      }
+
+      // comuns em ValidationError({ field: message })
+      for (const key of ['card', 'requested_date', 'requestedDate']) {
+        const v = respData?.[key];
+        if (typeof v === 'string') candidateMessages.push(v);
+        if (Array.isArray(v) && typeof v[0] === 'string') candidateMessages.push(v[0]);
+      }
+
+      // fallback: tenta pegar qualquer string “parecida” no objeto
+      if (candidateMessages.length === 0) {
+        try {
+          const asString = JSON.stringify(respData);
+          if (typeof asString === 'string') candidateMessages.push(asString);
+        } catch {
+          // ignore
+        }
+      }
+
+      const detailStr = candidateMessages[0] ?? '';
+      const detailLower = detailStr.toLowerCase();
+
+      const hasRequestedByError = typeof respData?.requested_by !== 'undefined';
+
+      const needsResponsavel =
+        hasRequestedByError ||
+        detailLower.includes('atribu') ||
+        detailLower.includes('você só pode') ||
+        detailLower.includes('atribuído a você');
+
+      const needsDataFim =
+        detailLower.includes('data_fim') ||
+        detailLower.includes('data de entrega') ||
+        detailLower.includes('entrega registrada') ||
+        detailLower.includes('data de entrega registrada') ||
+        detailLower.includes('data de entrega do card');
+
+      // Mensagem deve indicar somente o campo que precisa ser alterado.
+      if (needsResponsavel && !needsDataFim) {
+        setError(
+          `Ajuste necessário: o card precisa estar atribuído a você. Responsável atual: ${responsavelAtual}.`
+        );
+        return;
+      }
+
+      if (needsDataFim && !needsResponsavel) {
+        setError(
+          `Ajuste necessário: preencha a “Data e Hora de Entrega” (data_fim). Data atual: ${dataFimAtual}.`
+        );
+        return;
+      }
+
+      if (needsResponsavel && needsDataFim) {
+        setError(
+          `Ajustes necessários no card.\nResponsável atual: ${responsavelAtual}.\nData atual: ${dataFimAtual}.`
+        );
+        return;
+      }
+
+      // fallback: se vier alguma mensagem útil, mostramos ela; senão, mensagem focada.
+      if (detailStr && detailStr !== '{}') {
+        setError(detailStr);
+        return;
+      }
+
+      setError(
+        'Não foi possível criar a solicitação. Ajuste no card o responsável (Responsável) e/ou a “Data e Hora de Entrega” (data_fim) e tente novamente.'
+      );
     } finally {
       setSaving(false);
     }

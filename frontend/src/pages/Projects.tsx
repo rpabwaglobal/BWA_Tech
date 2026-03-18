@@ -20,7 +20,7 @@ import { cardService, CARD_AREAS, CARD_TYPES, CARD_PRIORITIES, CARD_STATUSES, ty
 import { sprintService, type Sprint } from '@/services/sprintService';
 import { userService, type User } from '@/services/userService';
 import { formatDate } from '@/lib/dateUtils';
-import { Plus, FolderKanban, Calendar, User as UserIcon, CheckCircle2, Clock, XCircle, AlertCircle, Eye, Loader2, Pencil, Trash2 } from 'lucide-react';
+import { Plus, FolderKanban, Calendar, User as UserIcon, CheckCircle2, Clock, XCircle, AlertCircle, Eye, Loader2, Pencil, Trash2, ArrowRight } from 'lucide-react';
 import { Avatar, AvatarImage, AvatarFallback } from '@/components/ui/avatar';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { RequestDueDateChangeModal } from '@/components/RequestDueDateChangeModal';
@@ -859,8 +859,14 @@ export default function Projects() {
                             <div className="text-sm text-[var(--color-muted-foreground)] mt-1">
                               Solicitante: {req.requested_by_name || req.requested_by}
                             </div>
-                            <div className="text-sm text-[var(--color-muted-foreground)] mt-1">
-                              Nova data: {formatDate(req.requested_date)}
+                            <div className="text-sm text-[var(--color-muted-foreground)] mt-1 flex items-center gap-2">
+                              <span>
+                                Data atual: {formatDate(req.card_detail?.data_fim || '')}
+                              </span>
+                              <ArrowRight className="h-4 w-4 text-[var(--color-muted-foreground)]" />
+                              <span className="whitespace-nowrap">
+                                Nova data: {formatDate(req.requested_date)}
+                              </span>
                             </div>
                             {req.reason && (
                               <div className="text-sm text-[var(--color-muted-foreground)] mt-1 line-clamp-2">
