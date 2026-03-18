@@ -9,7 +9,7 @@ import { geekdayService, type GeekDayUserStatus, type GeekDayDraw } from '@/serv
 import { Loader2, Check, RotateCcw, Trophy } from 'lucide-react';
 import { formatDate } from '@/lib/dateUtils';
 import { cn } from '@/lib/utils';
-import { DateInput } from '@/components/ui/date-input';
+import { DatePicker } from '@/components/ui/date-picker';
 import { PrizeWheel } from '@mertercelik/react-prize-wheel';
 import type { Sector, PrizeWheelRef } from '@mertercelik/react-prize-wheel';
 import '@mertercelik/react-prize-wheel/style.css';
@@ -915,9 +915,11 @@ export default function GeekDay() {
             <label className="text-sm font-medium">
               Data de apresentação (opcional)
             </label>
-            <DateInput
+            <DatePicker
               value={winnerPresentationDate}
               onChange={(e) => setWinnerPresentationDate(e.target.value)}
+              title="Selecionar Data de Apresentação"
+              placeholder="Clique para selecionar a data"
             />
           </div>
           <DialogFooter>
