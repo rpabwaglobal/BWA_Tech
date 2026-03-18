@@ -2,7 +2,7 @@ from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 from .views import (
     SprintViewSet, ProjectViewSet, CardViewSet, CardTodoViewSet, EventViewSet, CardLogViewSet, 
-    NotificationViewSet, WeeklyPriorityViewSet, WeeklyPriorityConfigViewSet
+    NotificationViewSet, WeeklyPriorityViewSet, WeeklyPriorityConfigViewSet, CardDueDateChangeRequestViewSet
 )
 
 router = DefaultRouter()
@@ -15,6 +15,7 @@ router.register(r'card-logs', CardLogViewSet, basename='cardlog')
 router.register(r'notifications', NotificationViewSet, basename='notification')
 router.register(r'weekly-priorities', WeeklyPriorityViewSet, basename='weeklypriority')
 router.register(r'weekly-priority-config', WeeklyPriorityConfigViewSet, basename='weeklypriorityconfig')
+router.register(r'card-date-change-requests', CardDueDateChangeRequestViewSet, basename='carddatechangerequest')
 
 urlpatterns = [
     path('', include(router.urls)),

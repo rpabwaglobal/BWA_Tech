@@ -439,6 +439,64 @@ class WeeklyPriorityConfig(models.Model):
             self.save()
 
 
+class CardDateChangeRequestStatus(models.TextChoices):
+    PENDING = 'pending', 'Pendente'
+    APPROVED = 'approved', 'Aprovado'
+    REJECTED = 'rejected', 'Recusado'
+
+
+class CardDueDateChangeRequest(models.Model):
+    """
+    Solicitação de alteração de data de entrega (data_fim) do card.
+
+    Avaliada por supervisor/admin. Em aprovação, a hora é preservada e somente o dia é alterado.
+    """
+    card = models.ForeignKey(
+        Card,
+        on_delete=models.CASCADE,
+        related_name='due_date_change_requests',
+        verbose_name='Card'
+    )
+    requested_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='due_date_change_requests_created',
+        verbose_name='Solicitado Por'
+    )
+    requested_date = models.DateField(verbose_name='Nova Data Solicitada')
+    reason = models.TextField(blank=True, null=True, verbose_name='Motivo')
+    status = models.CharField(
+        max_length=20,
+        choices=CardDateChangeRequestStatus.choices,
+        default=CardDateChangeRequestStatus.PENDING,
+        verbose_name='Status'
+    )
+    reviewed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        related_name='due_date_change_requests_reviewed',
+        null=True,
+        blank=True,
+        verbose_name='Avaliado Por'
+    )
+    reviewed_at = models.DateTimeField(null=True, blank=True, verbose_name='Data de Avaliação')
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name='Data de Criação')
+    updated_at = models.DateTimeField(auto_now=True, verbose_name='Data de Atualização')
+
+    class Meta:
+        verbose_name = 'Solicitação de Mudança de Data de Entrega'
+        verbose_name_plural = 'Solicitações de Mudança de Data de Entrega'
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['status', '-created_at']),
+            models.Index(fields=['card', 'status']),
+            models.Index(fields=['requested_by', '-created_at']),
+        ]
+
+    def __str__(self):
+        return f"{self.card.nome} -> {self.requested_date} ({self.get_status_display()})"
+
+
 class WeeklyPriority(models.Model):
     """Prioridade da semana definida pelo supervisor para cada usuário"""
     usuario = models.ForeignKey(

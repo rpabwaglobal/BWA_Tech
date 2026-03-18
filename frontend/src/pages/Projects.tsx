@@ -22,6 +22,9 @@ import { userService, type User } from '@/services/userService';
 import { formatDate } from '@/lib/dateUtils';
 import { Plus, FolderKanban, Calendar, User as UserIcon, CheckCircle2, Clock, XCircle, AlertCircle, Eye, Loader2, Pencil, Trash2 } from 'lucide-react';
 import { Avatar, AvatarImage, AvatarFallback } from '@/components/ui/avatar';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { RequestDueDateChangeModal } from '@/components/RequestDueDateChangeModal';
+import { cardDateChangeRequestService, type CardDueDateChangeRequest } from '@/services/cardDateChangeRequestService';
 
 export default function Projects() {
   const { user } = useAuth();
@@ -80,6 +83,11 @@ export default function Projects() {
   const [discardDialogOpen, setDiscardDialogOpen] = useState(false);
   const [demandToDiscard, setDemandToDiscard] = useState<any>(null);
   const [discardLoading, setDiscardLoading] = useState(false);
+  const [createDemandChoiceOpen, setCreateDemandChoiceOpen] = useState(false);
+  const [dateChangeRequestModalOpen, setDateChangeRequestModalOpen] = useState(false);
+  const [pendingTab, setPendingTab] = useState<'demandas' | 'datas'>('demandas');
+  const [dateChangeRequests, setDateChangeRequests] = useState<CardDueDateChangeRequest[]>([]);
+  const [loadingDateChangeRequests, setLoadingDateChangeRequests] = useState(false);
   
   const [alertDialogOpen, setAlertDialogOpen] = useState(false);
   const [alertMessage, setAlertMessage] = useState('');
@@ -121,6 +129,20 @@ export default function Projects() {
       setSprints(Array.isArray(sprintsData) ? sprintsData : []);
       setCards(Array.isArray(cardsData) ? cardsData : []);
       setUsers(Array.isArray(usersData) ? usersData : []);
+      // carregar solicitações pendentes de mudança de data para supervisores
+      if (user?.role === 'supervisor' || user?.role === 'admin') {
+        setLoadingDateChangeRequests(true);
+        try {
+          const reqs = await cardDateChangeRequestService.list({ status: 'pending' });
+          setDateChangeRequests(Array.isArray(reqs) ? reqs : []);
+        } catch {
+          setDateChangeRequests([]);
+        } finally {
+          setLoadingDateChangeRequests(false);
+        }
+      } else {
+        setDateChangeRequests([]);
+      }
       
     } catch (error) {
       console.error('Erro ao carregar dados:', error);
@@ -140,6 +162,35 @@ export default function Projects() {
     });
     setSuggestionFormError('');
     setSuggestionDialogOpen(true);
+  };
+
+  const openCreateDemandChoice = () => {
+    setCreateDemandChoiceOpen(true);
+  };
+
+  const handleApproveDateChange = async (id: number) => {
+    try {
+      await cardDateChangeRequestService.approve(id);
+      // Recarregar lista
+      const reqs = await cardDateChangeRequestService.list({ status: 'pending' });
+      setDateChangeRequests(Array.isArray(reqs) ? reqs : []);
+      // Recarregar cards/projetos para refletir nova data no resto do sistema
+      loadData();
+    } catch (e) {
+      setAlertMessage('Erro ao aprovar solicitação.');
+      setAlertDialogOpen(true);
+    }
+  };
+
+  const handleRejectDateChange = async (id: number) => {
+    try {
+      await cardDateChangeRequestService.reject(id);
+      const reqs = await cardDateChangeRequestService.list({ status: 'pending' });
+      setDateChangeRequests(Array.isArray(reqs) ? reqs : []);
+    } catch (e) {
+      setAlertMessage('Erro ao recusar solicitação.');
+      setAlertDialogOpen(true);
+    }
   };
 
   const openCreateProjectDialog = () => {
@@ -664,101 +715,155 @@ export default function Projects() {
             Todos os projetos cadastrados no sistema
           </p>
         </div>
-        <Button onClick={openSuggestionDialog} className="min-w-[151px]">
+        <Button onClick={openCreateDemandChoice} className="min-w-[151px]">
           <Plus className="h-4 w-4 mr-2" />
           Criar Demanda
         </Button>
       </div>
 
-      {/* Seção de Sugestões Pendentes */}
-      <Card className="mb-[24px]">
-        <CardHeader>
-          <CardTitle>{sugestoesCards.length} {sugestoesCards.length === 1 ? 'Demanda a Avaliar' : 'Demandas a Avaliar'}</CardTitle>
-          <CardDescription>
-            Sugestões de projetos aguardando avaliação e atribuição
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          {sugestoesCards.length === 0 ? (
-            <p className="text-center py-[32px] text-[var(--color-muted-foreground)]">
-              Não há demandas para serem avaliadas no momento.
-            </p>
-          ) : (
-            <div className="space-y-[8px] max-h-[400px] overflow-y-auto pr-2">
-              {sugestoesCards.map((card) => {
-                const isCreator = card.criado_por && String(card.criado_por) === String(user?.id);
-                return (
-                <div
-                  key={card.id}
-                  className="flex items-center justify-between gap-3 p-[12px] border border-[var(--color-border)] rounded-[8px] hover:bg-[var(--color-accent)] transition-colors cursor-pointer min-w-0"
-                  onClick={() => openDemandViewDialog(card)}
-                >
-                  <div className="flex-1 min-w-0">
-                    <div className="font-medium text-[var(--color-foreground)] truncate">{card.nome}</div>
-                    {card.descricao && (
-                      <div className="text-sm text-[var(--color-muted-foreground)] mt-1 line-clamp-2 overflow-hidden break-words">
-                        {card.descricao}
-                      </div>
-                    )}
-                    <div className="flex items-center gap-2 mt-2">
-                      <Badge variant="outline">{card.area_display || card.area}</Badge>
-                      <Badge variant="outline">{card.tipo_display || card.tipo}</Badge>
-                      <Badge variant="outline">{card.prioridade_display || card.prioridade}</Badge>
-                    </div>
+      {/* Painel de Pendências (Demandas vs Solicitações) - apenas supervisor/admin */}
+      {(user?.role === 'supervisor' || user?.role === 'admin') && (
+        <Card className="mb-[24px]">
+          <CardHeader>
+            <CardTitle>Pendências</CardTitle>
+            <CardDescription>Demandas a avaliar e solicitações de alteração de datas</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Tabs value={pendingTab} onValueChange={(v) => setPendingTab(v as any)}>
+              <TabsList>
+                <TabsTrigger value="demandas">
+                  Demandas a avaliar ({sugestoesCards.length})
+                </TabsTrigger>
+                <TabsTrigger value="datas">
+                  Solicitações de data ({dateChangeRequests.length})
+                </TabsTrigger>
+              </TabsList>
+
+              <TabsContent value="demandas">
+                {sugestoesCards.length === 0 ? (
+                  <p className="text-center py-[32px] text-[var(--color-muted-foreground)]">
+                    Não há demandas para serem avaliadas no momento.
+                  </p>
+                ) : (
+                  <div className="space-y-[8px] max-h-[400px] overflow-y-auto pr-2">
+                    {sugestoesCards.map((card) => {
+                      const isCreator = card.criado_por && String(card.criado_por) === String(user?.id);
+                      return (
+                        <div
+                          key={card.id}
+                          className="flex items-center justify-between gap-3 p-[12px] border border-[var(--color-border)] rounded-[8px] hover:bg-[var(--color-accent)] transition-colors cursor-pointer min-w-0"
+                          onClick={() => openDemandViewDialog(card)}
+                        >
+                          <div className="flex-1 min-w-0">
+                            <div className="font-medium text-[var(--color-foreground)] truncate">{card.nome}</div>
+                            {card.descricao && (
+                              <div className="text-sm text-[var(--color-muted-foreground)] mt-1 line-clamp-2 overflow-hidden break-words">
+                                {card.descricao}
+                              </div>
+                            )}
+                            <div className="flex items-center gap-2 mt-2">
+                              <Badge variant="outline">{card.area_display || card.area}</Badge>
+                              <Badge variant="outline">{card.tipo_display || card.tipo}</Badge>
+                              <Badge variant="outline">{card.prioridade_display || card.prioridade}</Badge>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2 ml-4 shrink-0">
+                            {isCreator && (
+                              <>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    openEditDemandDialog(card);
+                                  }}
+                                  title="Editar demanda"
+                                  className="h-8 w-8 p-0"
+                                >
+                                  <Pencil className="h-4 w-4" />
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setDemandToDiscard(card);
+                                    setDiscardDialogOpen(true);
+                                  }}
+                                  title="Deletar demanda"
+                                  className="h-8 w-8 p-0"
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                </Button>
+                              </>
+                            )}
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                openEvaluationDialog(card);
+                              }}
+                            >
+                              <Eye className="h-4 w-4 mr-2" />
+                              Avaliar
+                            </Button>
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
-                  <div className="flex items-center gap-2 ml-4 shrink-0">
-                    {/* Botões de editar/deletar apenas para o criador */}
-                    {isCreator && (
-                      <>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            openEditDemandDialog(card);
-                          }}
-                          title="Editar demanda"
-                          className="h-8 w-8 p-0"
-                        >
-                          <Pencil className="h-4 w-4" />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setDemandToDiscard(card);
-                            setDiscardDialogOpen(true);
-                          }}
-                          title="Deletar demanda"
-                          className="h-8 w-8 p-0"
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      </>
-                    )}
-                    {/* Botão Avaliar apenas para supervisores */}
-                    {(user?.role === 'supervisor' || user?.role === 'admin') && (
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          openEvaluationDialog(card);
-                        }}
+                )}
+              </TabsContent>
+
+              <TabsContent value="datas">
+                {loadingDateChangeRequests ? (
+                  <div className="flex items-center justify-center py-8 text-[var(--color-muted-foreground)]">
+                    <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                    Carregando solicitações...
+                  </div>
+                ) : dateChangeRequests.length === 0 ? (
+                  <p className="text-center py-[32px] text-[var(--color-muted-foreground)]">
+                    Não há solicitações pendentes no momento.
+                  </p>
+                ) : (
+                  <div className="space-y-[8px] max-h-[400px] overflow-y-auto pr-2">
+                    {dateChangeRequests.map((req) => (
+                      <div
+                        key={req.id}
+                        className="flex items-center justify-between gap-3 p-[12px] border border-[var(--color-border)] rounded-[8px] hover:bg-[var(--color-accent)] transition-colors min-w-0"
                       >
-                        <Eye className="h-4 w-4 mr-2" />
-                        Avaliar
-                      </Button>
-                    )}
+                        <div className="flex-1 min-w-0">
+                          <div className="font-medium text-[var(--color-foreground)] truncate">
+                            {req.card_detail?.nome || `Card #${req.card}`}
+                          </div>
+                          <div className="text-sm text-[var(--color-muted-foreground)] mt-1">
+                            Solicitante: {req.requested_by_name || req.requested_by}
+                          </div>
+                          <div className="text-sm text-[var(--color-muted-foreground)] mt-1">
+                            Nova data: {formatDate(req.requested_date)}
+                          </div>
+                          {req.reason && (
+                            <div className="text-sm text-[var(--color-muted-foreground)] mt-1 line-clamp-2">
+                              Motivo: {req.reason}
+                            </div>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0">
+                          <Button variant="outline" onClick={() => handleRejectDateChange(req.id)}>
+                            Recusar
+                          </Button>
+                          <Button onClick={() => handleApproveDateChange(req.id)}>Aprovar</Button>
+                        </div>
+                      </div>
+                    ))}
                   </div>
-                </div>
-                );
-              })}
-            </div>
-          )}
-        </CardContent>
-      </Card>
+                )}
+              </TabsContent>
+            </Tabs>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Lista de Projetos */}
       <div className="space-y-[24px]">
@@ -1466,6 +1571,41 @@ export default function Projects() {
           </form>
         </DialogContent>
       </Dialog>
+
+      {/* Modal de escolha: criar demanda vs solicitar data */}
+      <Dialog open={createDemandChoiceOpen} onOpenChange={setCreateDemandChoiceOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>O que você quer criar?</DialogTitle>
+            <DialogDescription>Escolha uma opção</DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-3 mt-2">
+            <Button
+              onClick={() => {
+                setCreateDemandChoiceOpen(false);
+                openSuggestionDialog();
+              }}
+            >
+              Criar uma demanda
+            </Button>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setCreateDemandChoiceOpen(false);
+                setDateChangeRequestModalOpen(true);
+              }}
+            >
+              Solicitar reajuste de data em card
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <RequestDueDateChangeModal
+        open={dateChangeRequestModalOpen}
+        onOpenChange={setDateChangeRequestModalOpen}
+        onCreated={() => loadData()}
+      />
 
       {/* Dialog de Avaliação */}
       <Dialog open={evaluationDialogOpen} onOpenChange={setEvaluationDialogOpen}>

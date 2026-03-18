@@ -11,6 +11,7 @@ import { DateTimePicker } from '@/components/ui/datetime-picker';
 import { DateRangePicker } from '@/components/ui/date-range-picker';
 import { Textarea } from '@/components/ui/textarea';
 import { UserSelect } from '@/components/ui/user-select';
+import { RequestDueDateChangeModal } from '@/components/RequestDueDateChangeModal';
 import {
   Dialog,
   DialogContent,
@@ -115,6 +116,7 @@ export default function SprintDetails() {
   const [editingCard, setEditingCard] = useState<CardType | null>(null);
   const [cardFormLoading, setCardFormLoading] = useState(false);
   const [cardFormError, setCardFormError] = useState('');
+  const [dueDateRequestOpen, setDueDateRequestOpen] = useState(false);
   const [selectedProjectForCard, setSelectedProjectForCard] = useState<string | null>(null);
   const [cardFormData, setCardFormData] = useState({
     nome: '',
@@ -2922,9 +2924,22 @@ export default function SprintDetails() {
                   onChange={(e) => setCardFormData({ ...cardFormData, data_inicio: e.target.value })}
                   disabled={true}
                 />
-                <p className="text-xs text-[var(--color-muted-foreground)]">
-                  Preenchida automaticamente com a data e hora atual
-                </p>
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-xs text-[var(--color-muted-foreground)]">
+                    Preenchida automaticamente com a data e hora atual
+                  </p>
+                  {editingCard?.responsavel && String(editingCard.responsavel) === String(user?.id) && editingCard?.data_fim && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="h-7"
+                      onClick={() => setDueDateRequestOpen(true)}
+                    >
+                      Solicitar mudança de data
+                    </Button>
+                  )}
+                </div>
               </div>
 
               <div className="space-y-[8px]">
@@ -2979,6 +2994,12 @@ export default function SprintDetails() {
                 {cardFormError}
               </div>
             )}
+
+            <RequestDueDateChangeModal
+              open={dueDateRequestOpen}
+              onOpenChange={setDueDateRequestOpen}
+              preselectedCardId={editingCard?.id || null}
+            />
 
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => {

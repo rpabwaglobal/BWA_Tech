@@ -1,5 +1,17 @@
 from rest_framework import serializers
-from .models import Sprint, Project, Card, CardTodo, Event, CardLog, Notification, WeeklyPriority, WeeklyPriorityConfig, CardArea
+from .models import (
+    Sprint,
+    Project,
+    Card,
+    CardTodo,
+    Event,
+    CardLog,
+    Notification,
+    WeeklyPriority,
+    WeeklyPriorityConfig,
+    CardArea,
+    CardDueDateChangeRequest,
+)
 from apps.accounts.serializers import UserSerializer
 
 
@@ -540,3 +552,30 @@ class WeeklyPrioritySerializer(serializers.ModelSerializer):
                  'semana_inicio', 'semana_fim', 'definido_por', 'definido_por_name',
                  'is_concluido', 'is_atrasado', 'created_at', 'updated_at']
         read_only_fields = ['created_at', 'updated_at', 'is_concluido', 'is_atrasado']
+
+
+class CardDueDateChangeRequestSerializer(serializers.ModelSerializer):
+    card_detail = CardSerializer(source='card', read_only=True)
+    requested_by_name = serializers.SerializerMethodField()
+    reviewed_by_name = serializers.SerializerMethodField()
+    status_display = serializers.CharField(source='get_status_display', read_only=True)
+
+    def get_requested_by_name(self, obj):
+        return format_user_name(obj.requested_by)
+
+    def get_reviewed_by_name(self, obj):
+        return format_user_name(obj.reviewed_by) if obj.reviewed_by else None
+
+    class Meta:
+        model = CardDueDateChangeRequest
+        fields = [
+            'id',
+            'card', 'card_detail',
+            'requested_by', 'requested_by_name',
+            'requested_date',
+            'reason',
+            'status', 'status_display',
+            'reviewed_by', 'reviewed_by_name', 'reviewed_at',
+            'created_at', 'updated_at',
+        ]
+        read_only_fields = ['status', 'reviewed_by', 'reviewed_at', 'created_at', 'updated_at']

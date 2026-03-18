@@ -6,11 +6,24 @@ from django_filters.rest_framework import DjangoFilterBackend
 from django.db.models import Q
 from django.utils import timezone
 from datetime import datetime, timedelta
-from .models import Sprint, Project, Card, CardTodo, Event, CardLog, Notification, WeeklyPriority, WeeklyPriorityConfig
+from .models import (
+    Sprint,
+    Project,
+    Card,
+    CardTodo,
+    Event,
+    CardLog,
+    Notification,
+    WeeklyPriority,
+    WeeklyPriorityConfig,
+    CardDueDateChangeRequest,
+    CardLogEventType,
+)
 from .services import finalizar_sprint_replicacao
 from .serializers import (
     SprintSerializer, ProjectSerializer, CardSerializer, CardTodoSerializer, EventSerializer, 
-    CardLogSerializer, NotificationSerializer, WeeklyPrioritySerializer, WeeklyPriorityConfigSerializer
+    CardLogSerializer, NotificationSerializer, WeeklyPrioritySerializer, WeeklyPriorityConfigSerializer,
+    CardDueDateChangeRequestSerializer,
 )
 
 
@@ -583,6 +596,101 @@ class WeeklyPriorityViewSet(viewsets.ModelViewSet):
         
         serializer = self.get_serializer(priorities, many=True)
         return Response(serializer.data)
+
+
+class CardDueDateChangeRequestViewSet(viewsets.ModelViewSet):
+    """
+    Solicitações de alteração de data de entrega do card.
+
+    - Criação: apenas o responsável pelo card (card.responsavel) pode solicitar.
+    - Avaliação (aprovar/recusar): apenas supervisor/admin.
+    """
+    serializer_class = CardDueDateChangeRequestSerializer
+    permission_classes = [IsAuthenticated]
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filterset_fields = ['status', 'requested_by', 'reviewed_by', 'card']
+    search_fields = ['reason', 'card__nome', 'requested_by__username']
+    ordering_fields = ['created_at', 'updated_at', 'reviewed_at', 'requested_date']
+    ordering = ['-created_at']
+
+    def get_queryset(self):
+        return CardDueDateChangeRequest.objects.select_related(
+            'card', 'card__projeto', 'requested_by', 'reviewed_by'
+        ).all()
+
+    def perform_create(self, serializer):
+        card = serializer.validated_data.get('card')
+        requested_date = serializer.validated_data.get('requested_date')
+        from rest_framework.exceptions import ValidationError, PermissionDenied
+
+        if not card:
+            raise ValidationError({'card': 'Card é obrigatório.'})
+
+        if card.responsavel_id != self.request.user.id:
+            raise PermissionDenied('Você só pode solicitar mudança de data para cards atribuídos a você.')
+
+        if not card.data_fim:
+            raise ValidationError({'card': 'Este card não possui data de entrega registrada.'})
+
+        if not requested_date:
+            raise ValidationError({'requested_date': 'requested_date é obrigatório.'})
+
+        serializer.save(requested_by=self.request.user)
+
+    @action(detail=True, methods=['post'])
+    def approve(self, request, pk=None):
+        if request.user.role not in ['supervisor', 'admin']:
+            return Response({'detail': 'Apenas supervisor ou admin podem aprovar solicitações.'}, status=status.HTTP_403_FORBIDDEN)
+
+        req = self.get_object()
+        if req.status != 'pending':
+            return Response({'detail': 'Esta solicitação não está pendente.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        card = req.card
+        if not card.data_fim:
+            return Response({'detail': 'Card não possui data_fim atual.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        old_dt = card.data_fim
+        new_dt = datetime.combine(req.requested_date, old_dt.time())
+        if timezone.is_aware(old_dt):
+            new_dt = timezone.make_aware(new_dt, old_dt.tzinfo or timezone.get_current_timezone())
+
+        card.data_fim = new_dt
+        card.save(update_fields=['data_fim', 'updated_at'])
+
+        req.status = 'approved'
+        req.reviewed_by = request.user
+        req.reviewed_at = timezone.now()
+        req.save(update_fields=['status', 'reviewed_by', 'reviewed_at', 'updated_at'])
+
+        motivo = (req.reason or '').strip()
+        motivo_txt = f"\n\nMotivo: {motivo}" if motivo else ""
+        CardLog.objects.create(
+            card=card,
+            tipo_evento=CardLogEventType.ALTERACAO,
+            descricao=f"Solicitação aprovada: data de entrega alterada de {old_dt} para {new_dt}.{motivo_txt}",
+            usuario=request.user,
+        )
+
+        serializer = self.get_serializer(req)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=['post'])
+    def reject(self, request, pk=None):
+        if request.user.role not in ['supervisor', 'admin']:
+            return Response({'detail': 'Apenas supervisor ou admin podem recusar solicitações.'}, status=status.HTTP_403_FORBIDDEN)
+
+        req = self.get_object()
+        if req.status != 'pending':
+            return Response({'detail': 'Esta solicitação não está pendente.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        req.status = 'rejected'
+        req.reviewed_by = request.user
+        req.reviewed_at = timezone.now()
+        req.save(update_fields=['status', 'reviewed_by', 'reviewed_at', 'updated_at'])
+
+        serializer = self.get_serializer(req)
+        return Response(serializer.data, status=status.HTTP_200_OK)
     
     @action(detail=False, methods=['get'], url_path='priorities_view')
     def priorities_view(self, request):

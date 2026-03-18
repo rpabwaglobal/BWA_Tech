@@ -7,6 +7,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { DateInput } from '@/components/ui/date-input';
 import { DateTimePicker } from '@/components/ui/datetime-picker';
+import { RequestDueDateChangeModal } from '@/components/RequestDueDateChangeModal';
 import { Textarea } from '@/components/ui/textarea';
 import { UserSelect } from '@/components/ui/user-select';
 import { FilterSelect } from '@/components/ui/filter-select';
@@ -488,6 +489,7 @@ export default function ProjectDetails() {
   });
   const [cardFormLoading, setCardFormLoading] = useState(false);
   const [cardFormError, setCardFormError] = useState('');
+  const [dueDateRequestOpen, setDueDateRequestOpen] = useState(false);
   
   // Estimador de complexidade
   const [showTimeEstimator, setShowTimeEstimator] = useState(false);
@@ -2269,9 +2271,22 @@ export default function ProjectDetails() {
                   onChange={(e) => setCardFormData({ ...cardFormData, data_inicio: e.target.value })}
                   disabled={true}
                 />
-                <p className="text-xs text-[var(--color-muted-foreground)]">
-                  Preenchida automaticamente com a data e hora atual
-                </p>
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-xs text-[var(--color-muted-foreground)]">
+                    Preenchida automaticamente com a data e hora atual
+                  </p>
+                  {editingCard?.responsavel && String(editingCard.responsavel) === String(user?.id) && editingCard?.data_fim && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="h-7"
+                      onClick={() => setDueDateRequestOpen(true)}
+                    >
+                      Solicitar mudança de data
+                    </Button>
+                  )}
+                </div>
               </div>
 
               <div className="space-y-[8px]">
@@ -2326,6 +2341,12 @@ export default function ProjectDetails() {
                 {cardFormError}
               </div>
             )}
+
+            <RequestDueDateChangeModal
+              open={dueDateRequestOpen}
+              onOpenChange={setDueDateRequestOpen}
+              preselectedCardId={editingCard?.id || null}
+            />
 
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => {
