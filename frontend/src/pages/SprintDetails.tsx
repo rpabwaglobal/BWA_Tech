@@ -2059,7 +2059,7 @@ export default function SprintDetails() {
       </div>
 
       {card.descricao && (
-        <p className="mt-[8px] text-xs text-[var(--color-muted-foreground)] line-clamp-2">
+        <p className="mt-[8px] text-xs text-black line-clamp-2">
           {card.descricao}
         </p>
       )}
@@ -2067,13 +2067,13 @@ export default function SprintDetails() {
         <div className="flex items-center justify-between mt-[8px]">
         <div className="flex items-center gap-[8px] flex-wrap">
           {card.responsavel_name && (
-            <div className="flex items-center gap-[4px] text-xs text-[var(--color-muted-foreground)]">
+            <div className="flex items-center gap-[4px] text-xs text-black">
               <User className="h-[12px] w-[12px]" />
               {card.responsavel_name}
             </div>
           )}
           {card.data_fim && (
-            <div className="flex items-center gap-[4px] text-xs text-[var(--color-muted-foreground)]">
+            <div className="flex items-center gap-[4px] text-xs text-black">
               <Calendar className="h-[12px] w-[12px]" />
               {formatDateTime(card.data_fim)}
             </div>
