@@ -1,13 +1,20 @@
 import { formatColumnValueForDisplay } from './sprintCardsColumns';
 
+export type CSVDelimiter = ',' | ';';
+
 type ExportArgs = {
   filename: string;
   headers: string[];
   rows: string[][];
+  /** Separador de colunas. Padrão: vírgula (`,`). */
+  delimiter?: CSVDelimiter;
 };
 
-const escapeCSVCell = (cell: string): string => {
-  const needsQuotes = /[",\n\r]/.test(cell);
+const escapeCSVCell = (cell: string, delimiter: CSVDelimiter): string => {
+  const needsQuotes =
+    /["\n\r]/.test(cell) ||
+    (delimiter === ',' && cell.includes(',')) ||
+    (delimiter === ';' && cell.includes(';'));
   const escaped = cell.replace(/"/g, '""');
   return needsQuotes ? `"${escaped}"` : escaped;
 };
@@ -23,10 +30,16 @@ const downloadBlob = (blob: Blob, filename: string) => {
   URL.revokeObjectURL(url);
 };
 
-export const exportCardsToCSV = ({ filename, headers, rows }: ExportArgs) => {
-  const headerLine = headers.map((h) => escapeCSVCell(h)).join(',');
+export const exportCardsToCSV = ({
+  filename,
+  headers,
+  rows,
+  delimiter = ',',
+}: ExportArgs) => {
+  const sep = delimiter;
+  const headerLine = headers.map((h) => escapeCSVCell(h, delimiter)).join(sep);
   const rowLines = rows.map((row) =>
-    row.map((cell) => escapeCSVCell(cell ?? '')).join(','),
+    row.map((cell) => escapeCSVCell(cell ?? '', delimiter)).join(sep),
   );
 
   const csv = [headerLine, ...rowLines].join('\n');

@@ -1906,7 +1906,7 @@ export default function SprintDetails() {
     return `${safeNome} - ${datahora}`;
   };
 
-  const handleExportCSV = () => {
+  const handleExportCSV = (delimiter: ',' | ';') => {
     if (!selectedColumnDefsSafe.length) return;
     const headers = selectedColumnDefsSafe.map((c) => c.label);
     const rows = visibleCardsForList.map((card) =>
@@ -1916,8 +1916,9 @@ export default function SprintDetails() {
       }),
     );
 
-    const filename = `${getExportFileBaseName()}.csv`;
-    exportCardsToCSV({ filename, headers, rows });
+    const suffix = delimiter === ';' ? ' - ponto-e-virgula' : ' - virgula';
+    const filename = `${getExportFileBaseName()}${suffix}.csv`;
+    exportCardsToCSV({ filename, headers, rows, delimiter });
   };
 
   const handleExportXLSX = async () => {
@@ -2295,13 +2296,24 @@ export default function SprintDetails() {
                     </p>
                     <DropdownMenuItem
                       className="gap-2 rounded-md py-2.5"
-                      onClick={handleExportCSV}
+                      onClick={() => handleExportCSV(',')}
                       disabled={
                         visibleCardsForList.length === 0 || selectedColumnDefsSafe.length === 0
                       }
                     >
                       <FileSpreadsheet className="h-4 w-4 shrink-0 text-green-600" />
-                      <span className="flex-1 text-left">CSV</span>
+                      <span className="flex-1 text-left">{'CSV separado por ","'}</span>
+                      <Download className="h-3.5 w-3.5 shrink-0 opacity-50" />
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      className="gap-2 rounded-md py-2.5"
+                      onClick={() => handleExportCSV(';')}
+                      disabled={
+                        visibleCardsForList.length === 0 || selectedColumnDefsSafe.length === 0
+                      }
+                    >
+                      <FileSpreadsheet className="h-4 w-4 shrink-0 text-green-600" />
+                      <span className="flex-1 text-left">{'CSV separado por ";"'}</span>
                       <Download className="h-3.5 w-3.5 shrink-0 opacity-50" />
                     </DropdownMenuItem>
                     <DropdownMenuItem
