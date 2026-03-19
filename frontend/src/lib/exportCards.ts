@@ -42,7 +42,9 @@ export const exportCardsToCSV = ({
     row.map((cell) => escapeCSVCell(cell ?? '', delimiter)).join(sep),
   );
 
-  const csv = [headerLine, ...rowLines].join('\n');
+  const lines = [headerLine, ...rowLines].join('\n');
+  // BOM UTF-8: o Excel no Windows abre CSV como ANSI se não houver BOM; acentos ficam corrompidos.
+  const csv = `\uFEFF${lines}`;
   const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
   downloadBlob(blob, filename);
 };

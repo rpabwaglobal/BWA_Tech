@@ -70,6 +70,7 @@ import { CardLogsModal } from '@/components/CardLogsModal';
 import { PendenciaModal } from '@/components/PendenciaModal';
 import { ConclusaoModal } from '@/components/ConclusaoModal';
 import { cardLogService } from '@/services/cardLogService';
+import { getPriorityStyle } from '@/lib/priorityColors';
 
 const DEFAULT_PROJECT_STAGES = [
   {
@@ -138,21 +139,6 @@ function DragOverlayCard({ card }: { card: CardType }) {
     }
   };
 
-  const getPriorityColor = (prioridade: string) => {
-    switch (prioridade) {
-      case 'absoluta':
-        return 'border-l-red-600 bg-red-50/50 dark:border-l-red-400 dark:bg-red-500/20';
-      case 'alta':
-        return 'border-l-orange-500 bg-orange-50/50 dark:border-l-orange-400 dark:bg-orange-500/20';
-      case 'media':
-        return 'border-l-yellow-500 bg-yellow-50/50 dark:border-l-amber-300 dark:bg-amber-400/20';
-      case 'baixa':
-        return 'border-l-green-500 bg-green-50/50 dark:border-l-emerald-400 dark:bg-emerald-500/20';
-      default:
-        return 'border-l-gray-300 dark:border-l-slate-500';
-    }
-  };
-
   const getAreaBadgeColor = (area: string) => {
     switch (area) {
       case 'rpa':
@@ -169,7 +155,10 @@ function DragOverlayCard({ card }: { card: CardType }) {
   };
 
   return (
-    <div className={`p-[12px] bg-[var(--color-card)] rounded-[8px] border-l-[3px] shadow-2xl opacity-95 rotate-2 w-[300px] ${getPriorityColor(card.prioridade)}`}>
+    <div
+      className={`p-[12px] bg-[var(--color-card)] rounded-[8px] border-l-[3px] shadow-2xl opacity-95 rotate-2 w-[300px]`}
+      style={getPriorityStyle(card.prioridade, card.id)}
+    >
       <div className="flex items-start justify-between gap-[8px]">
         <div className="flex items-center gap-[8px] flex-1 min-w-0">
           {getCardStatusIcon(card.status)}
@@ -268,21 +257,6 @@ function KanbanColumn({
     }
   };
 
-  const getPriorityColor = (prioridade: string) => {
-    switch (prioridade) {
-      case 'absoluta':
-        return 'border-l-red-600 bg-red-50/50 dark:border-l-red-400 dark:bg-red-500/20';
-      case 'alta':
-        return 'border-l-orange-500 bg-orange-50/50 dark:border-l-orange-400 dark:bg-orange-500/20';
-      case 'media':
-        return 'border-l-yellow-500 bg-yellow-50/50 dark:border-l-amber-300 dark:bg-amber-400/20';
-      case 'baixa':
-        return 'border-l-green-500 bg-green-50/50 dark:border-l-emerald-400 dark:bg-emerald-500/20';
-      default:
-        return 'border-l-gray-300 dark:border-l-slate-500';
-    }
-  };
-
   const getAreaBadgeColor = (area: string) => {
     switch (area) {
       case 'rpa':
@@ -327,7 +301,6 @@ function KanbanColumn({
                   onClick={() => onCardClick(card)}
                   onDelete={(e) => onCardDelete(e, card.id)}
                   getCardStatusIcon={getCardStatusIcon}
-                  getPriorityColor={getPriorityColor}
                   getAreaBadgeColor={getAreaBadgeColor}
                   disabled={disabled}
                   userRole={userRole}
@@ -346,7 +319,6 @@ function KanbanCard({
   onClick,
   onDelete,
   getCardStatusIcon,
-  getPriorityColor,
   getAreaBadgeColor,
   disabled = false,
   userRole,
@@ -355,7 +327,6 @@ function KanbanCard({
   onClick: () => void;
   onDelete: (e: React.MouseEvent) => void;
   getCardStatusIcon: (status: string) => React.ReactNode;
-  getPriorityColor: (prioridade: string) => string;
   getAreaBadgeColor: (area: string) => string;
   disabled?: boolean;
   userRole?: string;
@@ -393,12 +364,13 @@ function KanbanCard({
   return (
     <div
       ref={setNodeRef}
-      style={style}
+      style={{ ...style, ...getPriorityStyle(card.prioridade, card.id) }}
       {...(!isDragDisabled ? attributes : {})}
       {...(!isDragDisabled ? listeners : {})}
-      className={`p-[12px] bg-[var(--color-card)] rounded-[8px] border-l-[3px] shadow-sm hover:shadow-md transition-shadow cursor-pointer group ${getPriorityColor(card.prioridade)}`}
+      className={`p-[12px] bg-[var(--color-card)] rounded-[8px] border-l-[3px] shadow-sm hover:shadow-md transition-shadow cursor-pointer group`}
       onClick={onClick}
     >
+      {/* Aplica cor exata via inline style (garante HEX) */}
       <div className="flex items-start justify-between gap-[8px]">
         <div className="flex items-center gap-[8px] flex-1 min-w-0">
           {getCardStatusIcon(card.status)}
