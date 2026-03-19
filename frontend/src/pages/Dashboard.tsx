@@ -58,10 +58,9 @@ export default function Dashboard() {
 
   const loadData = async () => {
     try {
-      const [sprints, projects, cards, allUsers] = await Promise.all([
+      const [sprints, projects, allUsers] = await Promise.all([
         sprintService.getAll().catch(() => []),
         projectService.getAll().catch(() => []),
-        cardService.getAll().catch(() => []),
         userService.getAll().catch(() => []),
       ]);
       
@@ -98,50 +97,36 @@ export default function Dashboard() {
         });
       });
 
+      // Carregar apenas cards de projetos em sprints ativas (evita baixar cards do sistema inteiro)
+      const cardsSprintsAtivas = (
+        await Promise.all(
+          projetosSprintsAtivas.map((project) =>
+            cardService.getByProject(project.id).catch(() => [])
+          )
+        )
+      ).flat();
+
       // Contar cards concluídos das sprints ativas
-      const cardsConcluidosSprintsAtivas = cards.filter((card) => {
-        // Verificar se o card está finalizado
-        const isCompleted = card.status === 'finalizado' || card.status === 'inviabilizado';
-        if (!isCompleted) return false;
-        
-        // Verificar se o card pertence a um projeto das sprints ativas
-        return projetosSprintsAtivas.some((project) => {
-          const projectId = String(project.id || '');
-          const cardProjectId = String(card.projeto || '');
-          return projectId === cardProjectId;
-        });
-      }).length;
+      const cardsConcluidosSprintsAtivas = projetosSprintsAtivas.reduce(
+        (acc, project) => acc + (project.cards_entregues_count ?? 0),
+        0
+      );
 
       // Contar total de cards concluídos no geral
-      const totalCardsConcluidos = cards.filter((card) => 
-        card.status === 'finalizado' || card.status === 'inviabilizado'
-      ).length;
+      const totalCardsConcluidos = projects.reduce(
+        (acc, project) => acc + (project.cards_entregues_count ?? 0),
+        0
+      );
 
       // Contar cards "A desenvolver" das sprints ativas
-      const cardsADesenvolverSprintsAtivas = cards.filter((card) => {
-        // Verificar se o card está com status "a_desenvolver"
-        if (card.status !== 'a_desenvolver') return false;
-        
-        // Verificar se o card pertence a um projeto das sprints ativas
-        return projetosSprintsAtivas.some((project) => {
-          const projectId = String(project.id || '');
-          const cardProjectId = String(card.projeto || '');
-          return projectId === cardProjectId;
-        });
-      }).length;
+      const cardsADesenvolverSprintsAtivas = cardsSprintsAtivas.filter(
+        (card) => card.status === 'a_desenvolver'
+      ).length;
 
       // Contar cards "Em desenvolvimento" das sprints ativas
-      const cardsEmDesenvolvimentoSprintsAtivas = cards.filter((card) => {
-        // Verificar se o card está com status "em_desenvolvimento"
-        if (card.status !== 'em_desenvolvimento') return false;
-        
-        // Verificar se o card pertence a um projeto das sprints ativas
-        return projetosSprintsAtivas.some((project) => {
-          const projectId = String(project.id || '');
-          const cardProjectId = String(card.projeto || '');
-          return projectId === cardProjectId;
-        });
-      }).length;
+      const cardsEmDesenvolvimentoSprintsAtivas = cardsSprintsAtivas.filter(
+        (card) => card.status === 'em_desenvolvimento'
+      ).length;
 
       setStats({
         totalSprints: sprints.length, // Total de sprints
@@ -159,17 +144,11 @@ export default function Dashboard() {
       setRecentProjects(projects.slice(0, 5));
 
       // Filtrar cards em desenvolvimento apenas das sprints em andamento
-      const allCardsInDevelopment = cards.filter((card) => {
+      const allCardsInDevelopment = cardsSprintsAtivas.filter((card) => {
         // Verificar se o status é 'em_desenvolvimento' (comparação case-insensitive)
         const statusNormalized = (card.status || '').toLowerCase();
         if (statusNormalized !== 'em_desenvolvimento') return false;
-
-        // Verificar se o card pertence a um projeto de sprint em andamento
-        return projetosSprintsAtivas.some((project) => {
-          const projectId = String(project.id || '');
-          const cardProjectId = String(card.projeto || '');
-          return projectId === cardProjectId;
-        });
+        return true;
       });
 
       const cardsEmDesenvolvimento = allCardsInDevelopment.map((card) => {
@@ -209,7 +188,7 @@ export default function Dashboard() {
       });
 
       // Adicionar usuários que têm cards atribuídos em projetos das sprints em andamento
-      cards.forEach((card) => {
+      cardsSprintsAtivas.forEach((card) => {
         if (!card.responsavel || !card.projeto) return;
         const cardProjectId = String(card.projeto);
         if (!activeProjectIds.has(cardProjectId)) return;

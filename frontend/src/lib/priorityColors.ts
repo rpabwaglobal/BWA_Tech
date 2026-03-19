@@ -20,6 +20,48 @@ const GRADIENT_FOLDER_BY_PRIORITY: Record<string, string> = {
 
 const VARIANTS_COUNT = 8;
 const GRADIENT_EXTENSION = 'png';
+const preloadedGradientUrls = new Set<string>();
+
+export function getPriorityGradientUrl(prioridade: string, variantIndex: number): string | null {
+  const folder = GRADIENT_FOLDER_BY_PRIORITY[prioridade];
+  if (!folder) return null;
+  const variantLabel = String(variantIndex).padStart(2, '0');
+  return `/gradients/${folder}/${variantLabel}.${GRADIENT_EXTENSION}`;
+}
+
+function preloadImage(url: string): Promise<void> {
+  if (preloadedGradientUrls.has(url)) return Promise.resolve();
+
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.decoding = 'async';
+    img.onload = () => {
+      preloadedGradientUrls.add(url);
+      resolve();
+    };
+    img.onerror = () => resolve(); // silencioso para não quebrar bootstrap
+    img.src = url;
+  });
+}
+
+export async function preloadPriorityGradients(options?: {
+  priorities?: string[];
+  variantsByPriority?: Partial<Record<string, number>>;
+}): Promise<void> {
+  const priorities = options?.priorities ?? Object.keys(GRADIENT_FOLDER_BY_PRIORITY);
+  const variantsByPriority = options?.variantsByPriority ?? {};
+  const tasks: Promise<void>[] = [];
+
+  for (const prioridade of priorities) {
+    const variants = Math.max(1, variantsByPriority[prioridade] ?? VARIANTS_COUNT);
+    for (let i = 1; i <= variants; i++) {
+      const url = getPriorityGradientUrl(prioridade, i);
+      if (url) tasks.push(preloadImage(url));
+    }
+  }
+
+  await Promise.allSettled(tasks);
+}
 
 export function getPriorityColor(prioridade: string): string {
   switch (prioridade) {
@@ -53,13 +95,13 @@ export function getPriorityStyle(prioridade: string, seed?: string): CSSProperti
 
   const safeSeed = String(seed ?? prioridade);
   const variantIndex = (hashToUint32(safeSeed) % VARIANTS_COUNT) + 1; // 1..8
-  const variantLabel = String(variantIndex).padStart(2, '0');
 
   // Pastas em public são servidas como /<path>
-  const url = `/gradients/${folder}/${variantLabel}.${GRADIENT_EXTENSION}`;
+  const url = getPriorityGradientUrl(prioridade, variantIndex);
   // Fallback: se a variante sorteada não existir, sempre exibir a variante 01.
   // O CSS aceita múltiplas imagens de background; se a primeira URL falhar, a próxima pode carregar.
-  const fallbackUrl = `/gradients/${folder}/01.${GRADIENT_EXTENSION}`;
+  const fallbackUrl = getPriorityGradientUrl(prioridade, 1);
+  if (!url || !fallbackUrl) return {};
 
   return {
     backgroundColor: baseColor,
