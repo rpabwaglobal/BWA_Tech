@@ -1,9 +1,12 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
+import { registerSW } from 'virtual:pwa-register';
 import App from './App.tsx';
 import './index.css';
 import { ThemeProvider } from './context/ThemeContext';
 import { preloadPriorityGradients } from './lib/priorityColors';
+
+registerSW({ immediate: true });
 
 async function bootstrap() {
   // Warm-up de gradients para reduzir flash de cor estática nos cards.

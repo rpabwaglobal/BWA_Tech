@@ -19,14 +19,20 @@ const GRADIENT_FOLDER_BY_PRIORITY: Record<string, string> = {
 };
 
 const VARIANTS_COUNT = 8;
-const GRADIENT_EXTENSION = 'png';
+const MODERN_GRADIENT_EXTENSION = 'webp';
+const LEGACY_GRADIENT_EXTENSION = 'png';
 const preloadedGradientUrls = new Set<string>();
+const seedVariantCache = new Map<string, number>();
 
-export function getPriorityGradientUrl(prioridade: string, variantIndex: number): string | null {
+export function getPriorityGradientUrl(
+  prioridade: string,
+  variantIndex: number,
+  extension: string = MODERN_GRADIENT_EXTENSION
+): string | null {
   const folder = GRADIENT_FOLDER_BY_PRIORITY[prioridade];
   if (!folder) return null;
   const variantLabel = String(variantIndex).padStart(2, '0');
-  return `/gradients/${folder}/${variantLabel}.${GRADIENT_EXTENSION}`;
+  return `/gradients/${folder}/${variantLabel}.${extension}`;
 }
 
 function preloadImage(url: string): Promise<void> {
@@ -44,6 +50,16 @@ function preloadImage(url: string): Promise<void> {
   });
 }
 
+function getVariantBySeed(prioridade: string, seed?: string): number {
+  const safeSeed = String(seed ?? prioridade);
+  const cacheKey = `${prioridade}:${safeSeed}`;
+  const cached = seedVariantCache.get(cacheKey);
+  if (cached) return cached;
+  const variantIndex = (hashToUint32(safeSeed) % VARIANTS_COUNT) + 1; // 1..8
+  seedVariantCache.set(cacheKey, variantIndex);
+  return variantIndex;
+}
+
 export async function preloadPriorityGradients(options?: {
   priorities?: string[];
   variantsByPriority?: Partial<Record<string, number>>;
@@ -55,8 +71,10 @@ export async function preloadPriorityGradients(options?: {
   for (const prioridade of priorities) {
     const variants = Math.max(1, variantsByPriority[prioridade] ?? VARIANTS_COUNT);
     for (let i = 1; i <= variants; i++) {
-      const url = getPriorityGradientUrl(prioridade, i);
-      if (url) tasks.push(preloadImage(url));
+      const modernUrl = getPriorityGradientUrl(prioridade, i, MODERN_GRADIENT_EXTENSION);
+      const legacyUrl = getPriorityGradientUrl(prioridade, i, LEGACY_GRADIENT_EXTENSION);
+      if (modernUrl) tasks.push(preloadImage(modernUrl));
+      if (legacyUrl) tasks.push(preloadImage(legacyUrl));
     }
   }
 
@@ -93,19 +111,22 @@ export function getPriorityStyle(prioridade: string, seed?: string): CSSProperti
   const folder = GRADIENT_FOLDER_BY_PRIORITY[prioridade];
   if (!baseColor || !folder) return {};
 
-  const safeSeed = String(seed ?? prioridade);
-  const variantIndex = (hashToUint32(safeSeed) % VARIANTS_COUNT) + 1; // 1..8
+  const variantIndex = getVariantBySeed(prioridade, seed);
 
-  // Pastas em public são servidas como /<path>
-  const url = getPriorityGradientUrl(prioridade, variantIndex);
-  // Fallback: se a variante sorteada não existir, sempre exibir a variante 01.
-  // O CSS aceita múltiplas imagens de background; se a primeira URL falhar, a próxima pode carregar.
-  const fallbackUrl = getPriorityGradientUrl(prioridade, 1);
-  if (!url || !fallbackUrl) return {};
+  const modernUrl = getPriorityGradientUrl(prioridade, variantIndex, MODERN_GRADIENT_EXTENSION);
+  const legacyUrl = getPriorityGradientUrl(prioridade, variantIndex, LEGACY_GRADIENT_EXTENSION);
+  const modernFallbackUrl = getPriorityGradientUrl(prioridade, 1, MODERN_GRADIENT_EXTENSION);
+  const legacyFallbackUrl = getPriorityGradientUrl(prioridade, 1, LEGACY_GRADIENT_EXTENSION);
+  if (!modernUrl || !legacyUrl || !modernFallbackUrl || !legacyFallbackUrl) return {};
 
   return {
     backgroundColor: baseColor,
-    backgroundImage: `url("${url}"), url("${fallbackUrl}")`,
+    // Ordem de preferência:
+    // 1) webp da variante
+    // 2) png da variante
+    // 3) webp fallback 01
+    // 4) png fallback 01
+    backgroundImage: `url("${modernUrl}"), url("${legacyUrl}"), url("${modernFallbackUrl}"), url("${legacyFallbackUrl}")`,
     backgroundRepeat: 'no-repeat',
     backgroundSize: 'cover',
     backgroundPosition: 'center',
