@@ -77,6 +77,7 @@ export type CardCreate = {
 // Opções para os campos
 export const CARD_AREAS = [
   { value: 'rpa', label: 'RPA' },
+  { value: 'automacao', label: 'Automação' },
   { value: 'frontend', label: 'Frontend' },
   { value: 'backend', label: 'Backend' },
   { value: 'script', label: 'Script' },

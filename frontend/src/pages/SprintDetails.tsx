@@ -1838,6 +1838,8 @@ export default function SprintDetails() {
     switch (area) {
       case 'rpa':
         return 'bg-purple-100 text-purple-700';
+      case 'automacao':
+        return 'bg-purple-100 text-purple-700';
       case 'frontend':
         return 'bg-blue-100 text-blue-700';
       case 'backend':
@@ -1846,6 +1848,46 @@ export default function SprintDetails() {
         return 'bg-amber-100 text-amber-700';
       default:
         return 'bg-gray-100 text-gray-700';
+    }
+  };
+
+  // Tag abreviada de cargo (mesma ideia do UserSelect)
+  const getRoleLabel = (role: string): string => {
+    switch (role) {
+      case 'desenvolvedor':
+        return 'Dev.';
+      case 'dados':
+        return 'Dados';
+      case 'processos':
+        return 'Proc.';
+      case 'supervisor':
+        return 'Super.';
+      case 'gerente':
+        return 'G. Proj.';
+      case 'admin':
+        return 'Admin';
+      default:
+        return role;
+    }
+  };
+
+  // Cores do cargo (mesmas do UserSelect)
+  const getRoleColor = (role: string): string => {
+    switch (role) {
+      case 'admin':
+        return 'bg-purple-100 text-purple-800 border-purple-300';
+      case 'supervisor':
+        return 'bg-blue-100 text-blue-800 border-blue-300';
+      case 'gerente':
+        return 'bg-green-100 text-green-800 border-green-300';
+      case 'desenvolvedor':
+        return 'bg-orange-100 text-orange-800 border-orange-300';
+      case 'dados':
+        return 'bg-purple-100 text-purple-800 border-purple-300';
+      case 'processos':
+        return 'bg-red-100 text-red-800 border-red-300';
+      default:
+        return 'bg-gray-100 text-gray-800 border-gray-300';
     }
   };
 
@@ -1994,6 +2036,11 @@ export default function SprintDetails() {
     const isCardDelivered = card.status === 'finalizado' || card.status === 'inviabilizado';
     // Permitir clique para visualização sempre (mesmo se sprint finalizada ou card finalizado)
     const canClick = true;
+
+    const responsibleUser = card.responsavel
+      ? users.find((u) => String(u.id) === String(card.responsavel))
+      : undefined;
+    const responsibleRoleLabel = responsibleUser ? getRoleLabel(responsibleUser.role) : '';
     
     return (
       <div
@@ -2004,24 +2051,12 @@ export default function SprintDetails() {
       >
         <div className="flex items-start justify-between gap-[8px]">
           <div className="flex items-center gap-[8px] flex-1 min-w-0">
-            {getCardStatusIcon(card.status)}
-            <span className="font-medium text-sm text-black truncate">
+            <span className="font-medium text-sm text-black truncate flex-1">
               {card.nome}
             </span>
           </div>
           {!isFinished && !isCardDelivered && (
             <div className="flex gap-[2px] opacity-0 group-hover:opacity-100 transition-opacity">
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  openEditCardDialog(e, card);
-                }}
-                className="h-[24px] w-[24px]"
-              >
-                <Pencil className="h-[12px] w-[12px]" />
-              </Button>
               <Button
                 variant="ghost"
                 size="icon"
@@ -2036,6 +2071,27 @@ export default function SprintDetails() {
             </div>
           )}
         </div>
+
+        {/* Entrega (logo abaixo do nome) + Tag atrasado/pendencias alinhada à direita */}
+        {card.data_fim && (
+          <div className="flex items-center justify-between gap-[8px] mt-[6px]">
+            <div className="flex items-center gap-[4px] text-xs text-black">
+              <Calendar className="h-[12px] w-[12px]" />
+              {formatDateTime(card.data_fim)}
+            </div>
+            <div className="flex items-center gap-[8px]">
+              {isCardAtrasado(card) ? (
+                <Badge variant="destructive" className="text-[10px] px-[6px] py-0 shrink-0">
+                  Atrasado
+                </Badge>
+              ) : card.status === 'parado_pendencias' ? (
+                <Badge variant="secondary" className="text-[10px] px-[6px] py-0 shrink-0">
+                  Pendências
+                </Badge>
+              ) : null}
+            </div>
+          </div>
+        )}
       
       {/* Badges de área e tipo */}
       <div className="flex flex-wrap gap-[4px] mt-[8px]">
@@ -2069,31 +2125,25 @@ export default function SprintDetails() {
         </p>
       )}
       
-        <div className="flex items-center justify-between mt-[8px]">
+      <div className="flex items-center justify-between mt-[8px]">
         <div className="flex items-center gap-[8px] flex-wrap">
-          {card.responsavel_name && (
-            <div className="flex items-center gap-[4px] text-xs text-black">
+          {card.responsavel_name ? (
+            <div className="flex items-center gap-[6px] text-xs text-black">
+              {responsibleRoleLabel ? (
+                <Badge
+                  variant="secondary"
+                  className={`text-[10px] px-[6px] py-[2px] rounded-full ${responsibleUser ? getRoleColor(responsibleUser.role) : ''}`}
+                >
+                  {responsibleRoleLabel}
+                </Badge>
+              ) : null}
+              <span className="truncate">{card.responsavel_name}</span>
+            </div>
+          ) : (
+            <div className="flex items-center gap-[6px] text-xs text-black">
               <User className="h-[12px] w-[12px]" />
-              {card.responsavel_name}
+              <span className="truncate">Sem usuário atribuído</span>
             </div>
-          )}
-          {card.data_fim && (
-            <div className="flex items-center gap-[4px] text-xs text-black">
-              <Calendar className="h-[12px] w-[12px]" />
-              {formatDateTime(card.data_fim)}
-            </div>
-          )}
-          {isCardAtrasado(card) && (
-            <Badge variant="destructive" className="text-[10px] px-[6px] py-0">
-              Atrasado
-            </Badge>
-          )}
-        </div>
-        <div className="flex items-center gap-[8px]">
-          {card.prioridade_display && (
-            <Badge variant="secondary" className="text-[10px] px-[6px] py-0">
-              {card.prioridade_display}
-            </Badge>
           )}
         </div>
       </div>

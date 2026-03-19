@@ -48,6 +48,9 @@ import type { Card as CardType } from '@/services/cardService';
 import type { Sprint } from '@/services/sprintService';
 import {
   ArrowLeft,
+  ArrowDown,
+  ArrowUp,
+  ArrowUpDown,
   FolderKanban,
   User,
   Calendar,
@@ -57,6 +60,7 @@ import {
   AlertCircle,
   XCircle,
   Clock,
+  Lock,
   ExternalLink,
   Trash2,
   Plus,
@@ -65,7 +69,7 @@ import {
   Pencil,
   Settings,
 } from 'lucide-react';
-import { formatDate, formatDateTime } from '@/lib/dateUtils';
+import { formatDate, formatDateTime, isCardAtrasado } from '@/lib/dateUtils';
 import { CardLogsModal } from '@/components/CardLogsModal';
 import { PendenciaModal } from '@/components/PendenciaModal';
 import { ConclusaoModal } from '@/components/ConclusaoModal';
@@ -119,7 +123,45 @@ const DEFAULT_PROJECT_STAGES = [
 
 type ProjectStage = (typeof DEFAULT_PROJECT_STAGES)[number];
 
-function DragOverlayCard({ card }: { card: CardType }) {
+const getRoleLabel = (role: string): string => {
+  switch (role) {
+    case 'desenvolvedor':
+      return 'Dev.';
+    case 'dados':
+      return 'Dados';
+    case 'processos':
+      return 'Proc.';
+    case 'supervisor':
+      return 'Super.';
+    case 'gerente':
+      return 'G. Proj.';
+    case 'admin':
+      return 'Admin';
+    default:
+      return role;
+  }
+};
+
+const getRoleColor = (role: string): string => {
+  switch (role) {
+    case 'admin':
+      return 'bg-purple-100 text-purple-800 border-purple-300';
+    case 'supervisor':
+      return 'bg-blue-100 text-blue-800 border-blue-300';
+    case 'gerente':
+      return 'bg-green-100 text-green-800 border-green-300';
+    case 'desenvolvedor':
+      return 'bg-orange-100 text-orange-800 border-orange-300';
+    case 'dados':
+      return 'bg-purple-100 text-purple-800 border-purple-300';
+    case 'processos':
+      return 'bg-red-100 text-red-800 border-red-300';
+    default:
+      return 'bg-gray-100 text-gray-800 border-gray-300';
+  }
+};
+
+function DragOverlayCard({ card, users }: { card: CardType; users: UserType[] }) {
   const getCardStatusIcon = (status: string) => {
     switch (status) {
       case 'a_desenvolver':
@@ -143,6 +185,8 @@ function DragOverlayCard({ card }: { card: CardType }) {
     switch (area) {
       case 'rpa':
         return 'bg-purple-100 text-purple-700';
+      case 'automacao':
+        return 'bg-purple-100 text-purple-700';
       case 'frontend':
         return 'bg-blue-100 text-blue-700';
       case 'backend':
@@ -154,6 +198,11 @@ function DragOverlayCard({ card }: { card: CardType }) {
     }
   };
 
+  const responsibleUser = card.responsavel
+    ? users.find((u) => String(u.id) === String(card.responsavel))
+    : undefined;
+  const responsibleRoleLabel = responsibleUser ? getRoleLabel(responsibleUser.role) : '';
+
   return (
     <div
       className={`p-[12px] bg-[var(--color-card)] rounded-[8px] border-l-[3px] shadow-2xl opacity-95 rotate-2 w-[300px]`}
@@ -161,12 +210,32 @@ function DragOverlayCard({ card }: { card: CardType }) {
     >
       <div className="flex items-start justify-between gap-[8px]">
         <div className="flex items-center gap-[8px] flex-1 min-w-0">
-          {getCardStatusIcon(card.status)}
-          <span className="font-medium text-sm text-black truncate">
+          <span className="font-medium text-sm text-black truncate flex-1">
             {card.nome}
           </span>
         </div>
       </div>
+
+      {/* Entrega (logo abaixo do nome) + Tag atrasado/pendencias alinhada à direita */}
+      {card.data_fim && (
+        <div className="flex items-center justify-between gap-[8px] mt-[6px]">
+          <div className="flex items-center gap-[4px] text-xs text-black">
+            <Calendar className="h-[12px] w-[12px]" />
+            {formatDate(card.data_fim)}
+          </div>
+          <div className="flex items-center gap-[8px]">
+            {isCardAtrasado(card) ? (
+              <Badge variant="destructive" className="text-[10px] px-[6px] py-0 shrink-0">
+                Atrasado
+              </Badge>
+            ) : card.status === 'parado_pendencias' ? (
+              <Badge variant="secondary" className="text-[10px] px-[6px] py-0 shrink-0">
+                Pendências
+              </Badge>
+            ) : null}
+          </div>
+        </div>
+      )}
 
       {/* Badges de área e tipo */}
       <div className="flex flex-wrap gap-[4px] mt-[8px]">
@@ -196,24 +265,25 @@ function DragOverlayCard({ card }: { card: CardType }) {
 
       <div className="flex items-center justify-between mt-[8px]">
         <div className="flex items-center gap-[8px]">
-          {card.responsavel_name && (
-            <div className="flex items-center gap-[4px] text-xs text-black">
-              <User className="h-[12px] w-[12px]" />
-              {card.responsavel_name}
+          {card.responsavel_name ? (
+            <div className="flex items-center gap-[6px] text-xs text-black">
+              {responsibleRoleLabel ? (
+                <Badge
+                  variant="secondary"
+                  className={`text-[10px] px-[6px] py-[2px] rounded-full ${responsibleUser ? getRoleColor(responsibleUser.role) : ''}`}
+                >
+                  {responsibleRoleLabel}
+                </Badge>
+              ) : null}
+              <span className="truncate">{card.responsavel_name}</span>
             </div>
-          )}
-          {card.data_fim && (
-            <div className="flex items-center gap-[4px] text-xs text-black">
-              <Calendar className="h-[12px] w-[12px]" />
-              {formatDate(card.data_fim)}
+          ) : (
+            <div className="flex items-center gap-[6px] text-xs text-black">
+              <User className="h-[12px] w-[12px]" />
+              <span className="truncate">Sem usuário atribuído</span>
             </div>
           )}
         </div>
-        {card.prioridade_display && (
-          <Badge variant="secondary" className="text-[10px] px-[6px] py-0">
-            {card.prioridade_display}
-          </Badge>
-        )}
       </div>
     </div>
   );
@@ -226,6 +296,7 @@ function KanbanColumn({
   onCardDelete,
   disabled = false,
   userRole,
+  users,
 }: {
   stage: ProjectStage;
   cards: CardType[];
@@ -233,6 +304,7 @@ function KanbanColumn({
   onCardDelete: (e: React.MouseEvent, cardId: string) => void;
   disabled?: boolean;
   userRole?: string;
+  users: UserType[];
 }) {
   const { setNodeRef, isOver } = useDroppable({
     id: stage.id,
@@ -260,6 +332,8 @@ function KanbanColumn({
   const getAreaBadgeColor = (area: string) => {
     switch (area) {
       case 'rpa':
+        return 'bg-purple-100 text-purple-700';
+      case 'automacao':
         return 'bg-purple-100 text-purple-700';
       case 'frontend':
         return 'bg-blue-100 text-blue-700';
@@ -304,6 +378,7 @@ function KanbanColumn({
                   getAreaBadgeColor={getAreaBadgeColor}
                   disabled={disabled}
                   userRole={userRole}
+                  users={users}
                 />
               ))}
             </SortableContext>
@@ -322,6 +397,7 @@ function KanbanCard({
   getAreaBadgeColor,
   disabled = false,
   userRole,
+  users,
 }: {
   card: CardType;
   onClick: () => void;
@@ -330,6 +406,7 @@ function KanbanCard({
   getAreaBadgeColor: (area: string) => string;
   disabled?: boolean;
   userRole?: string;
+  users: UserType[];
 }) {
   // Verificar se card está finalizado ou inviabilizado
   const isCardFinished = card.status === 'finalizado' || card.status === 'inviabilizado';
@@ -342,6 +419,11 @@ function KanbanCard({
   // - Se sprint não está finalizada
   // - Se card está inviabilizado, apenas admin ou supervisor podem deletar
   const canDelete = !disabled && (!isInviabilizado || userRole === 'admin' || userRole === 'supervisor');
+
+  const responsibleUser = card.responsavel
+    ? users.find((u) => String(u.id) === String(card.responsavel))
+    : undefined;
+  const responsibleRoleLabel = responsibleUser ? getRoleLabel(responsibleUser.role) : '';
 
   const {
     attributes,
@@ -373,8 +455,7 @@ function KanbanCard({
       {/* Aplica cor exata via inline style (garante HEX) */}
       <div className="flex items-start justify-between gap-[8px]">
         <div className="flex items-center gap-[8px] flex-1 min-w-0">
-          {getCardStatusIcon(card.status)}
-          <span className="font-medium text-sm text-black truncate">
+          <span className="font-medium text-sm text-black truncate flex-1">
             {card.nome}
           </span>
         </div>
@@ -394,6 +475,27 @@ function KanbanCard({
           </div>
         )}
       </div>
+
+      {/* Entrega (logo abaixo do nome) + Tag atrasado/pendencias alinhada à direita */}
+      {card.data_fim && (
+        <div className="flex items-center justify-between gap-[8px] mt-[6px]">
+          <div className="flex items-center gap-[4px] text-xs text-black">
+            <Calendar className="h-[12px] w-[12px]" />
+            {formatDate(card.data_fim)}
+          </div>
+          <div className="flex items-center gap-[8px]">
+            {isCardAtrasado(card) ? (
+              <Badge variant="destructive" className="text-[10px] px-[6px] py-0 shrink-0">
+                Atrasado
+              </Badge>
+            ) : card.status === 'parado_pendencias' ? (
+              <Badge variant="secondary" className="text-[10px] px-[6px] py-0 shrink-0">
+                Pendências
+              </Badge>
+            ) : null}
+          </div>
+        </div>
+      )}
 
       {/* Badges de área e tipo */}
       <div className="flex flex-wrap gap-[4px] mt-[8px]">
@@ -429,24 +531,25 @@ function KanbanCard({
 
       <div className="flex items-center justify-between mt-[8px]">
         <div className="flex items-center gap-[8px]">
-          {card.responsavel_name && (
-            <div className="flex items-center gap-[4px] text-xs text-black">
-              <User className="h-[12px] w-[12px]" />
-              {card.responsavel_name}
+          {card.responsavel_name ? (
+            <div className="flex items-center gap-[6px] text-xs text-black">
+              {responsibleRoleLabel ? (
+                <Badge
+                  variant="secondary"
+                  className={`text-[10px] px-[6px] py-[2px] rounded-full ${responsibleUser ? getRoleColor(responsibleUser.role) : ''}`}
+                >
+                  {responsibleRoleLabel}
+                </Badge>
+              ) : null}
+              <span className="truncate">{card.responsavel_name}</span>
             </div>
-          )}
-          {card.data_fim && (
-            <div className="flex items-center gap-[4px] text-xs text-black">
-              <Calendar className="h-[12px] w-[12px]" />
-              {formatDate(card.data_fim)}
+          ) : (
+            <div className="flex items-center gap-[6px] text-xs text-black">
+              <User className="h-[12px] w-[12px]" />
+              <span className="truncate">Sem usuário atribuído</span>
             </div>
           )}
         </div>
-        {card.prioridade_display && (
-          <Badge variant="secondary" className="text-[10px] px-[6px] py-0">
-            {card.prioridade_display}
-          </Badge>
-        )}
       </div>
     </div>
   );
@@ -2042,12 +2145,13 @@ export default function ProjectDetails() {
                 onCardDelete={handleCardDelete}
                 disabled={sprintIsFinished}
                 userRole={user?.role}
+                users={users}
               />
             ))}
           </div>
           <DragOverlay>
             {activeCard ? (
-              <DragOverlayCard card={activeCard} />
+              <DragOverlayCard card={activeCard} users={users} />
             ) : null}
           </DragOverlay>
         </DndContext>

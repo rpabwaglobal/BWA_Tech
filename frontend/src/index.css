@@ -36,6 +36,11 @@
   --color-input: hsl(214 32% 91%);
   --color-ring: var(--color-primary);
 
+  /* Scrollbar (modo claro) */
+  --scrollbar-track: transparent;
+  --scrollbar-thumb: var(--color-muted-foreground);
+  --scrollbar-thumb-hover: var(--color-foreground);
+
   /* === BORDER RADIUS (múltiplos de 4) === */
   --radius-sm: 4px;
   --radius-md: 8px;
@@ -92,15 +97,43 @@
   --color-border: hsl(215 25% 22%);
   --color-input: hsl(215 25% 22%);
   --color-ring: var(--color-primary);
+
+  /* Scrollbar (modo escuro) */
+  --scrollbar-track: transparent;
+  --scrollbar-thumb: var(--color-muted-foreground);
+  --scrollbar-thumb-hover: var(--color-foreground);
 }
 
 @layer base {
   * {
     border-color: var(--color-border);
+    /* Firefox: largura 'thin' e cores via variáveis */
+    scrollbar-width: thin;
+    scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
   }
   body {
     background-color: var(--color-background);
     color: var(--color-foreground);
     font-feature-settings: "rlig" 1, "calt" 1;
   }
+}
+
+/* Chrome/Edge/Safari: estilo de scrollbar */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--scrollbar-track);
+}
+
+::-webkit-scrollbar-thumb {
+  background-color: var(--scrollbar-thumb);
+  border-radius: 9999px;
+  border: 2px solid var(--scrollbar-track);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background-color: var(--scrollbar-thumb-hover);
 }

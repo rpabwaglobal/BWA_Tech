@@ -227,6 +227,7 @@ class CardArea(models.TextChoices):
     BACKEND = 'backend', 'Backend'
     SCRIPT = 'script', 'Script'
     SISTEMA = 'sistema', 'Sistema'
+    AUTOMACAO = 'automacao', 'Automação'
 
 
 class CardType(models.TextChoices):

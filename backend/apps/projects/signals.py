@@ -99,6 +99,7 @@ def card_created_or_updated(sender, instance, created, **kwargs):
             'backend': 'Backend',
             'script': 'Script',
             'sistema': 'Sistema',
+            'automacao': 'Automação',
         }
         
         tipo_labels = {

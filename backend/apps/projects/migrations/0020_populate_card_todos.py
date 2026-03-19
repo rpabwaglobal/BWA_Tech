@@ -60,6 +60,18 @@ def populate_card_todos(apps, schema_editor):
             {'id': 'documentacao', 'label': 'Documentação'},
             {'id': 'correcoes_code_review', 'label': 'Correções Code Review'},
         ],
+        'automacao': [
+            {'id': 'ler_script_conferir', 'label': 'Ler Script E Conferir Informações Do Vídeo'},
+            {'id': 'solicitar_usuario_vm', 'label': 'Solicitar Usuário Para Acessar A Vm'},
+            {'id': 'testes_iniciais_local', 'label': 'Testes Iniciais Na Máquina Local'},
+            {'id': 'configurar_projeto_vm', 'label': 'Configurar Projeto Na Vm'},
+            {'id': 'desenvolvimento_basico', 'label': 'Desenvolvimento (Básico)'},
+            {'id': 'desenvolvimento_medio', 'label': 'Desenvolvimento (Médio)'},
+            {'id': 'desenvolvimento_dificil', 'label': 'Desenvolvimento (Dificl)'},
+            {'id': 'testes_homologacao_mapeamento', 'label': 'Testes/Homologação E Mapeamento De Erros'},
+            {'id': 'documentacao', 'label': 'Documentação'},
+            {'id': 'correcoes_code_review', 'label': 'Correções Code Review'},
+        ],
         'sistema': [
             {'id': 'ler_script_conferir', 'label': 'Ler Script E Conferir Informações Do Vídeo'},
             {'id': 'solicitar_usuario_vm', 'label': 'Solicitar Usuário Para Acessar A Vm'},

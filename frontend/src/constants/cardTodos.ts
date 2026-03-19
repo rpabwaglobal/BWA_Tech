@@ -53,6 +53,18 @@ export const CARD_TODOS_BY_AREA: Record<string, TodoItem[]> = {
     { id: 'documentacao', label: 'Documentação', hours: 0 },
     { id: 'correcoes_code_review', label: 'Correções Code Review', hours: 0 },
   ],
+  automacao: [
+    { id: 'ler_script_conferir', label: 'Ler Script E Conferir Informações Do Vídeo', hours: 0 },
+    { id: 'solicitar_usuario_vm', label: 'Solicitar Usuário Para Acessar A Vm', hours: 0 },
+    { id: 'testes_iniciais_local', label: 'Testes Iniciais Na Máquina Local', hours: 0 },
+    { id: 'configurar_projeto_vm', label: 'Configurar Projeto Na Vm', hours: 0 },
+    { id: 'desenvolvimento_basico', label: 'Desenvolvimento (Básico)', hours: 0 },
+    { id: 'desenvolvimento_medio', label: 'Desenvolvimento (Médio)', hours: 0 },
+    { id: 'desenvolvimento_dificil', label: 'Desenvolvimento (Dificl)', hours: 0 },
+    { id: 'testes_homologacao_mapeamento', label: 'Testes/Homologação E Mapeamento De Erros', hours: 0 },
+    { id: 'documentacao', label: 'Documentação', hours: 0 },
+    { id: 'correcoes_code_review', label: 'Correções Code Review', hours: 0 },
+  ],
   sistema: [
     { id: 'ler_script_conferir', label: 'Ler Script E Conferir Informações Do Vídeo', hours: 0 },
     { id: 'solicitar_usuario_vm', label: 'Solicitar Usuário Para Acessar A Vm', hours: 0 },

@@ -234,8 +234,12 @@ class CardSerializer(serializers.ModelSerializer):
                 'baixa': 'Baixa', 'media': 'Média', 'alta': 'Alta', 'absoluta': 'Absoluta',
             }
             area_labels = {
-                'rpa': 'RPA', 'frontend': 'Frontend', 'backend': 'Backend',
-                'script': 'Script', 'sistema': 'Sistema',
+                'rpa': 'RPA',
+                'frontend': 'Frontend',
+                'backend': 'Backend',
+                'script': 'Script',
+                'sistema': 'Sistema',
+                'automacao': 'Automação',
             }
             tipo_labels = {
                 'nova_robotizacao': 'Nova Robotização',
@@ -391,6 +395,19 @@ class CardSerializer(serializers.ModelSerializer):
                     {'id': 'pull_aplicacao_vm', 'label': 'Pull Da Aplicação Na Vm'},
                 ],
                 'rpa': [
+                    {'id': 'ler_script_conferir', 'label': 'Ler Script E Conferir Informações Do Vídeo'},
+                    {'id': 'solicitar_usuario_vm', 'label': 'Solicitar Usuário Para Acessar A Vm'},
+                    {'id': 'testes_iniciais_local', 'label': 'Testes Iniciais Na Máquina Local'},
+                    {'id': 'configurar_projeto_vm', 'label': 'Configurar Projeto Na Vm'},
+                    {'id': 'desenvolvimento_basico', 'label': 'Desenvolvimento (Básico)'},
+                    {'id': 'desenvolvimento_medio', 'label': 'Desenvolvimento (Médio)'},
+                    {'id': 'desenvolvimento_dificil', 'label': 'Desenvolvimento (Dificl)'},
+                    {'id': 'testes_homologacao_mapeamento', 'label': 'Testes/Homologação E Mapeamento De Erros'},
+                    {'id': 'documentacao', 'label': 'Documentação'},
+                    {'id': 'correcoes_code_review', 'label': 'Correções Code Review'},
+                ],
+                # Automação compartilha o mesmo conjunto de TODOs de RPA por enquanto.
+                'automacao': [
                     {'id': 'ler_script_conferir', 'label': 'Ler Script E Conferir Informações Do Vídeo'},
                     {'id': 'solicitar_usuario_vm', 'label': 'Solicitar Usuário Para Acessar A Vm'},
                     {'id': 'testes_iniciais_local', 'label': 'Testes Iniciais Na Máquina Local'},
