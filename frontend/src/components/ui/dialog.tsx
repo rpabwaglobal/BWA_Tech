@@ -7,10 +7,12 @@ interface DialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   children: React.ReactNode;
+  /** Classes do wrapper externo (largura). Padrão: max-w-lg */
+  containerClassName?: string;
 }
 
 // Backdrop z-50; card centralizado z-[60] (sem camada full-screen). Confetti z-55 fica visível ao redor do card.
-const Dialog: React.FC<DialogProps> = ({ open, onOpenChange, children }) => {
+const Dialog: React.FC<DialogProps> = ({ open, onOpenChange, children, containerClassName }) => {
   if (!open) return null;
 
   return (
@@ -25,7 +27,10 @@ const Dialog: React.FC<DialogProps> = ({ open, onOpenChange, children }) => {
       )}
       {createPortal(
         <div
-          className="fixed left-1/2 top-1/2 z-[60] w-full max-w-lg -translate-x-1/2 -translate-y-1/2 px-4"
+          className={cn(
+            'fixed left-1/2 top-1/2 z-[60] w-full -translate-x-1/2 -translate-y-1/2 px-4',
+            containerClassName ?? 'max-w-lg',
+          )}
           onClick={(e) => e.stopPropagation()}
         >
           {children}

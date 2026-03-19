@@ -10,14 +10,21 @@ const DropdownMenuContext = React.createContext<DropdownMenuContextValue | undef
 
 interface DropdownMenuProps {
   children: React.ReactNode
+  /** Padrão: inline-block (encolhe ao conteúdo). Use p.ex. `block w-full` para o trigger preencher o pai. */
+  className?: string
 }
 
-const DropdownMenu = ({ children }: DropdownMenuProps) => {
+const DropdownMenu = ({ children, className }: DropdownMenuProps) => {
   const [open, setOpen] = React.useState(false)
 
   return (
     <DropdownMenuContext.Provider value={{ open, setOpen }}>
-      <div className="relative inline-block text-left">
+      <div
+        className={cn(
+          'relative text-left',
+          className ?? 'inline-block',
+        )}
+      >
         {children}
       </div>
     </DropdownMenuContext.Provider>
