@@ -162,7 +162,7 @@ function DragOverlayCard({ card }: { card: CardType }) {
       <div className="flex items-start justify-between gap-[8px]">
         <div className="flex items-center gap-[8px] flex-1 min-w-0">
           {getCardStatusIcon(card.status)}
-          <span className="font-medium text-sm text-[var(--color-foreground)] truncate">
+          <span className="font-medium text-sm text-black truncate">
             {card.nome}
           </span>
         </div>
@@ -374,7 +374,7 @@ function KanbanCard({
       <div className="flex items-start justify-between gap-[8px]">
         <div className="flex items-center gap-[8px] flex-1 min-w-0">
           {getCardStatusIcon(card.status)}
-          <span className="font-medium text-sm text-[var(--color-foreground)] truncate">
+          <span className="font-medium text-sm text-black truncate">
             {card.nome}
           </span>
         </div>
