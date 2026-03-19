@@ -13,7 +13,6 @@ export default defineConfig({
         'assets/bwa-black.png',
         'assets/bwa-white.png',
         'gradients/**/*.webp',
-        'gradients/**/*.png',
       ],
       manifest: {
         name: 'BWA Tech',
@@ -29,6 +28,9 @@ export default defineConfig({
       },
       workbox: {
         globPatterns: ['**/*.{js,css,html,ico,png,svg,webp}'],
+        // PNGs de gradients são muito grandes para precache; usamos WebP no precache
+        // e deixamos PNG apenas para fallback em runtime.
+        globIgnores: ['**/gradients/**/*.png'],
         runtimeCaching: [
           {
             urlPattern: /\/gradients\/.*\.(webp|png)$/i,
