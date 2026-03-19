@@ -192,7 +192,8 @@ export const cardService = {
     return allCards;
   },
 
-  async getByProject(projectId: string): Promise<Card[]> {
+  async getByProject(projectId: string, options?: { includeSuggestions?: boolean }): Promise<Card[]> {
+    const includeSuggestions = !!options?.includeSuggestions;
     const allCards: Card[] = [];
     let nextUrl: string | null = `/cards/?projeto=${projectId}`;
     
@@ -201,8 +202,8 @@ export const cardService = {
       const response = await api.get<PaginatedResponse<Card> | Card[]>(nextUrl);
       
       if (Array.isArray(response.data)) {
-        // Se não for paginado, retornar diretamente
-        return response.data;
+        // Se não for paginado, retornar diretamente (respeitando filtro de sugestões)
+        return filterSuggestionCards(response.data, includeSuggestions);
       }
       
       // Se for paginado, adicionar os resultados e verificar se há próxima página
@@ -235,7 +236,7 @@ export const cardService = {
       }
     }
     
-    return allCards;
+    return filterSuggestionCards(allCards, includeSuggestions);
   },
 
   async getByResponsavel(userId: string): Promise<Card[]> {

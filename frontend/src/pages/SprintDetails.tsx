@@ -400,12 +400,10 @@ export default function SprintDetails() {
     if (!sprintId) return;
     setLoading(true);
     try {
-      const [sprintData, projectsData, cardsData, usersData, allSprintsData] = await Promise.all([
+      const [sprintData, projectsData, usersData] = await Promise.all([
         sprintService.getById(sprintId),
         projectService.getAll(),
-        cardService.getAll(),
         userService.getAll(),
-        sprintService.getAll(), // Para encontrar próxima sprint
       ]);
 
       // Filtrar projetos da sprint - garantir comparação correta de IDs (string)
@@ -416,8 +414,14 @@ export default function SprintDetails() {
       });
       setSprint(sprintData);
       setProjects(sprintProjects);
-      setCards(cardsData);
       setUsers(usersData);
+
+      // Buscar cards apenas dos projetos da sprint (evita carregar o sistema inteiro)
+      const cardsPerProject = await Promise.all(
+        sprintProjects.map((p) => cardService.getByProject(String(p.id)).catch(() => [])),
+      );
+      const cardsData = cardsPerProject.flat();
+      setCards(cardsData);
 
       // Carregar configurações de Kanban por projeto (para respeitar etapas configuradas)
       try {
@@ -460,6 +464,7 @@ export default function SprintDetails() {
 
       // Verificar se sprint está finalizada e mover cards pendentes
       if (isSprintFinished(sprintData)) {
+        const allSprintsData = await sprintService.getAll(); // Para encontrar próxima sprint
         await movePendingCardsToNextSprint(sprintData, sprintProjects, cardsData, allSprintsData);
       }
 
