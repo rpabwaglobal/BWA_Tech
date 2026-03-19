@@ -17,10 +17,8 @@ import {
 } from '@/components/ui/dialog';
 import { sprintService } from '@/services/sprintService';
 import { projectService } from '@/services/projectService';
-import { cardService } from '@/services/cardService';
 import type { Sprint } from '@/services/sprintService';
 import type { Project } from '@/services/projectService';
-import type { Card as CardType } from '@/services/cardService';
 import {
   Plus,
   Calendar,
@@ -52,7 +50,6 @@ export default function Sprints() {
   const navigate = useNavigate();
   const [sprints, setSprints] = useState<Sprint[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
-  const [cards, setCards] = useState<CardType[]>([]);
   const [loading, setLoading] = useState(true);
   const [showFinishedSprints, setShowFinishedSprints] = useState(true);
 
@@ -95,7 +92,7 @@ export default function Sprints() {
   const loadData = async () => {
     setLoading(true);
     try {
-      const [sprintsData, projectsData, cardsData] = await Promise.all([
+      const [sprintsData, projectsData] = await Promise.all([
         sprintService.getAll().catch((err) => {
           console.error('Erro ao carregar sprints:', err);
           return [];
@@ -104,19 +101,13 @@ export default function Sprints() {
           console.error('Erro ao carregar projetos:', err);
           return [];
         }),
-        cardService.getAll().catch((err) => {
-          console.error('Erro ao carregar cards:', err);
-          return [];
-        }),
       ]);
       setSprints(Array.isArray(sprintsData) ? sprintsData : []);
       setProjects(Array.isArray(projectsData) ? projectsData : []);
-      setCards(Array.isArray(cardsData) ? cardsData : []);
     } catch (error) {
       console.error('Erro ao carregar dados:', error);
       setSprints([]);
       setProjects([]);
-      setCards([]);
     } finally {
       setLoading(false);
     }
@@ -132,34 +123,10 @@ export default function Sprints() {
     });
   };
 
-  const getCardsForSprint = (sprintId: string) => {
-    const sprintProjects = getProjectsForSprint(sprintId);
-    return cards.filter((c) => sprintProjects.some((p) => p.id === c.projeto));
-  };
-
   // Helper para interpretar datas (YYYY-MM-DD) como datas locais (sem fuso)
   const parseLocalDate = (dateString: string) => {
     const [year, month, day] = dateString.split('-').map(Number);
     return new Date(year, month - 1, day);
-  };
-
-  // Calcular estatísticas dos cards de uma sprint
-  const getSprintCardStats = (sprintId: string) => {
-    const sprintCards = getCardsForSprint(sprintId);
-    const today = new Date();
-    
-    const total = sprintCards.length;
-    const finalizados = sprintCards.filter((c) => c.status === 'finalizado').length;
-    const emAndamento = sprintCards.filter((c) => 
-      c.status === 'em_desenvolvimento' || c.status === 'em_homologacao'
-    ).length;
-    const emAtraso = sprintCards.filter((c) => {
-      if (!c.data_fim) return false;
-      const dataFim = parseLocalDate(c.data_fim);
-      return dataFim < today && c.status !== 'finalizado' && c.status !== 'inviabilizado';
-    }).length;
-
-    return { total, finalizados, emAndamento, emAtraso };
   };
 
   // Categorizar sprints
@@ -647,7 +614,12 @@ export default function Sprints() {
               {emAndamento.length > 0 ? (
                 emAndamento.map((sprint) => {
                   const sprintProjects = getProjectsForSprint(sprint.id);
-                  const stats = getSprintCardStats(sprint.id);
+                  const stats = {
+                    total: sprint.cards_total ?? 0,
+                    finalizados: sprint.cards_finalizados ?? 0,
+                    emAndamento: sprint.cards_em_andamento ?? 0,
+                    emAtraso: sprint.cards_em_atraso ?? 0,
+                  };
                   return (
                     <Card
                       key={sprint.id}

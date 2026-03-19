@@ -134,17 +134,30 @@ export default function Projects() {
   const loadData = async () => {
     try {
       setLoading(true);
-      const [projectsData, sprintsData, cardsData, usersData] = await Promise.all([
+      const [projectsData, sprintsData, usersData] = await Promise.all([
         projectService.getAll(),
         sprintService.getAll(),
-        cardService.getAllWithSuggestions(),
         userService.getAll(),
       ]);
       // Garantir que os dados são arrays
       setProjects(Array.isArray(projectsData) ? projectsData : []);
       setSprints(Array.isArray(sprintsData) ? sprintsData : []);
-      setCards(Array.isArray(cardsData) ? cardsData : []);
       setUsers(Array.isArray(usersData) ? usersData : []);
+
+      // Carregar apenas as "Demandas a avaliar" (cards do projeto "Sugestões" com status a_desenvolver)
+      const normalizedProjects = Array.isArray(projectsData) ? projectsData : [];
+      const sugestoesProjectLocal = normalizedProjects.find((p) => p.nome === 'Sugestões');
+      if (sugestoesProjectLocal?.id) {
+        const sugestoesCardsData = await cardService.getByProjectAndStatus(
+          sugestoesProjectLocal.id,
+          'a_desenvolver',
+          { includeSuggestions: true }
+        );
+        setCards(Array.isArray(sugestoesCardsData) ? sugestoesCardsData : []);
+      } else {
+        setCards([]);
+      }
+
       // Carregar solicitações pendentes para exibir a lista a todos os usuários.
       // Aprovar/Recusar continua restrito no front (e no backend).
       setLoadingDateChangeRequests(true);
@@ -547,9 +560,9 @@ export default function Projects() {
       });
 
       // Atualizar o card localmente sem recarregar tudo
-      setCards((prevCards) =>
-        prevCards.map((c) => (c.id === card.id ? updatedCard : c))
-      );
+      // Como a card saiu do projeto "Sugestões", removemos do estado local
+      // (este estado agora contém apenas as demandas Sugestões/a_desenvolver).
+      setCards((prevCards) => prevCards.filter((c) => c.id !== card.id));
 
       setDemandViewDialogOpen(false);
     } catch (err: any) {
@@ -655,9 +668,7 @@ export default function Projects() {
 
   // Filtrar projetos que são sugestões (projeto "Sugestões")
   const sugestoesProject = projects.find(p => p.nome === 'Sugestões');
-  const sugestoesCards = sugestoesProject 
-    ? cards.filter(c => String(c.projeto || '') === String(sugestoesProject.id || '') && c.status === 'a_desenvolver')
-    : [];
+  const sugestoesCards = cards;
   
   // Filtrar projetos normais (excluindo "Sugestões" e "Projetos Descartados")
   const projetosNormais = projects.filter(p => p.nome !== 'Sugestões' && p.nome !== 'Projetos Descartados');
@@ -991,10 +1002,9 @@ export default function Projects() {
               <>
                 <div className="grid gap-[16px] md:grid-cols-2 lg:grid-cols-3">
                   {projetosEmSprint.slice(0, projetosEmSprintPage * itemsPerPage).map((project) => {
-                  const projectCards = cards.filter(c => String(c.projeto || '') === String(project.id || ''));
-                  const totalCards = projectCards.length;
-                  const cardsEntregues = projectCards.filter(c => c.status === 'finalizado' || c.status === 'inviabilizado').length;
-                  const cardsEmDesenvolvimento = projectCards.filter(c => c.status === 'em_desenvolvimento').length;
+                  const totalCards = project.cards_count ?? 0;
+                  const cardsEntregues = project.cards_entregues_count ?? 0;
+                  const cardsEmDesenvolvimento = project.cards_em_desenvolvimento_count ?? 0;
                   const projectSprint = sprints.find(s => String(s.id || '') === String(project.sprint || ''));
                   
                   return (
@@ -1079,10 +1089,9 @@ export default function Projects() {
                 <>
                   <div className="grid gap-[16px] md:grid-cols-2 lg:grid-cols-3">
                     {projetosEmPlanejamento.slice(0, projetosEmPlanejamentoPage * itemsPerPage).map((project) => {
-                  const projectCards = cards.filter(c => String(c.projeto || '') === String(project.id || ''));
-                  const totalCards = projectCards.length;
-                  const cardsEntregues = projectCards.filter(c => c.status === 'finalizado' || c.status === 'inviabilizado').length;
-                  const cardsEmDesenvolvimento = projectCards.filter(c => c.status === 'em_desenvolvimento').length;
+                  const totalCards = project.cards_count ?? 0;
+                  const cardsEntregues = project.cards_entregues_count ?? 0;
+                  const cardsEmDesenvolvimento = project.cards_em_desenvolvimento_count ?? 0;
                   const projectSprint = sprints.find(s => String(s.id || '') === String(project.sprint || ''));
                   
                   return (
@@ -1167,10 +1176,9 @@ export default function Projects() {
                 <>
                   <div className="grid gap-[16px] md:grid-cols-2 lg:grid-cols-3">
                     {projetosConcluidos.slice(0, projetosConcluidosPage * itemsPerPage).map((project) => {
-                  const projectCards = cards.filter(c => String(c.projeto || '') === String(project.id || ''));
-                  const totalCards = projectCards.length;
-                  const cardsEntregues = projectCards.filter(c => c.status === 'finalizado' || c.status === 'inviabilizado').length;
-                  const cardsEmDesenvolvimento = projectCards.filter(c => c.status === 'em_desenvolvimento').length;
+                  const totalCards = project.cards_count ?? 0;
+                  const cardsEntregues = project.cards_entregues_count ?? 0;
+                  const cardsEmDesenvolvimento = project.cards_em_desenvolvimento_count ?? 0;
                   const projectSprint = sprints.find(s => String(s.id || '') === String(project.sprint || ''));
                   
                   return (
@@ -1246,10 +1254,9 @@ export default function Projects() {
               </h3>
               <div className="grid gap-[16px] md:grid-cols-2 lg:grid-cols-3">
                 {projetosDescartados.map((project) => {
-                const projectCards = cards.filter(c => String(c.projeto || '') === String(project.id || ''));
-                const totalCards = projectCards.length;
-                const cardsEntregues = projectCards.filter(c => c.status === 'finalizado' || c.status === 'inviabilizado').length;
-                const cardsEmDesenvolvimento = projectCards.filter(c => c.status === 'em_desenvolvimento').length;
+                const totalCards = project.cards_count ?? 0;
+                const cardsEntregues = project.cards_entregues_count ?? 0;
+                const cardsEmDesenvolvimento = project.cards_em_desenvolvimento_count ?? 0;
                 
                 return (
                   <Card

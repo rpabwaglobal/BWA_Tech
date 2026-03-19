@@ -42,6 +42,10 @@ class SprintSerializer(serializers.ModelSerializer):
         input_formats=['%Y-%m-%d', '%Y-%m-%dT%H:%M:%S', '%Y-%m-%dT%H:%M', '%Y-%m-%dT%H:%M:%S.%f']
     )
     projects_count = serializers.IntegerField(source='projects.count', read_only=True)
+    cards_total = serializers.IntegerField(read_only=True)
+    cards_finalizados = serializers.IntegerField(read_only=True)
+    cards_em_andamento = serializers.IntegerField(read_only=True)
+    cards_em_atraso = serializers.IntegerField(read_only=True)
 
     def get_supervisor_name(self, obj):
         return format_user_name(obj.supervisor)
@@ -49,7 +53,9 @@ class SprintSerializer(serializers.ModelSerializer):
     class Meta:
         model = Sprint
         fields = ['id', 'nome', 'data_inicio', 'data_fim', 'duracao_dias', 
-                 'supervisor', 'supervisor_name', 'projects_count', 'finalizada', 'created_at', 'updated_at']
+                 'supervisor', 'supervisor_name', 'projects_count',
+                 'cards_total', 'cards_finalizados', 'cards_em_andamento', 'cards_em_atraso',
+                 'finalizada', 'created_at', 'updated_at']
         read_only_fields = ['created_at', 'updated_at', 'finalizada']
 
 
@@ -65,6 +71,8 @@ class ProjectSerializer(serializers.ModelSerializer):
         return format_user_name(obj.desenvolvedor)
     status_display = serializers.CharField(source='get_status_display', read_only=True)
     cards_count = serializers.IntegerField(source='cards.count', read_only=True)
+    cards_entregues_count = serializers.IntegerField(read_only=True)
+    cards_em_desenvolvimento_count = serializers.IntegerField(read_only=True)
 
     def validate_nome(self, value):
         """
@@ -96,7 +104,8 @@ class ProjectSerializer(serializers.ModelSerializer):
                  'data_criacao', 'data_avaliacao', 'data_atribuicao_gerente', 
                  'data_inicio_desenvolvimento', 'data_entrega', 'data_homologacao',
                  'data_adiamento_solicitada', 'nova_data_prevista', 'adiamento_aprovado',
-                 'cards_count', 'created_at', 'updated_at']
+                 'cards_count', 'cards_entregues_count', 'cards_em_desenvolvimento_count',
+                 'created_at', 'updated_at']
         read_only_fields = ['created_at', 'updated_at', 'data_criacao']
 
 

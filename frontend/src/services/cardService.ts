@@ -240,6 +240,51 @@ export const cardService = {
     return filterSuggestionCards(allCards, includeSuggestions);
   },
 
+  async getByProjectAndStatus(
+    projectId: string,
+    status: string,
+    options?: { includeSuggestions?: boolean }
+  ): Promise<Card[]> {
+    const includeSuggestions = !!options?.includeSuggestions;
+    const allCards: Card[] = [];
+    let nextUrl: string | null = `/cards/?projeto=${projectId}&status=${encodeURIComponent(status)}`;
+
+    while (nextUrl) {
+      const response = await api.get<PaginatedResponse<Card> | Card[]>(nextUrl);
+
+      if (Array.isArray(response.data)) {
+        // Se não for paginado, retornar diretamente (respeitando filtro de sugestões)
+        return filterSuggestionCards(response.data, includeSuggestions);
+      }
+
+      const paginatedData = response.data as PaginatedResponse<Card>;
+      allCards.push(...(paginatedData.results || []));
+
+      if (paginatedData.next) {
+        try {
+          const url = new URL(paginatedData.next);
+          let path = url.pathname + url.search;
+          if (path.startsWith('/api/')) {
+            path = path.substring(4); // Remove '/api'
+          }
+          nextUrl = path;
+        } catch {
+          let path = paginatedData.next.startsWith('/')
+            ? paginatedData.next
+            : paginatedData.next.replace(/^https?:\/\/[^/]+/, '');
+          if (path.startsWith('/api/')) {
+            path = path.substring(4); // Remove '/api'
+          }
+          nextUrl = path;
+        }
+      } else {
+        nextUrl = null;
+      }
+    }
+
+    return filterSuggestionCards(allCards, includeSuggestions);
+  },
+
   async getByResponsavel(userId: string): Promise<Card[]> {
     const allCards: Card[] = [];
     let nextUrl: string | null = `/cards/?responsavel=${userId}`;

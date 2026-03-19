@@ -22,6 +22,8 @@ export type Project = {
   nova_data_prevista?: string | null;
   adiamento_aprovado?: boolean;
   cards_count?: number;
+  cards_entregues_count?: number;
+  cards_em_desenvolvimento_count?: number;
   created_at?: string;
   updated_at?: string;
 };

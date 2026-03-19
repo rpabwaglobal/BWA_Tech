@@ -9,6 +9,10 @@ export type Sprint = {
   supervisor: string; // UUID
   supervisor_name?: string;
   projects_count?: number;
+  cards_total?: number;
+  cards_finalizados?: number;
+  cards_em_andamento?: number;
+  cards_em_atraso?: number;
   finalizada?: boolean;
   created_at?: string;
   updated_at?: string;

@@ -3,7 +3,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from django_filters.rest_framework import DjangoFilterBackend
-from django.db.models import Q, Max
+from django.db.models import Q, Max, Count
 from django.utils import timezone
 from datetime import datetime, timedelta
 from .models import (
@@ -40,6 +40,28 @@ class SprintViewSet(viewsets.ModelViewSet):
     ordering_fields = ['data_inicio', 'data_fim', 'created_at']
     ordering = ['-data_inicio']
 
+    def get_queryset(self):
+        hoje = timezone.localdate()
+        return (
+            Sprint.objects.all()
+            .annotate(
+                cards_total=Count('projects__cards'),
+                cards_finalizados=Count(
+                    'projects__cards',
+                    filter=Q(projects__cards__status='finalizado'),
+                ),
+                cards_em_andamento=Count(
+                    'projects__cards',
+                    filter=Q(projects__cards__status__in=['em_desenvolvimento', 'em_homologacao']),
+                ),
+                cards_em_atraso=Count(
+                    'projects__cards',
+                    filter=Q(projects__cards__data_fim__date__lt=hoje)
+                    & ~Q(projects__cards__status__in=['finalizado', 'inviabilizado']),
+                ),
+            )
+        )
+
     @action(detail=True, methods=['post'], url_path='finalizar')
     def finalizar(self, request, pk=None):
         if request.user.role not in ['supervisor', 'admin']:
@@ -74,6 +96,22 @@ class ProjectViewSet(viewsets.ModelViewSet):
     search_fields = ['nome', 'descricao']
     ordering_fields = ['created_at', 'data_criacao', 'data_entrega']
     ordering = ['-created_at']
+
+    def get_queryset(self):
+        # Contagens agregadas para evitar download de cards no frontend.
+        return (
+            Project.objects.all()
+            .annotate(
+                cards_entregues_count=Count(
+                    'cards',
+                    filter=Q(cards__status__in=['finalizado', 'inviabilizado']),
+                ),
+                cards_em_desenvolvimento_count=Count(
+                    'cards',
+                    filter=Q(cards__status__in=['em_desenvolvimento']),
+                ),
+            )
+        )
 
     def perform_create(self, serializer):
         """
