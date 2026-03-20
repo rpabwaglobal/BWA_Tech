@@ -74,7 +74,7 @@ import { CardLogsModal } from '@/components/CardLogsModal';
 import { PendenciaModal } from '@/components/PendenciaModal';
 import { ConclusaoModal } from '@/components/ConclusaoModal';
 import { cardLogService } from '@/services/cardLogService';
-import { getPriorityStyle } from '@/lib/priorityColors';
+import { getPriorityLabel, getPriorityStyle } from '@/lib/priorityColors';
 
 const DEFAULT_PROJECT_STAGES = [
   {
@@ -284,6 +284,9 @@ function DragOverlayCard({ card, users }: { card: CardType; users: UserType[] })
             </div>
           )}
         </div>
+        <span className="text-[10px] px-[6px] py-[2px] rounded-full bg-black/10 text-black font-medium shrink-0">
+          {getPriorityLabel(card.prioridade)}
+        </span>
       </div>
     </div>
   );
@@ -550,6 +553,9 @@ function KanbanCard({
             </div>
           )}
         </div>
+        <span className="text-[10px] px-[6px] py-[2px] rounded-full bg-black/10 text-black font-medium shrink-0">
+          {getPriorityLabel(card.prioridade)}
+        </span>
       </div>
     </div>
   );

@@ -82,7 +82,7 @@ import {
   formatColumnValueForDisplay,
 } from '@/lib/sprintCardsColumns';
 import { exportCardsToCSV, exportCardsToXLSX } from '@/lib/exportCards';
-import { getPriorityStyle } from '@/lib/priorityColors';
+import { getPriorityLabel, getPriorityStyle } from '@/lib/priorityColors';
 import { cn } from '@/lib/utils';
 
 type CardSortField = 'nome' | 'created_at' | 'responsavel_name' | 'prioridade' | 'status' | 'area' | 'tipo';
@@ -2146,6 +2146,9 @@ export default function SprintDetails() {
             </div>
           )}
         </div>
+        <span className="text-[10px] px-[6px] py-[2px] rounded-full bg-black/10 text-black font-medium shrink-0">
+          {getPriorityLabel(card.prioridade)}
+        </span>
       </div>
     </div>
     );
