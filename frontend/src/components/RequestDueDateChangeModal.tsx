@@ -8,14 +8,51 @@ import { DatePicker } from '@/components/ui/date-picker';
 import { cardService, type Card as CardType } from '@/services/cardService';
 import { cardDateChangeRequestService } from '@/services/cardDateChangeRequestService';
 
+/** Cards elegíveis: em desenvolvimento, com data de entrega, sprint do projeto ainda aberta (não finalizada). */
+export function filterCardsEligibleForDueDateRequest(
+  cards: CardType[],
+  options?: { sprintId?: string | null },
+): CardType[] {
+  const sid = options?.sprintId;
+  const restrictSprint = sid != null && String(sid).length > 0;
+
+  return cards.filter((c) => {
+    if (!c.data_fim) return false;
+    if (c.status !== 'em_desenvolvimento') return false;
+    if (['finalizado', 'inviabilizado'].includes(c.status)) return false;
+
+    const sprintRef = c.projeto_detail?.sprint;
+    if (!sprintRef) return false;
+
+    if (restrictSprint && String(sprintRef) !== String(sid)) return false;
+
+    const sd = c.projeto_detail?.sprint_detail;
+    if (!sd) return false;
+    if (sd.finalizada) return false;
+
+    return true;
+  });
+}
+
 type Props = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   preselectedCardId?: string | null;
   onCreated?: () => void;
+  /**
+   * Quando informado (ex.: página da sprint), restringe aos cards cujo projeto pertence a esta sprint.
+   * Em Projetos, omitir para listar todos os cards elegíveis em sprints ainda abertas.
+   */
+  sprintId?: string | null;
 };
 
-export function RequestDueDateChangeModal({ open, onOpenChange, preselectedCardId, onCreated }: Props) {
+export function RequestDueDateChangeModal({
+  open,
+  onOpenChange,
+  preselectedCardId,
+  onCreated,
+  sprintId = null,
+}: Props) {
   const { user } = useAuth();
   const [loadingCards, setLoadingCards] = useState(false);
   const [cards, setCards] = useState<CardType[]>([]);
@@ -31,8 +68,8 @@ export function RequestDueDateChangeModal({ open, onOpenChange, preselectedCardI
     setError('');
     setReason('');
     setRequestedDate('');
-    setSelectedCardId(preselectedCardId ? String(preselectedCardId) : '');
-  }, [open, preselectedCardId]);
+    setSelectedCardId('');
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;
@@ -41,19 +78,25 @@ export function RequestDueDateChangeModal({ open, onOpenChange, preselectedCardI
       setLoadingCards(true);
       try {
         const data = await cardService.getByResponsavel(String(user.id));
-        const eligible = (Array.isArray(data) ? data : [])
-          // Cards concluídos não entram na lista de solicitação de mudança de data.
-          // Mantém apenas cards com data_fim e que não estejam finalizados/inviabilizados.
-          .filter((c) => !!c.data_fim && !['finalizado', 'inviabilizado'].includes(c.status))
-          .sort((a, b) => (a.nome || '').localeCompare(b.nome || '', 'pt-BR'));
+        const list = Array.isArray(data) ? data : [];
+        const eligible = filterCardsEligibleForDueDateRequest(list, { sprintId }).sort((a, b) =>
+          (a.nome || '').localeCompare(b.nome || '', 'pt-BR'),
+        );
         setCards(eligible);
+        const pre = preselectedCardId ? String(preselectedCardId) : '';
+        if (pre && eligible.some((c) => String(c.id) === pre)) {
+          setSelectedCardId(pre);
+        } else {
+          setSelectedCardId('');
+        }
       } catch (e) {
         setCards([]);
+        setSelectedCardId('');
       } finally {
         setLoadingCards(false);
       }
     })();
-  }, [open, user?.id]);
+  }, [open, user?.id, sprintId, preselectedCardId]);
 
   const selectedCard = useMemo(() => {
     return cards.find((c) => String(c.id) === String(selectedCardId)) || null;
@@ -130,21 +173,21 @@ export function RequestDueDateChangeModal({ open, onOpenChange, preselectedCardI
       // Mensagem deve indicar somente o campo que precisa ser alterado.
       if (needsResponsavel && !needsDataFim) {
         setError(
-          `Ajuste necessário: o card precisa estar atribuído a você. Responsável atual: ${responsavelAtual}.`
+          `Ajuste necessário: o card precisa estar atribuído a você. Responsável atual: ${responsavelAtual}.`,
         );
         return;
       }
 
       if (needsDataFim && !needsResponsavel) {
         setError(
-          `Ajuste necessário: preencha a “Data e Hora de Entrega” (data_fim). Data atual: ${dataFimAtual}.`
+          `Ajuste necessário: preencha a “Data e Hora de Entrega” (data_fim). Data atual: ${dataFimAtual}.`,
         );
         return;
       }
 
       if (needsResponsavel && needsDataFim) {
         setError(
-          `Ajustes necessários no card.\nResponsável atual: ${responsavelAtual}.\nData atual: ${dataFimAtual}.`
+          `Ajustes necessários no card.\nResponsável atual: ${responsavelAtual}.\nData atual: ${dataFimAtual}.`,
         );
         return;
       }
@@ -156,7 +199,7 @@ export function RequestDueDateChangeModal({ open, onOpenChange, preselectedCardI
       }
 
       setError(
-        'Não foi possível criar a solicitação. Ajuste no card o responsável (Responsável) e/ou a “Data e Hora de Entrega” (data_fim) e tente novamente.'
+        'Não foi possível criar a solicitação. Ajuste no card o responsável (Responsável) e/ou a “Data e Hora de Entrega” (data_fim) e tente novamente.',
       );
     } finally {
       setSaving(false);
@@ -171,7 +214,8 @@ export function RequestDueDateChangeModal({ open, onOpenChange, preselectedCardI
         <DialogHeader>
           <DialogTitle>Solicitar reajuste de data</DialogTitle>
           <DialogDescription>
-            Escolha um card atribuído a você e informe a nova data de entrega. O motivo é opcional.
+            Escolha um card seu em desenvolvimento, vinculado a uma sprint ainda aberta
+            {sprintId ? ' nesta sprint' : ''}, e informe a nova data de entrega. O motivo é opcional.
           </DialogDescription>
         </DialogHeader>
 
@@ -187,10 +231,16 @@ export function RequestDueDateChangeModal({ open, onOpenChange, preselectedCardI
               <option value="">{loadingCards ? 'Carregando cards...' : 'Selecione um card'}</option>
               {cards.map((c) => (
                 <option key={String(c.id)} value={String(c.id)}>
-                  {c.nome}
+                  {c.projeto_detail?.nome ? `${c.nome} — ${c.projeto_detail.nome}` : c.nome}
                 </option>
               ))}
             </select>
+            {!loadingCards && cards.length === 0 && (
+              <p className="text-xs text-[var(--color-muted-foreground)]">
+                Nenhum card em desenvolvimento com data de entrega em sprint aberta
+                {sprintId ? ' nesta sprint' : ''}.
+              </p>
+            )}
             {selectedCard?.data_fim && (
               <p className="text-xs text-[var(--color-muted-foreground)]">
                 Data atual: {selectedCard.data_fim}
@@ -237,4 +287,3 @@ export function RequestDueDateChangeModal({ open, onOpenChange, preselectedCardI
     </Dialog>
   );
 }
-

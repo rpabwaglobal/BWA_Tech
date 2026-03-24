@@ -82,8 +82,19 @@ import {
   formatColumnValueForDisplay,
 } from '@/lib/sprintCardsColumns';
 import { exportCardsToCSV, exportCardsToXLSX } from '@/lib/exportCards';
-import { getPriorityLabel, getPriorityStyle } from '@/lib/priorityColors';
+import {
+  getPriorityLabel,
+  getPriorityStyle,
+  kanbanCardInkTextClass,
+  getKanbanAreaBadgeClasses,
+  kanbanMutedChipOnPastelClass,
+  kanbanScriptLinkOnPastelClass,
+} from '@/lib/priorityColors';
 import { cn } from '@/lib/utils';
+import {
+  readShowPriorityColorsOnKanbanCards,
+  SHOW_PRIORITY_COLORS_ON_KANBAN_CARDS_KEY,
+} from '@/lib/kanbanCardDisplayPreference';
 
 type CardSortField = 'nome' | 'created_at' | 'responsavel_name' | 'prioridade' | 'status' | 'area' | 'tipo';
 type CardSortDirection = 'asc' | 'desc';
@@ -137,6 +148,7 @@ export default function SprintDetails() {
   const [loading, setLoading] = useState(true);
 
   const [viewMode, setViewMode] = useState<'kanban' | 'lista'>('kanban');
+  const [showPriorityColorsOnCards, setShowPriorityColorsOnCards] = useState(readShowPriorityColorsOnKanbanCards);
   const [selectedColumnIds, setSelectedColumnIds] = useState<string[]>(SPRINT_CARDS_COLUMN_IDS);
   const [columnsDialogOpen, setColumnsDialogOpen] = useState(false);
   /** Lista: colunas com células expandidas (texto completo) */
@@ -395,6 +407,17 @@ export default function SprintDetails() {
       // Ignore se localStorage estiver indisponível
     }
   }, [selectedColumnIds, sprintId]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(
+        SHOW_PRIORITY_COLORS_ON_KANBAN_CARDS_KEY,
+        showPriorityColorsOnCards ? 'true' : 'false',
+      );
+    } catch {
+      // Ignore se localStorage estiver indisponível
+    }
+  }, [showPriorityColorsOnCards]);
 
   const loadData = async () => {
     if (!sprintId) return;
@@ -1834,23 +1857,6 @@ export default function SprintDetails() {
     }
   };
 
-  const getAreaBadgeColor = (area: string) => {
-    switch (area) {
-      case 'rpa':
-        return 'bg-purple-100 text-purple-700';
-      case 'automacao':
-        return 'bg-purple-100 text-purple-700';
-      case 'frontend':
-        return 'bg-blue-100 text-blue-700';
-      case 'backend':
-        return 'bg-green-100 text-green-700';
-      case 'script':
-        return 'bg-amber-100 text-amber-700';
-      default:
-        return 'bg-gray-100 text-gray-700';
-    }
-  };
-
   // Tag abreviada de cargo (mesma ideia do UserSelect)
   const getRoleLabel = (role: string): string => {
     switch (role) {
@@ -2041,17 +2047,23 @@ export default function SprintDetails() {
       ? users.find((u) => String(u.id) === String(card.responsavel))
       : undefined;
     const responsibleRoleLabel = responsibleUser ? getRoleLabel(responsibleUser.role) : '';
-    
+    const ink = kanbanCardInkTextClass(showPriorityColorsOnCards);
+
     return (
       <div
         key={card.id}
-        className={`p-[12px] bg-[var(--color-card)] rounded-[8px] border-l-[3px] shadow-sm hover:shadow-md transition-shadow cursor-pointer ${isCardDelivered ? 'opacity-70' : ''} ${isFinished ? 'opacity-60' : ''} group`}
-        style={getPriorityStyle(card.prioridade, card.id)}
+        className={cn(
+          'p-[12px] rounded-[8px] border-l-[3px] shadow-sm hover:shadow-md transition-shadow cursor-pointer bg-[var(--color-kanban-card)] group',
+          showPriorityColorsOnCards ? '' : 'border-l-[var(--color-border)]',
+          isCardDelivered ? 'opacity-70' : '',
+          isFinished ? 'opacity-60' : '',
+        )}
+        style={showPriorityColorsOnCards ? getPriorityStyle(card.prioridade, card.id) : undefined}
         onClick={(e) => openEditCardDialog(e, card)}
       >
         <div className="flex items-start justify-between gap-[8px]">
           <div className="flex items-center gap-[8px] flex-1 min-w-0">
-            <span className="font-medium text-sm text-black truncate flex-1">
+            <span className={cn('font-medium text-sm truncate flex-1', ink)}>
               {card.nome}
             </span>
           </div>
@@ -2075,7 +2087,7 @@ export default function SprintDetails() {
         {/* Entrega (logo abaixo do nome) + Tag atrasado/pendencias alinhada à direita */}
         {card.data_fim && (
           <div className="flex items-center justify-between gap-[8px] mt-[6px]">
-            <div className="flex items-center gap-[4px] text-xs text-black">
+            <div className={cn('flex items-center gap-[4px] text-xs', ink)}>
               <Calendar className="h-[12px] w-[12px]" />
               {formatDateTime(card.data_fim)}
             </div>
@@ -2096,12 +2108,19 @@ export default function SprintDetails() {
       {/* Badges de área e tipo */}
       <div className="flex flex-wrap gap-[4px] mt-[8px]">
         {card.area_display && (
-          <span className={`text-[10px] px-[6px] py-[2px] rounded-full ${getAreaBadgeColor(card.area)}`}>
+          <span
+            className={`text-[10px] px-[6px] py-[2px] rounded-full ${getKanbanAreaBadgeClasses(card.area, showPriorityColorsOnCards)}`}
+          >
             {card.area_display}
           </span>
         )}
         {card.tipo_display && (
-          <span className="text-[10px] px-[6px] py-[2px] rounded-full bg-gray-100 text-gray-700">
+          <span
+            className={cn(
+              'text-[10px] px-[6px] py-[2px] rounded-full',
+              showPriorityColorsOnCards ? kanbanMutedChipOnPastelClass : cn('bg-[var(--color-muted)]', ink),
+            )}
+          >
             {card.tipo_display}
           </span>
         )}
@@ -2111,7 +2130,12 @@ export default function SprintDetails() {
             target="_blank"
             rel="noopener noreferrer"
             onClick={(e) => e.stopPropagation()}
-            className="flex items-center gap-[2px] text-[10px] px-[6px] py-[2px] rounded-full bg-blue-100 text-blue-700 hover:bg-blue-200 transition-colors"
+            className={cn(
+              'flex items-center gap-[2px] text-[10px] px-[6px] py-[2px] rounded-full transition-colors',
+              showPriorityColorsOnCards
+                ? kanbanScriptLinkOnPastelClass
+                : 'bg-[var(--color-primary)]/20 text-[var(--color-primary)] hover:bg-[var(--color-primary)]/35',
+            )}
           >
             <ExternalLink className="h-[10px] w-[10px]" />
             Script
@@ -2120,7 +2144,7 @@ export default function SprintDetails() {
       </div>
 
       {card.descricao && (
-        <p className="mt-[8px] text-xs text-black line-clamp-2">
+        <p className={cn('mt-[8px] text-xs line-clamp-2', ink)}>
           {card.descricao}
         </p>
       )}
@@ -2128,7 +2152,7 @@ export default function SprintDetails() {
       <div className="flex items-center justify-between mt-[8px]">
         <div className="flex items-center gap-[8px] flex-wrap">
           {card.responsavel_name ? (
-            <div className="flex items-center gap-[6px] text-xs text-black">
+            <div className={cn('flex items-center gap-[6px] text-xs', ink)}>
               {responsibleRoleLabel ? (
                 <Badge
                   variant="secondary"
@@ -2140,13 +2164,20 @@ export default function SprintDetails() {
               <span className="truncate">{card.responsavel_name}</span>
             </div>
           ) : (
-            <div className="flex items-center gap-[6px] text-xs text-black">
+            <div className={cn('flex items-center gap-[6px] text-xs', ink)}>
               <User className="h-[12px] w-[12px]" />
               <span className="truncate">Sem usuário atribuído</span>
             </div>
           )}
         </div>
-        <span className="text-[10px] px-[6px] py-[2px] rounded-full bg-black/10 text-black font-medium shrink-0">
+        <span
+          className={cn(
+            'text-[10px] px-[6px] py-[2px] rounded-full font-medium shrink-0',
+            showPriorityColorsOnCards
+              ? kanbanMutedChipOnPastelClass
+              : cn('bg-[var(--color-muted)]/50', ink),
+          )}
+        >
           {getPriorityLabel(card.prioridade)}
         </span>
       </div>
@@ -2318,6 +2349,19 @@ export default function SprintDetails() {
                         <span className="h-4 w-4 shrink-0" aria-hidden />
                       )}
                     </DropdownMenuItem>
+
+                    <DropdownMenuSeparator className="my-2" />
+                    <label className="flex cursor-pointer items-center gap-2.5 rounded-md px-2 py-2.5 text-sm text-[var(--color-foreground)] transition-colors hover:bg-[var(--color-accent)]">
+                      <input
+                        type="checkbox"
+                        className="h-4 w-4 shrink-0 rounded border-[var(--color-border)] accent-[var(--color-primary)]"
+                        checked={showPriorityColorsOnCards}
+                        onChange={(e) => setShowPriorityColorsOnCards(e.target.checked)}
+                      />
+                      <span className="flex-1 text-left leading-snug">
+                        Exibir cores de prioridade nos cards
+                      </span>
+                    </label>
 
                     {viewMode === 'lista' && (
                       <>
@@ -3689,6 +3733,10 @@ export default function SprintDetails() {
               open={dueDateRequestOpen}
               onOpenChange={setDueDateRequestOpen}
               preselectedCardId={editingCard?.id || null}
+              sprintId={sprintId ?? null}
+              onCreated={() => {
+                void loadData();
+              }}
             />
 
             <DialogFooter>

@@ -14,6 +14,7 @@ export type ProjectDetail = {
     duracao_dias: number;
     supervisor: string;
     supervisor_name?: string;
+    finalizada?: boolean;
   };
   gerente_atribuido?: string | null;
   gerente_name?: string;

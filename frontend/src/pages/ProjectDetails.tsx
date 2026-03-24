@@ -19,6 +19,11 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { userService } from '@/services/userService';
 import type { User as UserType } from '@/services/userService';
 import {
@@ -68,13 +73,26 @@ import {
   ChevronUp,
   Pencil,
   Settings,
+  SlidersHorizontal,
 } from 'lucide-react';
 import { formatDate, formatDateTime, isCardAtrasado } from '@/lib/dateUtils';
 import { CardLogsModal } from '@/components/CardLogsModal';
 import { PendenciaModal } from '@/components/PendenciaModal';
 import { ConclusaoModal } from '@/components/ConclusaoModal';
 import { cardLogService } from '@/services/cardLogService';
-import { getPriorityLabel, getPriorityStyle } from '@/lib/priorityColors';
+import {
+  getPriorityLabel,
+  getPriorityStyle,
+  kanbanCardInkTextClass,
+  getKanbanAreaBadgeClasses,
+  kanbanMutedChipOnPastelClass,
+  kanbanScriptLinkOnPastelClass,
+} from '@/lib/priorityColors';
+import { cn } from '@/lib/utils';
+import {
+  readShowPriorityColorsOnKanbanCards,
+  SHOW_PRIORITY_COLORS_ON_KANBAN_CARDS_KEY,
+} from '@/lib/kanbanCardDisplayPreference';
 
 const DEFAULT_PROJECT_STAGES = [
   {
@@ -161,7 +179,15 @@ const getRoleColor = (role: string): string => {
   }
 };
 
-function DragOverlayCard({ card, users }: { card: CardType; users: UserType[] }) {
+function DragOverlayCard({
+  card,
+  users,
+  showPriorityColorsOnCards,
+}: {
+  card: CardType;
+  users: UserType[];
+  showPriorityColorsOnCards: boolean;
+}) {
   const getCardStatusIcon = (status: string) => {
     switch (status) {
       case 'a_desenvolver':
@@ -181,36 +207,23 @@ function DragOverlayCard({ card, users }: { card: CardType; users: UserType[] })
     }
   };
 
-  const getAreaBadgeColor = (area: string) => {
-    switch (area) {
-      case 'rpa':
-        return 'bg-purple-100 text-purple-700';
-      case 'automacao':
-        return 'bg-purple-100 text-purple-700';
-      case 'frontend':
-        return 'bg-blue-100 text-blue-700';
-      case 'backend':
-        return 'bg-green-100 text-green-700';
-      case 'script':
-        return 'bg-amber-100 text-amber-700';
-      default:
-        return 'bg-gray-100 text-gray-700';
-    }
-  };
-
   const responsibleUser = card.responsavel
     ? users.find((u) => String(u.id) === String(card.responsavel))
     : undefined;
   const responsibleRoleLabel = responsibleUser ? getRoleLabel(responsibleUser.role) : '';
+  const ink = kanbanCardInkTextClass(showPriorityColorsOnCards);
 
   return (
     <div
-      className={`p-[12px] bg-[var(--color-card)] rounded-[8px] border-l-[3px] shadow-2xl opacity-95 rotate-2 w-[300px]`}
-      style={getPriorityStyle(card.prioridade, card.id)}
+      className={cn(
+        'p-[12px] bg-[var(--color-kanban-card)] rounded-[8px] border-l-[3px] shadow-2xl opacity-95 rotate-2 w-[300px]',
+        !showPriorityColorsOnCards && 'border-l-[var(--color-border)]',
+      )}
+      style={showPriorityColorsOnCards ? getPriorityStyle(card.prioridade, card.id) : undefined}
     >
       <div className="flex items-start justify-between gap-[8px]">
         <div className="flex items-center gap-[8px] flex-1 min-w-0">
-          <span className="font-medium text-sm text-black truncate flex-1">
+          <span className={cn('font-medium text-sm truncate flex-1', ink)}>
             {card.nome}
           </span>
         </div>
@@ -219,7 +232,7 @@ function DragOverlayCard({ card, users }: { card: CardType; users: UserType[] })
       {/* Entrega (logo abaixo do nome) + Tag atrasado/pendencias alinhada à direita */}
       {card.data_fim && (
         <div className="flex items-center justify-between gap-[8px] mt-[6px]">
-          <div className="flex items-center gap-[4px] text-xs text-black">
+          <div className={cn('flex items-center gap-[4px] text-xs', ink)}>
             <Calendar className="h-[12px] w-[12px]" />
             {formatDate(card.data_fim)}
           </div>
@@ -240,17 +253,31 @@ function DragOverlayCard({ card, users }: { card: CardType; users: UserType[] })
       {/* Badges de área e tipo */}
       <div className="flex flex-wrap gap-[4px] mt-[8px]">
         {card.area_display && (
-          <span className={`text-[10px] px-[6px] py-[2px] rounded-full ${getAreaBadgeColor(card.area)}`}>
+          <span
+            className={`text-[10px] px-[6px] py-[2px] rounded-full ${getKanbanAreaBadgeClasses(card.area, showPriorityColorsOnCards)}`}
+          >
             {card.area_display}
           </span>
         )}
         {card.tipo_display && (
-          <span className="text-[10px] px-[6px] py-[2px] rounded-full bg-gray-100 text-gray-700">
+          <span
+            className={cn(
+              'text-[10px] px-[6px] py-[2px] rounded-full',
+              showPriorityColorsOnCards ? kanbanMutedChipOnPastelClass : cn('bg-[var(--color-muted)]', ink),
+            )}
+          >
             {card.tipo_display}
           </span>
         )}
         {card.script_url && (
-          <span className="flex items-center gap-[2px] text-[10px] px-[6px] py-[2px] rounded-full bg-blue-100 text-blue-700">
+          <span
+            className={cn(
+              'flex items-center gap-[2px] text-[10px] px-[6px] py-[2px] rounded-full',
+              showPriorityColorsOnCards
+                ? kanbanScriptLinkOnPastelClass
+                : 'bg-[var(--color-primary)]/20 text-[var(--color-primary)]',
+            )}
+          >
             <ExternalLink className="h-[10px] w-[10px]" />
             Script
           </span>
@@ -258,7 +285,7 @@ function DragOverlayCard({ card, users }: { card: CardType; users: UserType[] })
       </div>
 
       {card.descricao && (
-        <p className="mt-[8px] text-xs text-black line-clamp-2">
+        <p className={cn('mt-[8px] text-xs line-clamp-2', ink)}>
           {card.descricao}
         </p>
       )}
@@ -266,7 +293,7 @@ function DragOverlayCard({ card, users }: { card: CardType; users: UserType[] })
       <div className="flex items-center justify-between mt-[8px]">
         <div className="flex items-center gap-[8px]">
           {card.responsavel_name ? (
-            <div className="flex items-center gap-[6px] text-xs text-black">
+            <div className={cn('flex items-center gap-[6px] text-xs', ink)}>
               {responsibleRoleLabel ? (
                 <Badge
                   variant="secondary"
@@ -278,13 +305,20 @@ function DragOverlayCard({ card, users }: { card: CardType; users: UserType[] })
               <span className="truncate">{card.responsavel_name}</span>
             </div>
           ) : (
-            <div className="flex items-center gap-[6px] text-xs text-black">
+            <div className={cn('flex items-center gap-[6px] text-xs', ink)}>
               <User className="h-[12px] w-[12px]" />
               <span className="truncate">Sem usuário atribuído</span>
             </div>
           )}
         </div>
-        <span className="text-[10px] px-[6px] py-[2px] rounded-full bg-black/10 text-black font-medium shrink-0">
+        <span
+          className={cn(
+            'text-[10px] px-[6px] py-[2px] rounded-full font-medium shrink-0',
+            showPriorityColorsOnCards
+              ? kanbanMutedChipOnPastelClass
+              : cn('bg-[var(--color-muted)]/50', ink),
+          )}
+        >
           {getPriorityLabel(card.prioridade)}
         </span>
       </div>
@@ -300,6 +334,7 @@ function KanbanColumn({
   disabled = false,
   userRole,
   users,
+  showPriorityColorsOnCards,
 }: {
   stage: ProjectStage;
   cards: CardType[];
@@ -308,6 +343,7 @@ function KanbanColumn({
   disabled?: boolean;
   userRole?: string;
   users: UserType[];
+  showPriorityColorsOnCards: boolean;
 }) {
   const { setNodeRef, isOver } = useDroppable({
     id: stage.id,
@@ -332,22 +368,8 @@ function KanbanColumn({
     }
   };
 
-  const getAreaBadgeColor = (area: string) => {
-    switch (area) {
-      case 'rpa':
-        return 'bg-purple-100 text-purple-700';
-      case 'automacao':
-        return 'bg-purple-100 text-purple-700';
-      case 'frontend':
-        return 'bg-blue-100 text-blue-700';
-      case 'backend':
-        return 'bg-green-100 text-green-700';
-      case 'script':
-        return 'bg-amber-100 text-amber-700';
-      default:
-        return 'bg-gray-100 text-gray-700';
-    }
-  };
+  const getAreaBadgeColor = (area: string) =>
+    getKanbanAreaBadgeClasses(area, showPriorityColorsOnCards);
 
   return (
     <div className="flex-shrink-0 w-[320px] flex flex-col h-full">
@@ -382,6 +404,7 @@ function KanbanColumn({
                   disabled={disabled}
                   userRole={userRole}
                   users={users}
+                  showPriorityColorsOnCards={showPriorityColorsOnCards}
                 />
               ))}
             </SortableContext>
@@ -401,6 +424,7 @@ function KanbanCard({
   disabled = false,
   userRole,
   users,
+  showPriorityColorsOnCards,
 }: {
   card: CardType;
   onClick: () => void;
@@ -410,6 +434,7 @@ function KanbanCard({
   disabled?: boolean;
   userRole?: string;
   users: UserType[];
+  showPriorityColorsOnCards: boolean;
 }) {
   // Verificar se card está finalizado ou inviabilizado
   const isCardFinished = card.status === 'finalizado' || card.status === 'inviabilizado';
@@ -427,6 +452,7 @@ function KanbanCard({
     ? users.find((u) => String(u.id) === String(card.responsavel))
     : undefined;
   const responsibleRoleLabel = responsibleUser ? getRoleLabel(responsibleUser.role) : '';
+  const ink = kanbanCardInkTextClass(showPriorityColorsOnCards);
 
   const {
     attributes,
@@ -449,16 +475,22 @@ function KanbanCard({
   return (
     <div
       ref={setNodeRef}
-      style={{ ...style, ...getPriorityStyle(card.prioridade, card.id) }}
+      style={{
+        ...style,
+        ...(showPriorityColorsOnCards ? getPriorityStyle(card.prioridade, card.id) : {}),
+      }}
       {...(!isDragDisabled ? attributes : {})}
       {...(!isDragDisabled ? listeners : {})}
-      className={`p-[12px] bg-[var(--color-card)] rounded-[8px] border-l-[3px] shadow-sm hover:shadow-md transition-shadow cursor-pointer group`}
+      className={cn(
+        'p-[12px] bg-[var(--color-kanban-card)] rounded-[8px] border-l-[3px] shadow-sm hover:shadow-md transition-shadow cursor-pointer group',
+        !showPriorityColorsOnCards && 'border-l-[var(--color-border)]',
+      )}
       onClick={onClick}
     >
       {/* Aplica cor exata via inline style (garante HEX) */}
       <div className="flex items-start justify-between gap-[8px]">
         <div className="flex items-center gap-[8px] flex-1 min-w-0">
-          <span className="font-medium text-sm text-black truncate flex-1">
+          <span className={cn('font-medium text-sm truncate flex-1', ink)}>
             {card.nome}
           </span>
         </div>
@@ -482,7 +514,7 @@ function KanbanCard({
       {/* Entrega (logo abaixo do nome) + Tag atrasado/pendencias alinhada à direita */}
       {card.data_fim && (
         <div className="flex items-center justify-between gap-[8px] mt-[6px]">
-          <div className="flex items-center gap-[4px] text-xs text-black">
+          <div className={cn('flex items-center gap-[4px] text-xs', ink)}>
             <Calendar className="h-[12px] w-[12px]" />
             {formatDate(card.data_fim)}
           </div>
@@ -508,7 +540,12 @@ function KanbanCard({
           </span>
         )}
         {card.tipo_display && (
-          <span className="text-[10px] px-[6px] py-[2px] rounded-full bg-gray-100 text-gray-700">
+          <span
+            className={cn(
+              'text-[10px] px-[6px] py-[2px] rounded-full',
+              showPriorityColorsOnCards ? kanbanMutedChipOnPastelClass : cn('bg-[var(--color-muted)]', ink),
+            )}
+          >
             {card.tipo_display}
           </span>
         )}
@@ -518,7 +555,12 @@ function KanbanCard({
             target="_blank"
             rel="noopener noreferrer"
             onClick={(e) => e.stopPropagation()}
-            className="flex items-center gap-[2px] text-[10px] px-[6px] py-[2px] rounded-full bg-blue-100 text-blue-700 hover:bg-blue-200 transition-colors"
+            className={cn(
+              'flex items-center gap-[2px] text-[10px] px-[6px] py-[2px] rounded-full transition-colors',
+              showPriorityColorsOnCards
+                ? kanbanScriptLinkOnPastelClass
+                : 'bg-[var(--color-primary)]/20 text-[var(--color-primary)] hover:bg-[var(--color-primary)]/35',
+            )}
           >
             <ExternalLink className="h-[10px] w-[10px]" />
             Script
@@ -527,7 +569,7 @@ function KanbanCard({
       </div>
 
       {card.descricao && (
-        <p className="mt-[8px] text-xs text-black line-clamp-2">
+        <p className={cn('mt-[8px] text-xs line-clamp-2', ink)}>
           {card.descricao}
         </p>
       )}
@@ -535,7 +577,7 @@ function KanbanCard({
       <div className="flex items-center justify-between mt-[8px]">
         <div className="flex items-center gap-[8px]">
           {card.responsavel_name ? (
-            <div className="flex items-center gap-[6px] text-xs text-black">
+            <div className={cn('flex items-center gap-[6px] text-xs', ink)}>
               {responsibleRoleLabel ? (
                 <Badge
                   variant="secondary"
@@ -547,13 +589,20 @@ function KanbanCard({
               <span className="truncate">{card.responsavel_name}</span>
             </div>
           ) : (
-            <div className="flex items-center gap-[6px] text-xs text-black">
+            <div className={cn('flex items-center gap-[6px] text-xs', ink)}>
               <User className="h-[12px] w-[12px]" />
               <span className="truncate">Sem usuário atribuído</span>
             </div>
           )}
         </div>
-        <span className="text-[10px] px-[6px] py-[2px] rounded-full bg-black/10 text-black font-medium shrink-0">
+        <span
+          className={cn(
+            'text-[10px] px-[6px] py-[2px] rounded-full font-medium shrink-0',
+            showPriorityColorsOnCards
+              ? kanbanMutedChipOnPastelClass
+              : cn('bg-[var(--color-muted)]/50', ink),
+          )}
+        >
           {getPriorityLabel(card.prioridade)}
         </span>
       </div>
@@ -630,7 +679,10 @@ export default function ProjectDetails() {
   const [cardFormLoading, setCardFormLoading] = useState(false);
   const [cardFormError, setCardFormError] = useState('');
   const [dueDateRequestOpen, setDueDateRequestOpen] = useState(false);
-  
+  const [showPriorityColorsOnCards, setShowPriorityColorsOnCards] = useState(
+    readShowPriorityColorsOnKanbanCards,
+  );
+
   // Estimador de complexidade
   const [showTimeEstimator, setShowTimeEstimator] = useState(false);
   const [selectedTimeItems, setSelectedTimeItems] = useState<Set<string>>(new Set());
@@ -769,6 +821,17 @@ export default function ProjectDetails() {
       loadData();
     }
   }, [id]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(
+        SHOW_PRIORITY_COLORS_ON_KANBAN_CARDS_KEY,
+        showPriorityColorsOnCards ? 'true' : 'false',
+      );
+    } catch {
+      // ignore
+    }
+  }, [showPriorityColorsOnCards]);
 
   // Atualizar data sugerida quando a estimativa de complexidade mudar
   useEffect(() => {
@@ -2026,6 +2089,33 @@ export default function ProjectDetails() {
                   <Plus className="h-4 w-4 mr-2" />
                   Criar Card
                 </Button>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="h-[40px] gap-[8px] border-[var(--color-border)] px-[14px] shadow-sm hover:bg-[var(--color-accent)]"
+                      title="Opções do Kanban"
+                    >
+                      <SlidersHorizontal className="h-[18px] w-[18px] shrink-0 text-[var(--color-muted-foreground)]" />
+                      <span className="hidden text-sm font-medium sm:inline">Opções</span>
+                      <ChevronDown className="h-[16px] w-[16px] shrink-0 opacity-60" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="w-[min(100vw-24px,300px)] p-1.5">
+                    <label className="flex cursor-pointer items-center gap-2.5 rounded-md px-2 py-2.5 text-sm text-[var(--color-foreground)] transition-colors hover:bg-[var(--color-accent)]">
+                      <input
+                        type="checkbox"
+                        className="h-4 w-4 shrink-0 rounded border-[var(--color-border)] accent-[var(--color-primary)]"
+                        checked={showPriorityColorsOnCards}
+                        onChange={(e) => setShowPriorityColorsOnCards(e.target.checked)}
+                      />
+                      <span className="flex-1 text-left leading-snug">
+                        Exibir cores de prioridade nos cards
+                      </span>
+                    </label>
+                  </DropdownMenuContent>
+                </DropdownMenu>
                 {/* Configurar Projeto (somente supervisor) */}
                 {user?.role === 'supervisor' && (
                   <Button
@@ -2152,12 +2242,17 @@ export default function ProjectDetails() {
                 disabled={sprintIsFinished}
                 userRole={user?.role}
                 users={users}
+                showPriorityColorsOnCards={showPriorityColorsOnCards}
               />
             ))}
           </div>
           <DragOverlay>
             {activeCard ? (
-              <DragOverlayCard card={activeCard} users={users} />
+              <DragOverlayCard
+                card={activeCard}
+                users={users}
+                showPriorityColorsOnCards={showPriorityColorsOnCards}
+              />
             ) : null}
           </DragOverlay>
         </DndContext>
@@ -2680,6 +2775,10 @@ export default function ProjectDetails() {
               open={dueDateRequestOpen}
               onOpenChange={setDueDateRequestOpen}
               preselectedCardId={editingCard?.id || null}
+              sprintId={sprint?.id ?? null}
+              onCreated={() => {
+                void loadData();
+              }}
             />
 
             <DialogFooter>

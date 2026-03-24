@@ -3,6 +3,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from django_filters.rest_framework import DjangoFilterBackend
+from django.db import transaction
 from django.db.models import Q, Max, Count
 from django.utils import timezone
 from datetime import datetime, timedelta
@@ -12,6 +13,7 @@ from .models import (
     KanbanStage,
     ProjectKanbanStageConfig,
     Card,
+    CardStatus,
     CardTodo,
     Event,
     CardLog,
@@ -357,7 +359,9 @@ class CardViewSet(viewsets.ModelViewSet):
     
     def get_queryset(self):
         """Aplica filtros de permissão baseados no usuário"""
-        queryset = Card.objects.select_related('projeto', 'criado_por', 'responsavel').all()
+        queryset = Card.objects.select_related(
+            'projeto', 'projeto__sprint', 'criado_por', 'responsavel'
+        ).all()
         # Filtro adicional para buscar cards por responsável (para página Meus Afazeres)
         responsavel_id = self.request.query_params.get('responsavel', None)
         if responsavel_id:
@@ -898,11 +902,27 @@ class CardDueDateChangeRequestViewSet(viewsets.ModelViewSet):
         if not card:
             raise ValidationError({'card': 'Card é obrigatório.'})
 
+        card = Card.objects.select_related('projeto__sprint').get(pk=card.pk)
+
         if card.responsavel_id != self.request.user.id:
             raise PermissionDenied('Você só pode solicitar mudança de data para cards atribuídos a você.')
 
         if not card.data_fim:
             raise ValidationError({'card': 'Este card não possui data de entrega registrada.'})
+
+        if card.status != CardStatus.EM_DESENVOLVIMENTO:
+            raise ValidationError({
+                'card': 'Só é possível solicitar reajuste para cards em desenvolvimento.',
+            })
+
+        projeto = card.projeto
+        if not projeto.sprint_id:
+            raise ValidationError({'card': 'O projeto deste card não está vinculado a uma sprint.'})
+
+        if projeto.sprint.finalizada:
+            raise ValidationError({
+                'card': 'Não é possível solicitar reajuste para cards de sprints já encerradas.',
+            })
 
         if not requested_date:
             raise ValidationError({'requested_date': 'requested_date é obrigatório.'})
@@ -918,22 +938,23 @@ class CardDueDateChangeRequestViewSet(viewsets.ModelViewSet):
         if req.status != 'pending':
             return Response({'detail': 'Esta solicitação não está pendente.'}, status=status.HTTP_400_BAD_REQUEST)
 
-        card = req.card
-        if not card.data_fim:
-            return Response({'detail': 'Card não possui data_fim atual.'}, status=status.HTTP_400_BAD_REQUEST)
+        with transaction.atomic():
+            card = Card.objects.select_for_update().select_related('projeto__sprint').get(pk=req.card_id)
+            if not card.data_fim:
+                return Response({'detail': 'Card não possui data_fim atual.'}, status=status.HTTP_400_BAD_REQUEST)
 
-        old_dt = card.data_fim
-        new_dt = datetime.combine(req.requested_date, old_dt.time())
-        if timezone.is_aware(old_dt):
-            new_dt = timezone.make_aware(new_dt, old_dt.tzinfo or timezone.get_current_timezone())
+            old_dt = card.data_fim
+            new_dt = datetime.combine(req.requested_date, old_dt.time())
+            if timezone.is_aware(old_dt):
+                new_dt = timezone.make_aware(new_dt, old_dt.tzinfo or timezone.get_current_timezone())
 
-        card.data_fim = new_dt
-        card.save(update_fields=['data_fim', 'updated_at'])
+            card.data_fim = new_dt
+            card.save()
 
-        req.status = 'approved'
-        req.reviewed_by = request.user
-        req.reviewed_at = timezone.now()
-        req.save(update_fields=['status', 'reviewed_by', 'reviewed_at', 'updated_at'])
+            req.status = 'approved'
+            req.reviewed_by = request.user
+            req.reviewed_at = timezone.now()
+            req.save(update_fields=['status', 'reviewed_by', 'reviewed_at', 'updated_at'])
 
         motivo = (req.reason or '').strip()
         motivo_txt = f"\n\nMotivo: {motivo}" if motivo else ""

@@ -82,15 +82,48 @@ export default function Layout() {
           <div className="flex items-center gap-[16px]">
             <button
               type="button"
-              onClick={toggleTheme}
-              className="flex items-center justify-center h-[32px] w-[32px] rounded-full border border-[var(--color-border)] bg-[var(--color-background)] text-[var(--color-foreground)] hover:bg-[var(--color-accent)] transition-colors"
+              role="switch"
+              aria-checked={theme === 'dark'}
+              aria-label={
+                theme === 'dark'
+                  ? 'Modo escuro ativo. Clique para modo claro'
+                  : 'Modo claro ativo. Clique para modo escuro'
+              }
               title={theme === 'dark' ? 'Alternar para modo claro' : 'Alternar para modo escuro'}
-            >
-              {theme === 'dark' ? (
-                <Sun className="h-[16px] w-[16px]" />
-              ) : (
-                <Moon className="h-[16px] w-[16px]" />
+              onClick={toggleTheme}
+              className={cn(
+                'relative inline-flex h-9 w-14 shrink-0 cursor-pointer items-center rounded-full border border-[var(--color-border)] p-1 shadow-inner transition-colors',
+                'bg-[var(--color-muted)] hover:bg-[var(--color-accent)]',
               )}
+            >
+              <span
+                className="pointer-events-none absolute inset-0 flex items-center justify-between px-[6px]"
+                aria-hidden
+              >
+                <Sun
+                  className={cn(
+                    'h-[14px] w-[14px] shrink-0 transition-opacity',
+                    theme === 'light'
+                      ? 'text-amber-500 opacity-100'
+                      : 'text-[var(--color-muted-foreground)] opacity-40',
+                  )}
+                />
+                <Moon
+                  className={cn(
+                    'h-[14px] w-[14px] shrink-0 transition-opacity',
+                    theme === 'dark'
+                      ? 'text-indigo-300 opacity-100'
+                      : 'text-[var(--color-muted-foreground)] opacity-40',
+                  )}
+                />
+              </span>
+              <span
+                className={cn(
+                  'relative z-10 h-7 w-7 rounded-full border border-[var(--color-border)] bg-[var(--color-card)] shadow-md transition-transform duration-200 ease-out',
+                  theme === 'dark' ? 'translate-x-5' : 'translate-x-0',
+                )}
+                aria-hidden
+              />
             </button>
             <NotificationsButton />
           </div>

@@ -13,6 +13,8 @@
 
   --color-card: var(--color-surface-1);
   --color-card-foreground: var(--color-foreground);
+  /* Cards no Kanban: no claro, igual ao card padrão */
+  --color-kanban-card: var(--color-card);
 
   --color-popover: var(--color-surface-1);
   --color-popover-foreground: var(--color-foreground);
@@ -75,6 +77,8 @@
 
   --color-card: var(--color-surface-1);
   --color-card-foreground: var(--color-foreground);
+  /* Kanban: colunas usam muted/30 (~mesma faixa do surface-1); cards um degrau mais claros */
+  --color-kanban-card: hsl(222 28% 22%);
 
   --color-popover: var(--color-surface-2);
   --color-popover-foreground: var(--color-foreground);
