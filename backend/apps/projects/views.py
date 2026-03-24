@@ -910,18 +910,9 @@ class CardDueDateChangeRequestViewSet(viewsets.ModelViewSet):
         if not card.data_fim:
             raise ValidationError({'card': 'Este card não possui data de entrega registrada.'})
 
-        if card.status != CardStatus.EM_DESENVOLVIMENTO:
+        if card.status in (CardStatus.FINALIZADO, CardStatus.INVIABILIZADO):
             raise ValidationError({
-                'card': 'Só é possível solicitar reajuste para cards em desenvolvimento.',
-            })
-
-        projeto = card.projeto
-        if not projeto.sprint_id:
-            raise ValidationError({'card': 'O projeto deste card não está vinculado a uma sprint.'})
-
-        if projeto.sprint.finalizada:
-            raise ValidationError({
-                'card': 'Não é possível solicitar reajuste para cards de sprints já encerradas.',
+                'card': 'Não é possível solicitar reajuste para cards já finalizados ou inviabilizados.',
             })
 
         if not requested_date:

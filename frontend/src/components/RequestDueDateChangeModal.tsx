@@ -3,12 +3,34 @@ import { useAuth } from '@/context/AuthContext';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
+import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { DatePicker } from '@/components/ui/date-picker';
-import { cardService, type Card as CardType } from '@/services/cardService';
+import { cardService, CARD_STATUSES, type Card as CardType } from '@/services/cardService';
 import { cardDateChangeRequestService } from '@/services/cardDateChangeRequestService';
+import { formatDateTime } from '@/lib/dateUtils';
+import { cn } from '@/lib/utils';
 
-/** Cards elegíveis: em desenvolvimento, com data de entrega, sprint do projeto ainda aberta (não finalizada). */
+/** Compara só a data local (início do dia) para “em dia” / “atrasado” em qualquer etapa ativa. */
+function isEntregaAtrasada(card: CardType): boolean {
+  if (!card.data_fim) return false;
+  const end = new Date(card.data_fim);
+  end.setHours(0, 0, 0, 0);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  return end < today;
+}
+
+function cardStageLabel(card: CardType): string {
+  const d = card.status_display?.trim();
+  if (d) return d;
+  return CARD_STATUSES.find((s) => s.value === card.status)?.label ?? card.status;
+}
+
+/**
+ * Cards elegíveis: com data de entrega e não concluídos (qualquer etapa do Kanban).
+ * Opcionalmente restringe à sprint da página (`sprintId`).
+ */
 export function filterCardsEligibleForDueDateRequest(
   cards: CardType[],
   options?: { sprintId?: string | null },
@@ -18,17 +40,12 @@ export function filterCardsEligibleForDueDateRequest(
 
   return cards.filter((c) => {
     if (!c.data_fim) return false;
-    if (c.status !== 'em_desenvolvimento') return false;
     if (['finalizado', 'inviabilizado'].includes(c.status)) return false;
 
-    const sprintRef = c.projeto_detail?.sprint;
-    if (!sprintRef) return false;
-
-    if (restrictSprint && String(sprintRef) !== String(sid)) return false;
-
-    const sd = c.projeto_detail?.sprint_detail;
-    if (!sd) return false;
-    if (sd.finalizada) return false;
+    if (restrictSprint) {
+      const sprintRef = c.projeto_detail?.sprint;
+      if (!sprintRef || String(sprintRef) !== String(sid)) return false;
+    }
 
     return true;
   });
@@ -39,10 +56,6 @@ type Props = {
   onOpenChange: (open: boolean) => void;
   preselectedCardId?: string | null;
   onCreated?: () => void;
-  /**
-   * Quando informado (ex.: página da sprint), restringe aos cards cujo projeto pertence a esta sprint.
-   * Em Projetos, omitir para listar todos os cards elegíveis em sprints ainda abertas.
-   */
   sprintId?: string | null;
 };
 
@@ -126,23 +139,18 @@ export function RequestDueDateChangeModal({
           : 'não disponível';
       const dataFimAtual = selectedCard?.data_fim ? String(selectedCard.data_fim) : 'não preenchida';
 
-      // O backend pode retornar mensagens em formatos diferentes:
-      // - PermissionDenied => { detail: "..." }
-      // - ValidationError => { card: ["..."] } (sem vir em "detail")
       const candidateMessages: string[] = [];
 
       if (typeof respData?.detail === 'string') {
         candidateMessages.push(respData.detail);
       }
 
-      // comuns em ValidationError({ field: message })
       for (const key of ['card', 'requested_date', 'requestedDate']) {
         const v = respData?.[key];
         if (typeof v === 'string') candidateMessages.push(v);
         if (Array.isArray(v) && typeof v[0] === 'string') candidateMessages.push(v[0]);
       }
 
-      // fallback: tenta pegar qualquer string “parecida” no objeto
       if (candidateMessages.length === 0) {
         try {
           const asString = JSON.stringify(respData);
@@ -170,7 +178,6 @@ export function RequestDueDateChangeModal({
         detailLower.includes('data de entrega registrada') ||
         detailLower.includes('data de entrega do card');
 
-      // Mensagem deve indicar somente o campo que precisa ser alterado.
       if (needsResponsavel && !needsDataFim) {
         setError(
           `Ajuste necessário: o card precisa estar atribuído a você. Responsável atual: ${responsavelAtual}.`,
@@ -192,7 +199,6 @@ export function RequestDueDateChangeModal({
         return;
       }
 
-      // fallback: se vier alguma mensagem útil, mostramos ela; senão, mensagem focada.
       if (detailStr && detailStr !== '{}') {
         setError(detailStr);
         return;
@@ -214,36 +220,115 @@ export function RequestDueDateChangeModal({
         <DialogHeader>
           <DialogTitle>Solicitar reajuste de data</DialogTitle>
           <DialogDescription>
-            Escolha um card seu em desenvolvimento, vinculado a uma sprint ainda aberta
-            {sprintId ? ' nesta sprint' : ''}, e informe a nova data de entrega. O motivo é opcional.
+            Escolha um dos seus cards não concluídos que tenham data de entrega (qualquer etapa)
+            {sprintId ? ', desta sprint' : ''}. Informe a nova data; o motivo é opcional.
           </DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-4 mt-2">
+        <div className="mt-2 space-y-4">
           <div className="space-y-2">
             <Label>Card</Label>
-            <select
-              className="flex h-[40px] w-full rounded-[8px] border border-[var(--color-input)] bg-[var(--color-background)] px-[16px] py-[8px] text-sm"
-              value={selectedCardId}
-              onChange={(e) => setSelectedCardId(e.target.value)}
-              disabled={loadingCards || saving}
-            >
-              <option value="">{loadingCards ? 'Carregando cards...' : 'Selecione um card'}</option>
-              {cards.map((c) => (
-                <option key={String(c.id)} value={String(c.id)}>
-                  {c.projeto_detail?.nome ? `${c.nome} — ${c.projeto_detail.nome}` : c.nome}
-                </option>
-              ))}
-            </select>
-            {!loadingCards && cards.length === 0 && (
-              <p className="text-xs text-[var(--color-muted-foreground)]">
-                Nenhum card em desenvolvimento com data de entrega em sprint aberta
+            {loadingCards ? (
+              <p className="text-sm text-[var(--color-muted-foreground)] py-3">Carregando cards...</p>
+            ) : cards.length === 0 ? (
+              <p className="text-sm text-[var(--color-muted-foreground)]">
+                Nenhum card não concluído com data de entrega
                 {sprintId ? ' nesta sprint' : ''}.
               </p>
+            ) : (
+              <div
+                role="listbox"
+                aria-label="Selecionar card"
+                className="max-h-[min(320px,50vh)] overflow-y-auto rounded-[10px] border border-[var(--color-border)] bg-[var(--color-background)] p-1.5 [scrollbar-gutter:stable]"
+              >
+                <div className="flex flex-col gap-2">
+                  {cards.map((c) => {
+                    const id = String(c.id);
+                    const selected = selectedCardId === id;
+                    const atrasado = isEntregaAtrasada(c);
+                    return (
+                      <button
+                        key={id}
+                        type="button"
+                        role="option"
+                        aria-selected={selected}
+                        disabled={saving}
+                        onClick={() => setSelectedCardId(id)}
+                        className={cn(
+                          'w-full rounded-[8px] border px-3 py-2.5 text-left transition-colors',
+                          'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-ring)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-background)]',
+                          selected
+                            ? 'border-[var(--color-primary)] bg-[var(--color-primary)]/8 shadow-sm'
+                            : 'border-[var(--color-border)] hover:bg-[var(--color-accent)]',
+                        )}
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="min-w-0 flex-1 space-y-1.5">
+                            {/* Linha 1: apenas nome do card */}
+                            <p className="text-sm font-semibold leading-snug text-[var(--color-foreground)]">
+                              {c.nome}
+                            </p>
+                            {/* Linha 2: data de entrega atual e atrasado / em dia */}
+                            <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
+                              <span className="text-[var(--color-muted-foreground)]">
+                                Entrega atual:{' '}
+                                <span className="font-medium text-[var(--color-foreground)]">
+                                  {c.data_fim ? formatDateTime(c.data_fim) : '—'}
+                                </span>
+                              </span>
+                              {atrasado ? (
+                                <Badge
+                                  variant="secondary"
+                                  className="border border-rose-500/30 bg-rose-500/[0.12] text-[10px] px-1.5 py-0 font-medium text-rose-800 dark:border-rose-400/25 dark:bg-rose-500/15 dark:text-rose-200"
+                                >
+                                  Atrasado
+                                </Badge>
+                              ) : (
+                                <Badge
+                                  variant="secondary"
+                                  className="border border-emerald-600/25 bg-emerald-600/10 text-[10px] px-1.5 py-0 text-emerald-800 dark:text-emerald-200"
+                                >
+                                  Em dia
+                                </Badge>
+                              )}
+                            </div>
+                            {/* Linha 3: projeto e etapa */}
+                            <p className="text-xs leading-snug text-[var(--color-muted-foreground)]">
+                              <span>
+                                Projeto:{' '}
+                                <span className="font-medium text-[var(--color-foreground)]">
+                                  {c.projeto_detail?.nome ?? '—'}
+                                </span>
+                              </span>
+                              <span className="mx-1.5 text-[var(--color-border)]">|</span>
+                              <span>
+                                Etapa:{' '}
+                                <span className="font-medium text-[var(--color-foreground)]">
+                                  {cardStageLabel(c)}
+                                </span>
+                              </span>
+                            </p>
+                          </div>
+                          <span
+                            className={cn(
+                              'mt-0.5 h-4 w-4 shrink-0 rounded-full border-2',
+                              selected
+                                ? 'border-[var(--color-primary)] bg-[var(--color-primary)]'
+                                : 'border-[var(--color-border)] bg-transparent',
+                            )}
+                            aria-hidden
+                          />
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
             )}
-            {selectedCard?.data_fim && (
-              <p className="text-xs text-[var(--color-muted-foreground)]">
-                Data atual: {selectedCard.data_fim}
+            {selectedCard && (
+              <p className="text-[11px] leading-relaxed text-[var(--color-muted-foreground)]">
+                Selecionado: <span className="font-medium text-[var(--color-foreground)]">{selectedCard.nome}</span>
+                {selectedCard.projeto_detail?.nome ? ` · ${selectedCard.projeto_detail.nome}` : ''}
               </p>
             )}
           </div>
@@ -269,7 +354,7 @@ export function RequestDueDateChangeModal({
           </div>
 
           {error && (
-            <div className="p-2 text-sm text-[var(--color-destructive)] bg-red-50 border border-red-200 rounded-[8px]">
+            <div className="rounded-[8px] border border-red-200 bg-red-50 p-2 text-sm text-[var(--color-destructive)]">
               {error}
             </div>
           )}
