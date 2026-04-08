@@ -15,8 +15,10 @@ import os
 from dotenv import load_dotenv
 
 # Sempre carregar .env da pasta backend (funciona com runserver a partir da raiz do repo ou de backend/)
+# encoding=utf-8-sig: remove BOM se o editor gravar "UTF-8 com BOM" (senão USE_POSTGRES não é lido).
+# override=True: valores do .env prevalecem sobre variáveis herdadas do sistema/IDE.
 BASE_DIR = Path(__file__).resolve().parent.parent
-load_dotenv(BASE_DIR / '.env')
+load_dotenv(BASE_DIR / '.env', override=True, encoding="utf-8-sig")
 
 
 # Quick-start development settings - unsuitable for production
