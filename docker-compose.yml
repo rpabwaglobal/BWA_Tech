@@ -9,6 +9,9 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-bwaproj_db}
       POSTGRES_USER: ${POSTGRES_USER:-bwaproj}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-bwaproj_secret}
+    ports:
+      # Para manage.py runserver / IDE no host usar o mesmo Postgres do dump (localhost:5432)
+      - "${POSTGRES_PORT:-5432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:

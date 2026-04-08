@@ -14,10 +14,9 @@ from pathlib import Path
 import os
 from dotenv import load_dotenv
 
-load_dotenv()
-
-# Build paths inside the project like this: BASE_DIR / 'subdir'.
+# Sempre carregar .env da pasta backend (funciona com runserver a partir da raiz do repo ou de backend/)
 BASE_DIR = Path(__file__).resolve().parent.parent
+load_dotenv(BASE_DIR / '.env')
 
 
 # Quick-start development settings - unsuitable for production
@@ -95,7 +94,8 @@ ASGI_APPLICATION = 'config.asgi.application'
 # https://docs.djangoproject.com/en/5.2/ref/settings/#databases
 
 # Use SQLite for development if PostgreSQL is not available
-USE_POSTGRES = os.getenv('USE_POSTGRES', 'False').lower() == 'true'
+# .strip(): ficheiros .env no Windows podem trazer \r e impedir USE_POSTGRES=true de ser reconhecido
+USE_POSTGRES = os.getenv('USE_POSTGRES', 'False').strip().lower() in ('true', '1', 'yes')
 
 if USE_POSTGRES:
     DATABASES = {
