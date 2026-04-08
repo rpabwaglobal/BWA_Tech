@@ -71,9 +71,10 @@ except Exception as e:
 
 # 3. Criar Sprint (dispara notificação de sprint criada)
 print("\n--- Criando Sprint ---")
+_now = timezone.now()
 sprint = Sprint.objects.create(
     nome='Sprint de Teste - Notificações',
-    data_inicio=timezone.now().date(),
+    data_inicio=_now.replace(hour=0, minute=0, second=0, microsecond=0),
     fechamento_em=timezone.now() + timedelta(days=14),
     duracao_dias=14,
     supervisor=supervisor

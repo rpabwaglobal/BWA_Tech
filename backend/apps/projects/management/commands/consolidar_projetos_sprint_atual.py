@@ -9,6 +9,7 @@ from django.db.models.functions import Lower, Trim
 from django.utils import timezone
 
 from apps.projects.models import Sprint, Project, Card
+from apps.projects.services import merge_project_kanban_into, dedupe_cards_mesmo_nome_em_todos_projetos_da_sprint
 
 
 def _norm_name(nome: str) -> str:
@@ -18,7 +19,8 @@ def _norm_name(nome: str) -> str:
 class Command(BaseCommand):
     help = (
         "Consolida projetos duplicados na sprint em andamento (por nome), "
-        "move cards para um projeto canônico e apaga projetos vazios."
+        "fundindo Kanban, movendo cards para um projeto canônico, apagando projetos vazios "
+        "e removendo cards duplicados (mesmo nome) mantendo o mais avançado no Kanban."
     )
 
     def add_arguments(self, parser):
@@ -42,7 +44,6 @@ class Command(BaseCommand):
 
     def handle(self, *args, **options):
         agora = timezone.now()
-        hoje = agora.date()
         sprint_id = options.get("sprint_id")
         do_commit = bool(options.get("commit"))
         keep = options.get("keep")
@@ -55,7 +56,7 @@ class Command(BaseCommand):
             sprint = (
                 Sprint.objects.filter(
                     finalizada=False,
-                    data_inicio__lte=hoje,
+                    data_inicio__lte=agora,
                     fechamento_em__gt=agora,
                 )
                 .order_by("data_inicio")
@@ -140,6 +141,12 @@ class Command(BaseCommand):
         self.stdout.write("")
         self.stdout.write(self.style.NOTICE(f"Total de movimentos planejados: {len(planned_moves)}"))
         self.stdout.write(self.style.NOTICE(f"Total de projetos para apagar: {len(planned_deletes)}"))
+        self.stdout.write(
+            self.style.NOTICE(
+                "Após fundir projetos, com --commit também remove cards duplicados (mesmo nome) "
+                "em cada projeto da sprint, mantendo o mais avançado."
+            )
+        )
 
         if not do_commit:
             self.stdout.write("")
@@ -147,8 +154,11 @@ class Command(BaseCommand):
             return
 
         with transaction.atomic():
-            # Moves
+            # Moves: fundir Kanban, depois mover cards
             for from_id, to_id, _cnt in planned_moves:
+                canonical = Project.objects.select_for_update().get(pk=to_id)
+                other = Project.objects.select_for_update().get(pk=from_id)
+                merge_project_kanban_into(canonical, other)
                 updated = Card.objects.filter(projeto_id=from_id).update(projeto_id=to_id)
                 self.stdout.write(f"MOV: projeto {from_id} -> {to_id} | cards atualizados: {updated}")
 
@@ -163,6 +173,14 @@ class Command(BaseCommand):
                     continue
                 Project.objects.filter(id=pid, sprint=sprint).delete()
                 deleted_ok += 1
+
+            removed_card_ids = dedupe_cards_mesmo_nome_em_todos_projetos_da_sprint(sprint.id)
+            self.stdout.write("")
+            self.stdout.write(
+                self.style.SUCCESS(
+                    f"Cards duplicados (mesmo nome) removidos na sprint: {len(removed_card_ids)}"
+                )
+            )
 
             self.stdout.write("")
             self.stdout.write(self.style.SUCCESS(f"Consolidação aplicada. Projetos apagados: {deleted_ok}. Skips (ainda tinham cards): {skipped_not_empty}."))

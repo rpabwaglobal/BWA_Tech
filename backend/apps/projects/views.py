@@ -464,7 +464,7 @@ class CardViewSet(viewsets.ModelViewSet):
                 Q(status='finalizado', updated_at__date=hoje)  # OU cards finalizados hoje
             ).filter(
                 projeto__sprint__finalizada=False,
-                projeto__sprint__data_inicio__lte=hoje,
+                projeto__sprint__data_inicio__lte=timezone.now(),
                 projeto__sprint__fechamento_em__date__gte=hoje,
             ).exclude(responsavel__isnull=True).exclude(
                 responsavel__role__in=['supervisor', 'admin']

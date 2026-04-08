@@ -46,6 +46,7 @@ import {
   datetimeLocalToFechamentoIso,
   isSprintPastFechamento,
   sprintFimDiaParaCalendario,
+  sprintInicioDiaParaCalendario,
 } from '@/lib/sprintFechamento';
 
 type SortField = 'nome' | 'created_at' | 'supervisor_name' | 'projects_count';
@@ -129,32 +130,22 @@ export default function Sprints() {
     });
   };
 
-  // Helper para interpretar datas (YYYY-MM-DD) como datas locais (sem fuso)
-  const parseLocalDate = (dateString: string) => {
-    const [year, month, day] = dateString.split('-').map(Number);
-    return new Date(year, month - 1, day);
-  };
-
-  // Categorizar sprints
+  // Categorizar sprints (início e fim respeitam data e hora)
   const categorizeSprints = (sprintsToCategorize: Sprint[]) => {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
+    const nowMs = Date.now();
 
     const emAndamento: Sprint[] = [];
     const planejadas: Sprint[] = [];
     const finalizadas: Sprint[] = [];
 
     sprintsToCategorize.forEach((sprint) => {
-      const start = parseLocalDate(sprint.data_inicio);
+      const startMs = new Date(sprint.data_inicio).getTime();
 
       if (sprint.finalizada) {
-        // Sempre considerar sprints marcadas como finalizadas no backend como finalizadas
         finalizadas.push(sprint);
-      } else if (today < start) {
-        // Não finalizada e ainda não começou
+      } else if (nowMs < startMs) {
         planejadas.push(sprint);
       } else {
-        // Não finalizada e já começou (mesmo que data_fim tenha passado) → Em andamento
         emAndamento.push(sprint);
       }
     });
@@ -256,14 +247,9 @@ export default function Sprints() {
     }
     setEditingSprint(sprint);
 
-    const dataInicio =
-      sprint.data_inicio && sprint.data_inicio.includes('T')
-        ? sprint.data_inicio.split('T')[0]
-        : sprint.data_inicio;
-
     setSprintFormData({
       nome: sprint.nome,
-      data_inicio: dataInicio || '',
+      data_inicio: fechamentoIsoToDatetimeLocal(sprint.data_inicio),
       fechamento_em: fechamentoIsoToDatetimeLocal(sprint.fechamento_em),
     });
     setSprintFormError('');
@@ -276,19 +262,18 @@ export default function Sprints() {
     setSprintFormLoading(true);
 
     try {
-      // Converter formato YYYY-MM-DDTHH:mm para YYYY-MM-DD (apenas data)
-      const dataInicio = sprintFormData.data_inicio.trim();
+      const inicioIso = datetimeLocalToFechamentoIso(sprintFormData.data_inicio);
       const fechamentoIso = datetimeLocalToFechamentoIso(sprintFormData.fechamento_em);
 
-      if (!dataInicio || !fechamentoIso) {
-        setSprintFormError('Preencha a data de início e a data e hora de fechamento.');
+      if (!inicioIso || !fechamentoIso) {
+        setSprintFormError('Preencha a data e hora de início e a data e hora de fechamento.');
         setSprintFormLoading(false);
         return;
       }
 
       const sprintData = {
         nome: sprintFormData.nome,
-        data_inicio: dataInicio,
+        data_inicio: inicioIso,
         fechamento_em: fechamentoIso,
       };
 
@@ -380,32 +365,24 @@ export default function Sprints() {
     if (sprint.finalizada) {
       return { label: 'Finalizada', variant: 'secondary' as const };
     }
-    const startDay = new Date(sprint.data_inicio);
-    startDay.setHours(0, 0, 0, 0);
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const end = new Date(sprint.fechamento_em);
-    const now = new Date();
+    const startMs = new Date(sprint.data_inicio).getTime();
+    const endMs = new Date(sprint.fechamento_em).getTime();
+    const nowMs = Date.now();
 
-    if (today < startDay) {
-      return { label: 'Futura', variant: 'secondary' as const };
+    if (nowMs < startMs) {
+      return { label: 'Planejada', variant: 'secondary' as const };
     }
-    if (now > end) {
-      return { label: 'Finalizada', variant: 'success' as const };
+    if (nowMs > endMs) {
+      return { label: 'Prazo encerrado', variant: 'outline' as const };
     }
-    return { label: 'Em Andamento', variant: 'default' as const };
+    return { label: 'Em andamento', variant: 'default' as const };
   };
 
   const getDaysUntilStart = (sprint: Sprint): number | null => {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const start = new Date(sprint.data_inicio);
-    start.setHours(0, 0, 0, 0);
-    
-    if (today < start) {
-      const diffTime = start.getTime() - today.getTime();
-      const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-      return diffDays;
+    const startMs = new Date(sprint.data_inicio).getTime();
+    const nowMs = Date.now();
+    if (nowMs < startMs) {
+      return Math.ceil((startMs - nowMs) / (1000 * 60 * 60 * 24));
     }
     return null;
   };
@@ -636,7 +613,7 @@ export default function Sprints() {
                                   <Badge variant="default">Em Andamento</Badge>
                                 )}
                                 <span className="text-sm text-[var(--color-muted-foreground)]">
-                                  {formatDate(sprint.data_inicio)} → {formatDate(sprintFimDiaParaCalendario(sprint))}
+                                  {formatDateTime(sprint.data_inicio)} → {formatDateTime(sprint.fechamento_em)}
                                 </span>
                               </div>
                             </div>
@@ -829,7 +806,7 @@ export default function Sprints() {
                           <div className="flex items-center gap-[8px] text-sm text-[var(--color-muted-foreground)]">
                             <Calendar className="h-[16px] w-[16px]" />
                             <span>
-                              {formatDate(sprint.data_inicio)} → {formatDate(sprintFimDiaParaCalendario(sprint))}
+                              {formatDateTime(sprint.data_inicio)} → {formatDateTime(sprint.fechamento_em)}
                             </span>
                           </div>
                           <div className="flex items-center gap-[8px] text-sm text-[var(--color-muted-foreground)]">
@@ -847,7 +824,7 @@ export default function Sprints() {
                           <div className="flex items-center gap-[8px] text-sm text-[var(--color-muted-foreground)]">
                             <Clock className="h-[16px] w-[16px]" />
                             <span>
-                              Duração: {calcularDiasTotais(sprint.data_inicio, sprintFimDiaParaCalendario(sprint))} dias ({calcularDiasUteis(sprint.data_inicio, sprintFimDiaParaCalendario(sprint))} úteis)
+                              Duração: {calcularDiasTotais(sprintInicioDiaParaCalendario(sprint), sprintFimDiaParaCalendario(sprint))} dias ({calcularDiasUteis(sprintInicioDiaParaCalendario(sprint), sprintFimDiaParaCalendario(sprint))} úteis)
                             </span>
                           </div>
                           <div className="flex items-center gap-[8px] text-sm text-[var(--color-muted-foreground)]">
@@ -982,7 +959,7 @@ export default function Sprints() {
                             <div className="flex items-center gap-[8px] text-sm text-[var(--color-muted-foreground)]">
                               <Calendar className="h-[16px] w-[16px]" />
                               <span>
-                                {formatDate(sprint.data_inicio)} → {formatDate(sprintFimDiaParaCalendario(sprint))}
+                                {formatDateTime(sprint.data_inicio)} → {formatDateTime(sprint.fechamento_em)}
                               </span>
                             </div>
                             <div className="flex items-center gap-[8px] text-sm text-[var(--color-muted-foreground)]">
@@ -1000,7 +977,7 @@ export default function Sprints() {
                           <div className="flex items-center gap-[8px] text-sm text-[var(--color-muted-foreground)]">
                             <Clock className="h-[16px] w-[16px]" />
                             <span>
-                                Duração: {calcularDiasTotais(sprint.data_inicio, sprintFimDiaParaCalendario(sprint))} dias ({calcularDiasUteis(sprint.data_inicio, sprintFimDiaParaCalendario(sprint))} úteis)
+                                Duração: {calcularDiasTotais(sprintInicioDiaParaCalendario(sprint), sprintFimDiaParaCalendario(sprint))} dias ({calcularDiasUteis(sprintInicioDiaParaCalendario(sprint), sprintFimDiaParaCalendario(sprint))} úteis)
                               </span>
                             </div>
                             <div className="flex items-center gap-[8px] text-sm text-[var(--color-muted-foreground)]">
@@ -1040,8 +1017,8 @@ export default function Sprints() {
             </DialogTitle>
             <DialogDescription>
               {editingSprint
-                ? 'Atualize o nome, a data de início e o instante de fechamento.'
-                : 'Defina o nome, o dia de início e a data e hora em que a sprint fecha automaticamente.'}
+                ? 'Atualize o nome, o instante de início e o instante de fechamento.'
+                : 'Defina o nome, quando a sprint começa (data e hora) e quando ela fecha automaticamente.'}
             </DialogDescription>
           </DialogHeader>
 
@@ -1058,10 +1035,10 @@ export default function Sprints() {
             </div>
 
             <div className="space-y-[8px]">
-              <Label htmlFor="sprint-data-inicio">Data de início</Label>
+              <Label htmlFor="sprint-data-inicio">Data e hora de início</Label>
               <Input
                 id="sprint-data-inicio"
-                type="date"
+                type="datetime-local"
                 value={sprintFormData.data_inicio}
                 onChange={(e) => {
                   setSprintFormData((prev) => ({ ...prev, data_inicio: e.target.value }));

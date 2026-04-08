@@ -48,10 +48,14 @@ class Command(BaseCommand):
             datetime.combine(data_fim_origem, time(18, 0, 0)),
             tz,
         )
+        data_inicio_origem_dt = timezone.make_aware(
+            datetime.combine(data_inicio_origem, time.min),
+            tz,
+        )
         sprint_origem, created = Sprint.objects.update_or_create(
             nome='[TESTE] Sprint Origem Finalizar',
             defaults={
-                'data_inicio': data_inicio_origem,
+                'data_inicio': data_inicio_origem_dt,
                 'fechamento_em': fechamento_origem,
                 'duracao_dias': 14,
                 'supervisor': user,
@@ -70,10 +74,14 @@ class Command(BaseCommand):
             datetime.combine(data_fim_destino, time(18, 0, 0)),
             tz,
         )
+        data_inicio_destino_dt = timezone.make_aware(
+            datetime.combine(data_inicio_destino, time.min),
+            tz,
+        )
         sprint_destino, created_dest = Sprint.objects.update_or_create(
             nome='[TESTE] Sprint Destino Em Andamento',
             defaults={
-                'data_inicio': data_inicio_destino,
+                'data_inicio': data_inicio_destino_dt,
                 'fechamento_em': fechamento_destino,
                 'duracao_dias': 14,
                 'supervisor': user,

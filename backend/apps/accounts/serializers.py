@@ -115,11 +115,17 @@ class LoginSerializer(serializers.Serializer):
     password = serializers.CharField(write_only=True)
 
     def validate(self, attrs):
-        username = attrs.get('username')
+        username = (attrs.get('username') or '').strip()
         password = attrs.get('password')
 
         if username and password:
             user = authenticate(username=username, password=password)
+            # Django autentica pelo username exatamente como está no banco; tentativa extra sem
+            # diferenciar maiúsculas (ex.: italo.martins vs Italo.Martins).
+            if not user:
+                cand = User.objects.filter(username__iexact=username).first()
+                if cand and cand.check_password(password):
+                    user = cand
             if not user:
                 raise serializers.ValidationError('Credenciais inválidas.')
             if not user.is_active:

@@ -37,3 +37,12 @@ export function sprintFimDiaParaCalendario(s: {
   const pad = (n: number) => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
+
+/** Dia de início da sprint em YYYY-MM-DD (local), a partir de `data_inicio` (datetime ISO). */
+export function sprintInicioDiaParaCalendario(s: { data_inicio?: string | null }): string {
+  if (!s.data_inicio) return '';
+  const d = new Date(s.data_inicio);
+  if (Number.isNaN(d.getTime())) return '';
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}

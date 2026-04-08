@@ -41,7 +41,8 @@ from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 from django.utils import timezone
 
-from apps.projects.models import Sprint, Project, ProjectKanbanStageConfig, Card
+from apps.projects.models import Sprint, Project, Card
+from apps.projects.services import merge_project_kanban_into
 
 
 def _norm_name(nome: str) -> str:
@@ -52,8 +53,14 @@ def _duracao_dias(data_inicio, fechamento_em):
     fe = fechamento_em
     if timezone.is_naive(fe):
         fe = timezone.make_aware(fe, timezone.get_current_timezone())
+    di = data_inicio
+    if di is not None and timezone.is_naive(di):
+        di = timezone.make_aware(di, timezone.get_current_timezone())
     end_d = timezone.localtime(fe).date()
-    return max(1, (end_d - data_inicio).days + 1)
+    start_d = timezone.localtime(di).date() if di is not None else None
+    if start_d is None:
+        return 1
+    return max(1, (end_d - start_d).days + 1)
 
 
 def _fechamento_hoje_2359_local():
@@ -290,7 +297,8 @@ class Command(BaseCommand):
             max_fe = max_fe_from_origens
 
         if data_inicio_opt:
-            min_di = datetime.strptime(data_inicio_opt.strip(), "%Y-%m-%d").date()
+            d = datetime.strptime(data_inicio_opt.strip(), "%Y-%m-%d").date()
+            min_di = timezone.make_aware(datetime.combine(d, time.min), timezone.get_current_timezone())
 
         if max_fe <= timezone.now() and not fechamento_hoje_2359:
             self.stdout.write(
@@ -371,7 +379,7 @@ class Command(BaseCommand):
 
             for canonical, others in merge_plan:
                 for other in others:
-                    self._merge_kanban_into(canonical, other)
+                    merge_project_kanban_into(canonical, other)
                     n = Card.objects.filter(projeto=other).update(projeto=canonical)
                     self.stdout.write(f"  Movidos {n} cards projeto {other.id} -> {canonical.id}")
                     other.delete()
@@ -417,14 +425,6 @@ class Command(BaseCommand):
         if keep == "most_cards":
             return max(plist, key=lambda p: (p.cards.count(), -p.id))
         return min(plist, key=lambda p: (p.created_at, p.id))
-
-    def _merge_kanban_into(self, canonical: Project, other: Project) -> None:
-        for cfg in other.kanban_stage_configs.all():
-            ProjectKanbanStageConfig.objects.get_or_create(
-                project=canonical,
-                stage=cfg.stage,
-                defaults={"order": cfg.order},
-            )
 
     def _run_restore_csv(self, path: Path, dry_run: bool, *, allow_open: bool) -> None:
         if not path.is_file():

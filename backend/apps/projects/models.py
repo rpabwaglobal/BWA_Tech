@@ -8,7 +8,7 @@ import logging
 
 class Sprint(models.Model):
     nome = models.CharField(max_length=100, verbose_name='Nome da Sprint')
-    data_inicio = models.DateField(verbose_name='Data de Início')
+    data_inicio = models.DateTimeField(verbose_name='Data e hora de início')
     fechamento_em = models.DateTimeField(verbose_name='Data e hora de fechamento')
     duracao_dias = models.IntegerField(
         validators=[MinValueValidator(1)],

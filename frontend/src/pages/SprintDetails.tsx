@@ -79,6 +79,7 @@ import {
   datetimeLocalToFechamentoIso,
   isSprintPastFechamento,
   sprintFimDiaParaCalendario,
+  sprintInicioDiaParaCalendario,
 } from '@/lib/sprintFechamento';
 import {
   getColumnDefsByGroup,
@@ -479,13 +480,9 @@ export default function SprintDetails() {
       }
 
       // Initialize sprint form data if editing
-      const di =
-        sprintData.data_inicio && sprintData.data_inicio.includes('T')
-          ? sprintData.data_inicio.split('T')[0]
-          : sprintData.data_inicio;
       setSprintFormData({
         nome: sprintData.nome,
-        data_inicio: di || '',
+        data_inicio: fechamentoIsoToDatetimeLocal(sprintData.data_inicio),
         fechamento_em: fechamentoIsoToDatetimeLocal(sprintData.fechamento_em),
       });
 
@@ -1488,13 +1485,9 @@ export default function SprintDetails() {
       setAlertDialogOpen(true);
       return;
     }
-    const di =
-      sprint.data_inicio && sprint.data_inicio.includes('T')
-        ? sprint.data_inicio.split('T')[0]
-        : sprint.data_inicio;
     setSprintFormData({
       nome: sprint.nome,
-      data_inicio: di || '',
+      data_inicio: fechamentoIsoToDatetimeLocal(sprint.data_inicio),
       fechamento_em: fechamentoIsoToDatetimeLocal(sprint.fechamento_em),
     });
     setSprintFormError('');
@@ -1512,18 +1505,18 @@ export default function SprintDetails() {
     setSprintFormLoading(true);
 
     try {
-      const dataInicio = sprintFormData.data_inicio.trim();
+      const inicioIso = datetimeLocalToFechamentoIso(sprintFormData.data_inicio);
       const fechamentoIso = datetimeLocalToFechamentoIso(sprintFormData.fechamento_em);
 
-      if (!dataInicio || !fechamentoIso) {
-        setSprintFormError('Preencha a data de início e a data e hora de fechamento.');
+      if (!inicioIso || !fechamentoIso) {
+        setSprintFormError('Preencha a data e hora de início e a data e hora de fechamento.');
         setSprintFormLoading(false);
         return;
       }
 
       await sprintService.update(sprint.id, {
         nome: sprintFormData.nome,
-        data_inicio: dataInicio,
+        data_inicio: inicioIso,
         fechamento_em: fechamentoIso,
       });
       setSprintDialogOpen(false);
@@ -1597,22 +1590,17 @@ export default function SprintDetails() {
     if (sprint.finalizada) {
       return { label: 'Finalizada', variant: 'success' as const };
     }
-    const startDay = new Date(sprint.data_inicio);
-    startDay.setHours(0, 0, 0, 0);
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const end = new Date(sprint.fechamento_em);
-    const now = new Date();
+    const startMs = new Date(sprint.data_inicio).getTime();
+    const endMs = new Date(sprint.fechamento_em).getTime();
+    const nowMs = Date.now();
 
-    if (today < startDay) {
-      return { label: 'Futura', variant: 'secondary' as const };
+    if (nowMs < startMs) {
+      return { label: 'Planejada', variant: 'secondary' as const };
     }
-
-    if (now > end) {
-      return { label: 'Em Andamento', variant: 'default' as const };
+    if (nowMs > endMs) {
+      return { label: 'Prazo encerrado', variant: 'outline' as const };
     }
-
-    return { label: 'Em Andamento', variant: 'default' as const };
+    return { label: 'Em andamento', variant: 'default' as const };
   };
 
   const isSprintFinished = (sprint: Sprint) => isSprintPastFechamento(sprint);
@@ -2025,11 +2013,11 @@ export default function SprintDetails() {
               </span>
               <span className="flex items-center gap-[4px]">
                 <Calendar className="h-[14px] w-[14px]" />
-                {formatDate(sprint.data_inicio)} → {formatDateTime(sprint.fechamento_em)}
+                {formatDateTime(sprint.data_inicio)} → {formatDateTime(sprint.fechamento_em)}
               </span>
               <span className="flex items-center gap-[4px]">
                 <Clock className="h-[14px] w-[14px]" />
-                {calcularDiasTotais(sprint.data_inicio, sprintFimDiaParaCalendario(sprint))} dias ({calcularDiasUteis(sprint.data_inicio, sprintFimDiaParaCalendario(sprint))} úteis)
+                {calcularDiasTotais(sprintInicioDiaParaCalendario(sprint), sprintFimDiaParaCalendario(sprint))} dias ({calcularDiasUteis(sprintInicioDiaParaCalendario(sprint), sprintFimDiaParaCalendario(sprint))} úteis)
               </span>
             </div>
           </div>
@@ -2894,7 +2882,7 @@ export default function SprintDetails() {
           <DialogHeader>
             <DialogTitle>Editar Sprint</DialogTitle>
             <DialogDescription>
-              Atualize o nome, a data de início e o instante de fechamento.
+              Atualize o nome, o instante de início e o instante de fechamento.
             </DialogDescription>
           </DialogHeader>
 
@@ -2911,10 +2899,10 @@ export default function SprintDetails() {
             </div>
 
             <div className="space-y-[8px]">
-              <Label htmlFor="sprint-detail-data-inicio">Data de início</Label>
+              <Label htmlFor="sprint-detail-data-inicio">Data e hora de início</Label>
               <Input
                 id="sprint-detail-data-inicio"
-                type="date"
+                type="datetime-local"
                 value={sprintFormData.data_inicio}
                 onChange={(e) => {
                   setSprintFormData((prev) => ({ ...prev, data_inicio: e.target.value }));

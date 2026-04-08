@@ -415,8 +415,8 @@ def card_created_or_updated(sender, instance, created, **kwargs):
                     changes.append(f'Responsável: {old_resp} → {new_resp}')
                 
                 if old_data.get('data_inicio') != instance.data_inicio:
-                    old_date = old_data.get('data_inicio').strftime('%d/%m/%Y') if old_data.get('data_inicio') else 'Não definida'
-                    new_date = instance.data_inicio.strftime('%d/%m/%Y') if instance.data_inicio else 'Não definida'
+                    old_date = old_data.get('data_inicio').strftime('%d/%m/%Y %H:%M') if old_data.get('data_inicio') else 'Não definida'
+                    new_date = instance.data_inicio.strftime('%d/%m/%Y %H:%M') if instance.data_inicio else 'Não definida'
                     changes.append(f'Data de Início: {old_date} → {new_date}')
                 
                 if old_data.get('data_fim') != instance.data_fim:

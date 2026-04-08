@@ -36,8 +36,13 @@ def format_user_name(user):
 
 class SprintSerializer(serializers.ModelSerializer):
     supervisor_name = serializers.SerializerMethodField()
-    data_inicio = serializers.DateField(
-        input_formats=['%Y-%m-%d', '%Y-%m-%dT%H:%M:%S', '%Y-%m-%dT%H:%M', '%Y-%m-%dT%H:%M:%S.%f']
+    data_inicio = serializers.DateTimeField(
+        input_formats=[
+            '%Y-%m-%d',
+            '%Y-%m-%dT%H:%M:%S',
+            '%Y-%m-%dT%H:%M',
+            '%Y-%m-%dT%H:%M:%S.%f',
+        ]
     )
     fechamento_em = serializers.DateTimeField()
     # Compatível com telas antigas: só o dia final (derivado de fechamento_em)
@@ -61,8 +66,14 @@ class SprintSerializer(serializers.ModelSerializer):
         fe = fechamento_em
         if timezone.is_naive(fe):
             fe = timezone.make_aware(fe, timezone.get_current_timezone())
+        di = data_inicio
+        if di is not None and timezone.is_naive(di):
+            di = timezone.make_aware(di, timezone.get_current_timezone())
         end_d = timezone.localtime(fe).date()
-        return max(1, (end_d - data_inicio).days + 1)
+        start_d = timezone.localtime(di).date() if di is not None else None
+        if start_d is None:
+            return 1
+        return max(1, (end_d - start_d).days + 1)
 
     def validate(self, attrs):
         di = attrs.get('data_inicio')
@@ -73,7 +84,9 @@ class SprintSerializer(serializers.ModelSerializer):
         if di and fe:
             if timezone.is_naive(fe):
                 fe = timezone.make_aware(fe, timezone.get_current_timezone())
-            if timezone.localtime(fe).date() < di:
+            if timezone.is_naive(di):
+                di = timezone.make_aware(di, timezone.get_current_timezone())
+            if fe < di:
                 raise serializers.ValidationError(
                     {'fechamento_em': 'A data/hora de fechamento não pode ser anterior ao início da sprint.'}
                 )

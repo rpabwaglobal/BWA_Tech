@@ -1,13 +1,77 @@
 """
 Serviços de negócio para o app projects.
 """
-from django.utils import timezone
-from django.db import transaction
+from collections import defaultdict
 
-from .models import Sprint, Project, Card, CardStatus, ProjectStatus
+from django.db import transaction
+from django.utils import timezone
+
+from .models import Sprint, Project, Card, CardStatus, ProjectStatus, ProjectKanbanStageConfig
+
 
 def _norm_nome_projeto(nome: str) -> str:
     return (nome or "").strip().casefold()
+
+
+def merge_project_kanban_into(canonical: Project, other: Project) -> None:
+    """Copia etapas Kanban do projeto `other` para `canonical` (sem duplicar stage)."""
+    for cfg in other.kanban_stage_configs.all():
+        ProjectKanbanStageConfig.objects.get_or_create(
+            project=canonical,
+            stage=cfg.stage,
+            defaults={"order": cfg.order},
+        )
+
+
+_CARD_STATUS_RANK_DEDUPE = {
+    CardStatus.A_DESENVOLVER: 1,
+    CardStatus.PARADO_PENDENCIAS: 2,
+    CardStatus.EM_DESENVOLVIMENTO: 3,
+    CardStatus.EM_HOMOLOGACAO: 4,
+    CardStatus.FINALIZADO: 5,
+    CardStatus.INVIABILIZADO: 5,
+}
+
+
+def _pick_card_winner_duplicate_group(cards: list[Card]) -> Card:
+    """Mantém o card mais avançado no fluxo; empate: menor id."""
+
+    def rank(c: Card) -> int:
+        return _CARD_STATUS_RANK_DEDUPE.get(c.status, 0)
+
+    return max(cards, key=lambda c: (rank(c), -c.id))
+
+
+def dedupe_cards_mesmo_nome_no_projeto(project_id: int) -> list[int]:
+    """
+    Remove cards com o mesmo nome (normalizado) no mesmo projeto.
+    Retorna os IDs dos cards excluídos.
+    """
+    qs = list(Card.objects.filter(projeto_id=project_id).order_by("id"))
+    by_name: dict[str, list[Card]] = defaultdict(list)
+    for card in qs:
+        by_name[_norm_nome_projeto(card.nome)].append(card)
+
+    to_delete: list[int] = []
+    for norm, group in by_name.items():
+        if not norm or len(group) < 2:
+            continue
+        winner = _pick_card_winner_duplicate_group(group)
+        for c in group:
+            if c.id != winner.id:
+                to_delete.append(c.id)
+
+    if to_delete:
+        Card.objects.filter(pk__in=to_delete).delete()
+    return to_delete
+
+
+def dedupe_cards_mesmo_nome_em_todos_projetos_da_sprint(sprint_id: int) -> list[int]:
+    """Roda dedupe por nome em cada projeto da sprint; retorna todos os IDs removidos."""
+    removed: list[int] = []
+    for pid in Project.objects.filter(sprint_id=sprint_id).values_list("id", flat=True):
+        removed.extend(dedupe_cards_mesmo_nome_no_projeto(pid))
+    return removed
 
 
 def get_proxima_sprint(sprint):
@@ -16,19 +80,18 @@ def get_proxima_sprint(sprint):
     a próxima por data_inicio. Retorna None se não houver.
     """
     agora = timezone.now()
-    hoje = agora.date()
     fim_dia = timezone.localtime(sprint.fechamento_em).date()
-    # 1) Outra sprint ainda aberta (ainda não passou o instante de fechamento)
+    # 1) Outra sprint ainda aberta (já começou no relógio e ainda não fechou)
     em_andamento = Sprint.objects.filter(
         finalizada=False,
-        data_inicio__lte=hoje,
+        data_inicio__lte=agora,
         fechamento_em__gt=agora,
     ).exclude(pk=sprint.pk).order_by('data_inicio').first()
     if em_andamento:
         return em_andamento
-    # 2) Próxima cadastrada com início após o dia de término desta sprint
+    # 2) Próxima cadastrada com início (data local) após o dia de término desta sprint
     proxima = Sprint.objects.filter(
-        data_inicio__gt=fim_dia,
+        data_inicio__date__gt=fim_dia,
     ).order_by('data_inicio').first()
     return proxima
 
