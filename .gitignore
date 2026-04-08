@@ -53,5 +53,6 @@ htmlcov/
 
 # Backups de banco (não versionar dumps de produção)
 backups/
+backend/dump_banco_prod/
 *.dump
 *.dump.gz
