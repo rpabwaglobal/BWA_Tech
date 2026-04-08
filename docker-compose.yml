@@ -10,8 +10,9 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-bwaproj}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-bwaproj_secret}
     ports:
-      # Para manage.py runserver / IDE no host usar o mesmo Postgres do dump (localhost:5432)
-      - "${POSTGRES_PORT:-5432}:5432"
+      # Host 5433 por padrão: no Windows costuma existir Postgres nativo em 5432; evita conflito.
+      # Override: POSTGRES_PORT=5432 docker compose up -d db
+      - "${POSTGRES_PORT:-5433}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
