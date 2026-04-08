@@ -552,7 +552,7 @@ export default function Metrics() {
       const sprint = getSprintForCard(card);
       if (!sprint || !card.data_fim || !card.responsavel) continue;
       const uid = String(card.responsavel);
-      const sprintEnd = new Date(sprint.data_fim).setHours(23, 59, 59, 999);
+      const sprintEnd = new Date(sprint.fechamento_em).getTime();
       const delivery = new Date(card.data_fim).getTime();
       const onTime = delivery <= sprintEnd;
       const cur = byUser.get(uid) ?? { total: 0, onTime: 0 };
@@ -639,7 +639,7 @@ export default function Metrics() {
 
     const sprintOverlapsPeriod = (sprint: Sprint): boolean => {
       const start = toTime(sprint.data_inicio) ?? 0;
-      const end = toTime(sprint.data_fim) ?? 0;
+      const end = toTime(sprint.fechamento_em) ?? 0;
       return end >= periodStart && start <= periodEnd;
     };
 
@@ -921,7 +921,7 @@ export default function Metrics() {
                       return (
                         <g transform={`translate(${x},${y})`}>
                           <foreignObject x={-192} y={-12} width={190} height={24} className="overflow-visible">
-                            <div className="flex items-center gap-2 h-6" xmlns="http://www.w3.org/1999/xhtml">
+                            <div className="flex items-center gap-2 h-6">
                               <Avatar className="h-6 w-6 shrink-0 rounded-full">
                                 {row.profile_picture_url ? (
                                   <AvatarImage src={row.profile_picture_url} alt={row.name} />
@@ -1179,7 +1179,7 @@ export default function Metrics() {
                       return (
                         <g transform={`translate(${x},${y})`}>
                           <foreignObject x={-192} y={-12} width={190} height={24} className="overflow-visible">
-                            <div className="flex items-center gap-2 h-6" xmlns="http://www.w3.org/1999/xhtml">
+                            <div className="flex items-center gap-2 h-6">
                               <Avatar className={`h-6 w-6 shrink-0 rounded-full ${medalFrame}`}>
                                 {row.profile_picture_url ? (
                                   <AvatarImage src={row.profile_picture_url} alt={row.name} />

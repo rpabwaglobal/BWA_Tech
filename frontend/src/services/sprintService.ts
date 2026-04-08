@@ -1,10 +1,13 @@
-import api from './api';
+import api, { fetchAllPaginated } from './api';
 
 export type Sprint = {
   id: string; // UUID
   nome: string;
   data_inicio: string;
-  data_fim: string;
+  /** Instantâneo de fechamento automático (ISO). */
+  fechamento_em: string;
+  /** Só o dia final, derivado de `fechamento_em` (compat. API). */
+  data_fim?: string;
   duracao_dias: number;
   supervisor: string; // UUID
   supervisor_name?: string;
@@ -30,27 +33,13 @@ export type SprintFinalizarResponse = {
 export type SprintCreate = {
   nome: string;
   data_inicio: string;
-  data_fim: string;
-  duracao_dias: number;
+  fechamento_em: string;
   supervisor: string; // UUID
-};
-
-// Tipo para resposta paginada
-type PaginatedResponse<T> = {
-  count: number;
-  next: string | null;
-  previous: string | null;
-  results: T[];
 };
 
 export const sprintService = {
   async getAll(): Promise<Sprint[]> {
-    const response = await api.get<PaginatedResponse<Sprint> | Sprint[]>('/sprints/');
-    // Verifica se é paginado ou array direto
-    if (Array.isArray(response.data)) {
-      return response.data;
-    }
-    return response.data.results || [];
+    return fetchAllPaginated<Sprint>('/sprints/');
   },
 
   async getById(id: string): Promise<Sprint> {
@@ -63,7 +52,7 @@ export const sprintService = {
     return response.data;
   },
 
-  async update(id: string, data: Partial<SprintCreate>): Promise<Sprint> {
+  async update(id: string, data: Partial<Pick<SprintCreate, 'nome' | 'data_inicio' | 'fechamento_em'>>): Promise<Sprint> {
     const response = await api.patch(`/sprints/${id}/`, data);
     return response.data;
   },

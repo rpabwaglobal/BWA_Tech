@@ -26,7 +26,7 @@ class Command(BaseCommand):
             "--sprint-id",
             type=int,
             default=None,
-            help="ID da sprint alvo. Se omitido, usa a sprint em andamento (data_inicio <= hoje <= data_fim e não finalizada).",
+            help="ID da sprint alvo. Se omitido, usa a sprint em andamento (não finalizada, já iniciada e fechamento_em ainda no futuro).",
         )
         parser.add_argument(
             "--commit",
@@ -41,7 +41,8 @@ class Command(BaseCommand):
         )
 
     def handle(self, *args, **options):
-        hoje = timezone.now().date()
+        agora = timezone.now()
+        hoje = agora.date()
         sprint_id = options.get("sprint_id")
         do_commit = bool(options.get("commit"))
         keep = options.get("keep")
@@ -52,13 +53,17 @@ class Command(BaseCommand):
                 raise CommandError(f"Sprint id={sprint_id} não encontrada.")
         else:
             sprint = (
-                Sprint.objects.filter(finalizada=False, data_inicio__lte=hoje, data_fim__gte=hoje)
+                Sprint.objects.filter(
+                    finalizada=False,
+                    data_inicio__lte=hoje,
+                    fechamento_em__gt=agora,
+                )
                 .order_by("data_inicio")
                 .first()
             )
             if not sprint:
                 raise CommandError(
-                    "Nenhuma sprint em andamento encontrada (finalizada=False e data_inicio <= hoje <= data_fim). "
+                    "Nenhuma sprint em andamento encontrada (finalizada=False, já iniciada e fechamento_em no futuro). "
                     "Informe --sprint-id."
                 )
 

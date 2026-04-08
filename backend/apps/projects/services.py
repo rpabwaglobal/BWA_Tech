@@ -15,17 +15,20 @@ def get_proxima_sprint(sprint):
     Retorna a sprint de destino para replicação: sprint em andamento ou
     a próxima por data_inicio. Retorna None se não houver.
     """
-    hoje = timezone.now().date()
-    # 1) Sprint em andamento: data_inicio <= hoje <= data_fim
+    agora = timezone.now()
+    hoje = agora.date()
+    fim_dia = timezone.localtime(sprint.fechamento_em).date()
+    # 1) Outra sprint ainda aberta (ainda não passou o instante de fechamento)
     em_andamento = Sprint.objects.filter(
+        finalizada=False,
         data_inicio__lte=hoje,
-        data_fim__gte=hoje,
+        fechamento_em__gt=agora,
     ).exclude(pk=sprint.pk).order_by('data_inicio').first()
     if em_andamento:
         return em_andamento
-    # 2) Próxima por data_inicio (primeira com data_inicio > data_fim da sprint que está finalizando)
+    # 2) Próxima cadastrada com início após o dia de término desta sprint
     proxima = Sprint.objects.filter(
-        data_inicio__gt=sprint.data_fim,
+        data_inicio__gt=fim_dia,
     ).order_by('data_inicio').first()
     return proxima
 

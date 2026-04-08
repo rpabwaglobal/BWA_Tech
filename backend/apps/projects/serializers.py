@@ -1,4 +1,5 @@
 from rest_framework import serializers
+from django.utils import timezone
 import re
 import unicodedata
 from .models import (
@@ -38,9 +39,9 @@ class SprintSerializer(serializers.ModelSerializer):
     data_inicio = serializers.DateField(
         input_formats=['%Y-%m-%d', '%Y-%m-%dT%H:%M:%S', '%Y-%m-%dT%H:%M', '%Y-%m-%dT%H:%M:%S.%f']
     )
-    data_fim = serializers.DateField(
-        input_formats=['%Y-%m-%d', '%Y-%m-%dT%H:%M:%S', '%Y-%m-%dT%H:%M', '%Y-%m-%dT%H:%M:%S.%f']
-    )
+    fechamento_em = serializers.DateTimeField()
+    # Compatível com telas antigas: só o dia final (derivado de fechamento_em)
+    data_fim = serializers.SerializerMethodField(read_only=True)
     projects_count = serializers.IntegerField(source='projects.count', read_only=True)
     cards_total = serializers.IntegerField(read_only=True)
     cards_finalizados = serializers.IntegerField(read_only=True)
@@ -50,13 +51,54 @@ class SprintSerializer(serializers.ModelSerializer):
     def get_supervisor_name(self, obj):
         return format_user_name(obj.supervisor)
 
+    def get_data_fim(self, obj):
+        if obj.fechamento_em:
+            return timezone.localtime(obj.fechamento_em).date().isoformat()
+        return None
+
+    @staticmethod
+    def _duracao_dias(data_inicio, fechamento_em):
+        fe = fechamento_em
+        if timezone.is_naive(fe):
+            fe = timezone.make_aware(fe, timezone.get_current_timezone())
+        end_d = timezone.localtime(fe).date()
+        return max(1, (end_d - data_inicio).days + 1)
+
+    def validate(self, attrs):
+        di = attrs.get('data_inicio')
+        fe = attrs.get('fechamento_em')
+        if self.instance:
+            di = di if di is not None else self.instance.data_inicio
+            fe = fe if fe is not None else self.instance.fechamento_em
+        if di and fe:
+            if timezone.is_naive(fe):
+                fe = timezone.make_aware(fe, timezone.get_current_timezone())
+            if timezone.localtime(fe).date() < di:
+                raise serializers.ValidationError(
+                    {'fechamento_em': 'A data/hora de fechamento não pode ser anterior ao início da sprint.'}
+                )
+        return attrs
+
+    def create(self, validated_data):
+        validated_data['duracao_dias'] = self._duracao_dias(
+            validated_data['data_inicio'], validated_data['fechamento_em']
+        )
+        return super().create(validated_data)
+
+    def update(self, instance, validated_data):
+        inst = super().update(instance, validated_data)
+        if 'data_inicio' in validated_data or 'fechamento_em' in validated_data:
+            inst.duracao_dias = self._duracao_dias(inst.data_inicio, inst.fechamento_em)
+            inst.save(update_fields=['duracao_dias'])
+        return inst
+
     class Meta:
         model = Sprint
-        fields = ['id', 'nome', 'data_inicio', 'data_fim', 'duracao_dias', 
+        fields = ['id', 'nome', 'data_inicio', 'fechamento_em', 'data_fim', 'duracao_dias',
                  'supervisor', 'supervisor_name', 'projects_count',
                  'cards_total', 'cards_finalizados', 'cards_em_andamento', 'cards_em_atraso',
                  'finalizada', 'created_at', 'updated_at']
-        read_only_fields = ['created_at', 'updated_at', 'finalizada']
+        read_only_fields = ['created_at', 'updated_at', 'finalizada', 'data_fim']
 
 
 class ProjectSerializer(serializers.ModelSerializer):

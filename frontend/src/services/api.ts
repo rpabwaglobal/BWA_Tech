@@ -1,4 +1,5 @@
 import axios from 'axios';
+import type { AxiosResponse } from 'axios';
 
 // Em produção: use VITE_API_URL (ex: https://bwatech.com.br/api) ou mesmo domínio (/api)
 const baseURL =
@@ -47,5 +48,32 @@ api.interceptors.response.use(
     return Promise.reject(error);
   }
 );
+
+/** Resposta paginada padrão do Django REST Framework */
+export type PaginatedResponse<T> = {
+  count: number;
+  next: string | null;
+  previous: string | null;
+  results: T[];
+};
+
+/**
+ * Percorre todas as páginas de um endpoint paginado (PAGE_SIZE do backend).
+ * `next` do DRF costuma ser URL absoluta; o axios aceita e ignora baseURL.
+ */
+export async function fetchAllPaginated<T>(firstPath: string): Promise<T[]> {
+  const out: T[] = [];
+  let url: string | null = firstPath;
+  while (url) {
+    const response: AxiosResponse<PaginatedResponse<T> | T[]> = await api.get(url);
+    const data = response.data;
+    if (Array.isArray(data)) {
+      return data;
+    }
+    out.push(...(data.results ?? []));
+    url = data.next;
+  }
+  return out;
+}
 
 export default api;

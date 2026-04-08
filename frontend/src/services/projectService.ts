@@ -1,4 +1,4 @@
-import api from './api';
+import api, { fetchAllPaginated } from './api';
 
 export type Project = {
   id: string; // UUID
@@ -37,22 +37,16 @@ export type ProjectCreate = {
   status?: string;
 };
 
-// Tipo para resposta paginada
-type PaginatedResponse<T> = {
-  count: number;
-  next: string | null;
-  previous: string | null;
-  results: T[];
-};
-
 export const projectService = {
+  /** Todos os projetos (todas as páginas). */
   async getAll(): Promise<Project[]> {
-    const response = await api.get<PaginatedResponse<Project> | Project[]>('/projects/');
-    // Verifica se é paginado ou array direto
-    if (Array.isArray(response.data)) {
-      return response.data;
-    }
-    return response.data.results || [];
+    return fetchAllPaginated<Project>('/projects/');
+  },
+
+  /** Projetos de uma sprint (todas as páginas; mais eficiente que getAll + filtrar). */
+  async getBySprint(sprintId: string): Promise<Project[]> {
+    const id = encodeURIComponent(String(sprintId));
+    return fetchAllPaginated<Project>(`/projects/?sprint=${id}`);
   },
 
   async getById(id: string): Promise<Project> {

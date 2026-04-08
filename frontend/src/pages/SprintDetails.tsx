@@ -8,7 +8,6 @@ import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { DateInput } from '@/components/ui/date-input';
 import { DateTimePicker } from '@/components/ui/datetime-picker';
-import { DateRangePicker } from '@/components/ui/date-range-picker';
 import { Textarea } from '@/components/ui/textarea';
 import { UserSelect } from '@/components/ui/user-select';
 import { RequestDueDateChangeModal } from '@/components/RequestDueDateChangeModal';
@@ -75,6 +74,12 @@ import {
   Filter,
 } from 'lucide-react';
 import { calcularDiasTotais, calcularDiasUteis, formatDate, formatDateTime, isCardAtrasado } from '@/lib/dateUtils';
+import {
+  fechamentoIsoToDatetimeLocal,
+  datetimeLocalToFechamentoIso,
+  isSprintPastFechamento,
+  sprintFimDiaParaCalendario,
+} from '@/lib/sprintFechamento';
 import {
   getColumnDefsByGroup,
   SPRINT_CARDS_COLUMN_DEFS,
@@ -369,7 +374,7 @@ export default function SprintDetails() {
   const [sprintFormData, setSprintFormData] = useState({
     nome: '',
     data_inicio: '',
-    data_fim: '',
+    fechamento_em: '',
   });
 
   const canCreate = user?.role === 'supervisor' || user?.role === 'admin';
@@ -424,18 +429,12 @@ export default function SprintDetails() {
     if (!sprintId) return;
     setLoading(true);
     try {
-      const [sprintData, projectsData, usersData] = await Promise.all([
+      const [sprintData, sprintProjects, usersData] = await Promise.all([
         sprintService.getById(sprintId),
-        projectService.getAll(),
+        projectService.getBySprint(sprintId),
         userService.getAll(),
       ]);
 
-      // Filtrar projetos da sprint - garantir comparação correta de IDs (string)
-      const sprintProjects = projectsData.filter(p => {
-        const projectSprintId = String(p.sprint || '');
-        const targetSprintId = String(sprintId || sprintData.id || '');
-        return projectSprintId === targetSprintId;
-      });
       setSprint(sprintData);
       setProjects(sprintProjects);
       setUsers(usersData);
@@ -480,10 +479,14 @@ export default function SprintDetails() {
       }
 
       // Initialize sprint form data if editing
+      const di =
+        sprintData.data_inicio && sprintData.data_inicio.includes('T')
+          ? sprintData.data_inicio.split('T')[0]
+          : sprintData.data_inicio;
       setSprintFormData({
         nome: sprintData.nome,
-        data_inicio: sprintData.data_inicio,
-        data_fim: sprintData.data_fim,
+        data_inicio: di || '',
+        fechamento_em: fechamentoIsoToDatetimeLocal(sprintData.fechamento_em),
       });
 
     } catch (error) {
@@ -1480,31 +1483,19 @@ export default function SprintDetails() {
   const openEditSprintDialog = (e: React.MouseEvent) => {
     if (!sprint) return;
     e.stopPropagation();
-    if (isSprintFinished(sprint)) {
+    if (isSprintPastFechamento(sprint)) {
       setAlertMessage('Sprints finalizadas não podem ser editadas.');
       setAlertDialogOpen(true);
       return;
     }
-    // Converter formato YYYY-MM-DD para YYYY-MM-DDTHH:mm (adicionar hora padrão)
-    const convertToDateTime = (dateString: string): string => {
-      if (!dateString) return '';
-      // Se já está no formato YYYY-MM-DDTHH:mm, retornar como está
-      if (dateString.includes('T')) {
-        return dateString;
-      }
-      // Se está no formato YYYY-MM-DD, adicionar hora padrão (00:00 para início, 18:00 para fim)
-      if (/^\d{4}-\d{2}-\d{2}$/.test(dateString)) {
-        const isStart = dateString === sprint.data_inicio;
-        const hours = isStart ? '00' : '18';
-        return `${dateString}T${hours}:00`;
-      }
-      return dateString;
-    };
-    
+    const di =
+      sprint.data_inicio && sprint.data_inicio.includes('T')
+        ? sprint.data_inicio.split('T')[0]
+        : sprint.data_inicio;
     setSprintFormData({
       nome: sprint.nome,
-      data_inicio: convertToDateTime(sprint.data_inicio),
-      data_fim: convertToDateTime(sprint.data_fim),
+      data_inicio: di || '',
+      fechamento_em: fechamentoIsoToDatetimeLocal(sprint.fechamento_em),
     });
     setSprintFormError('');
     setSprintDialogOpen(true);
@@ -1513,7 +1504,7 @@ export default function SprintDetails() {
   const handleSprintSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!sprint) return;
-    if (isSprintFinished(sprint)) {
+    if (isSprintPastFechamento(sprint)) {
       setSprintFormError('Sprints finalizadas não podem ser editadas.');
       return;
     }
@@ -1521,34 +1512,19 @@ export default function SprintDetails() {
     setSprintFormLoading(true);
 
     try {
-      // Converter formato YYYY-MM-DDTHH:mm para YYYY-MM-DD (apenas data)
-      const formatDateForBackend = (dateTimeString: string): string => {
-        if (!dateTimeString) return '';
-        // Se já está no formato YYYY-MM-DD, retornar como está
-        if (/^\d{4}-\d{2}-\d{2}$/.test(dateTimeString)) {
-          return dateTimeString;
-        }
-        // Se está no formato YYYY-MM-DDTHH:mm, extrair apenas a data
-        const [datePart] = dateTimeString.split('T');
-        return datePart || dateTimeString;
-      };
+      const dataInicio = sprintFormData.data_inicio.trim();
+      const fechamentoIso = datetimeLocalToFechamentoIso(sprintFormData.fechamento_em);
 
-      const dataInicio = formatDateForBackend(sprintFormData.data_inicio);
-      const dataFim = formatDateForBackend(sprintFormData.data_fim);
-
-      if (!dataInicio || !dataFim) {
-        setSprintFormError('Por favor, preencha as datas de início e fim.');
+      if (!dataInicio || !fechamentoIso) {
+        setSprintFormError('Preencha a data de início e a data e hora de fechamento.');
         setSprintFormLoading(false);
         return;
       }
 
-      const duracao_dias = calcularDiasTotais(dataInicio, dataFim);
-      
       await sprintService.update(sprint.id, {
-        ...sprintFormData,
+        nome: sprintFormData.nome,
         data_inicio: dataInicio,
-        data_fim: dataFim,
-        duracao_dias,
+        fechamento_em: fechamentoIso,
       });
       setSprintDialogOpen(false);
       loadData();
@@ -1618,31 +1594,28 @@ export default function SprintDetails() {
   };
 
   const getSprintStatus = (sprint: Sprint) => {
-    const today = new Date();
-    const start = new Date(sprint.data_inicio);
-    const end = new Date(sprint.data_fim);
-
     if (sprint.finalizada) {
       return { label: 'Finalizada', variant: 'success' as const };
     }
+    const startDay = new Date(sprint.data_inicio);
+    startDay.setHours(0, 0, 0, 0);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const end = new Date(sprint.fechamento_em);
+    const now = new Date();
 
-    if (today < start) {
+    if (today < startDay) {
       return { label: 'Futura', variant: 'secondary' as const };
     }
 
-    if (today > end) {
-      // Data já passou, mas ainda não foi marcada como finalizada no backend
-      // Considerar "Em Andamento" até o backend marcar como finalizada
+    if (now > end) {
       return { label: 'Em Andamento', variant: 'default' as const };
     }
 
     return { label: 'Em Andamento', variant: 'default' as const };
   };
 
-  const isSprintFinished = (sprint: Sprint) => {
-    // Sprint é considerada finalizada apenas quando o backend marca finalizada=True
-    return !!sprint.finalizada;
-  };
+  const isSprintFinished = (sprint: Sprint) => isSprintPastFechamento(sprint);
 
   // Verificar se um projeto pertence a uma sprint finalizada
   const isProjectFromFinishedSprint = (project: Project): boolean => {
@@ -2052,11 +2025,11 @@ export default function SprintDetails() {
               </span>
               <span className="flex items-center gap-[4px]">
                 <Calendar className="h-[14px] w-[14px]" />
-                {formatDate(sprint.data_inicio)} → {formatDate(sprint.data_fim)}
+                {formatDate(sprint.data_inicio)} → {formatDateTime(sprint.fechamento_em)}
               </span>
               <span className="flex items-center gap-[4px]">
                 <Clock className="h-[14px] w-[14px]" />
-                {calcularDiasTotais(sprint.data_inicio, sprint.data_fim)} dias ({calcularDiasUteis(sprint.data_inicio, sprint.data_fim)} úteis)
+                {calcularDiasTotais(sprint.data_inicio, sprintFimDiaParaCalendario(sprint))} dias ({calcularDiasUteis(sprint.data_inicio, sprintFimDiaParaCalendario(sprint))} úteis)
               </span>
             </div>
           </div>
@@ -2921,7 +2894,7 @@ export default function SprintDetails() {
           <DialogHeader>
             <DialogTitle>Editar Sprint</DialogTitle>
             <DialogDescription>
-              Atualize o nome e o período (apenas dias).
+              Atualize o nome, a data de início e o instante de fechamento.
             </DialogDescription>
           </DialogHeader>
 
@@ -2938,25 +2911,27 @@ export default function SprintDetails() {
             </div>
 
             <div className="space-y-[8px]">
-              <Label>Período da Sprint</Label>
-              <DateRangePicker
-                dateOnly
-                dialogTitle="Período da sprint (somente datas)"
-                startValue={sprintFormData.data_inicio}
-                endValue={sprintFormData.data_fim}
-                onStartChange={(e) => {
-                  setSprintFormData(prev => ({ ...prev, data_inicio: e.target.value }));
-                  // Limpar erro quando a data de início for preenchida
-                  if (e.target.value && sprintFormError === 'Por favor, preencha as datas de início e fim.') {
-                    setSprintFormError('');
-                  }
+              <Label htmlFor="sprint-detail-data-inicio">Data de início</Label>
+              <Input
+                id="sprint-detail-data-inicio"
+                type="date"
+                value={sprintFormData.data_inicio}
+                onChange={(e) => {
+                  setSprintFormData((prev) => ({ ...prev, data_inicio: e.target.value }));
+                  if (e.target.value && sprintFormError) setSprintFormError('');
                 }}
-                onEndChange={(e) => {
-                  setSprintFormData(prev => ({ ...prev, data_fim: e.target.value }));
-                  // Limpar erro quando a data de fim for preenchida
-                  if (e.target.value && sprintFormError === 'Por favor, preencha as datas de início e fim.') {
-                    setSprintFormError('');
-                  }
+                required
+              />
+            </div>
+            <div className="space-y-[8px]">
+              <Label htmlFor="sprint-detail-fechamento">Data e hora de fechamento</Label>
+              <Input
+                id="sprint-detail-fechamento"
+                type="datetime-local"
+                value={sprintFormData.fechamento_em}
+                onChange={(e) => {
+                  setSprintFormData((prev) => ({ ...prev, fechamento_em: e.target.value }));
+                  if (e.target.value && sprintFormError) setSprintFormError('');
                 }}
                 required
               />

@@ -39,7 +39,7 @@ class SprintViewSet(viewsets.ModelViewSet):
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_fields = ['supervisor']
     search_fields = ['nome']
-    ordering_fields = ['data_inicio', 'data_fim', 'created_at']
+    ordering_fields = ['data_inicio', 'fechamento_em', 'created_at']
     ordering = ['-data_inicio']
 
     def get_queryset(self):
@@ -455,7 +455,7 @@ class CardViewSet(viewsets.ModelViewSet):
             # Prioridades do dia: considerar apenas cards de sprints em andamento
             # Definição de sprint em andamento:
             # - sprint não finalizada
-            # - data_inicio <= hoje <= data_fim
+            # - data_inicio <= hoje <= dia de fechamento (data do fechamento_em)
             # E com status relevantes ou finalizados hoje
             cards_em_desenvolvimento = Card.objects.filter(
                 Q(status='em_desenvolvimento') |  # Cards em desenvolvimento
@@ -465,7 +465,7 @@ class CardViewSet(viewsets.ModelViewSet):
             ).filter(
                 projeto__sprint__finalizada=False,
                 projeto__sprint__data_inicio__lte=hoje,
-                projeto__sprint__data_fim__gte=hoje,
+                projeto__sprint__fechamento_em__date__gte=hoje,
             ).exclude(responsavel__isnull=True).exclude(
                 responsavel__role__in=['supervisor', 'admin']
             ).select_related('responsavel', 'projeto')
@@ -722,26 +722,7 @@ class WeeklyPriorityConfigViewSet(viewsets.ModelViewSet):
         if self.request.user.role not in ['supervisor', 'admin']:
             from rest_framework.exceptions import PermissionDenied
             raise PermissionDenied("Apenas supervisores e administradores podem atualizar configurações de prioridades semanais.")
-        config = serializer.save()
-
-        # Reagenda o fechamento ETA das sprints abertas com o novo horário limite.
-        from .tasks import fechar_sprint_em_hora
-
-        now = timezone.now()
-        for sprint in Sprint.objects.filter(finalizada=False).order_by('data_fim'):
-            if not sprint.data_fim:
-                continue
-
-            expected_close_at = timezone.make_aware(
-                datetime.combine(sprint.data_fim, config.horario_limite),
-                timezone.get_current_timezone(),
-            )
-            eta = expected_close_at if expected_close_at > now else now
-
-            fechar_sprint_em_hora.apply_async(
-                args=[sprint.id, expected_close_at.isoformat()],
-                eta=eta,
-            )
+        serializer.save()
     
     def destroy(self, request, *args, **kwargs):
         # Verificar se o usuário é supervisor ou admin

@@ -21,6 +21,7 @@ import { sprintService, type Sprint } from '@/services/sprintService';
 import { userService, type User } from '@/services/userService';
 import { kanbanStageService, type KanbanStage } from '@/services/kanbanStageService';
 import { formatDate } from '@/lib/dateUtils';
+import { sprintFimDiaParaCalendario } from '@/lib/sprintFechamento';
 import { Plus, FolderKanban, Calendar, User as UserIcon, CheckCircle2, Clock, XCircle, AlertCircle, Eye, Loader2, Pencil, Trash2, ArrowRight } from 'lucide-react';
 import { Avatar, AvatarImage, AvatarFallback } from '@/components/ui/avatar';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -689,12 +690,9 @@ export default function Projects() {
     
     // Projetos que não estão em sprint mas pertenceram a sprints passadas são concluídos
     const projectSprint = sprints.find(s => String(s.id || '') === String(project.sprint || ''));
-    if (projectSprint) {
-      const sprintFim = new Date(projectSprint.data_fim);
-      sprintFim.setHours(0, 0, 0, 0);
-      
-      // Se a sprint já passou, o projeto é considerado concluído
-      if (hoje > sprintFim) {
+    if (projectSprint?.fechamento_em) {
+      // Sprint encerrada pelo instante de fechamento definido na sprint
+      if (Date.now() > new Date(projectSprint.fechamento_em).getTime()) {
         return true;
       }
     }
@@ -723,12 +721,11 @@ export default function Projects() {
     if (!projectSprint) return false;
     
     const sprintInicio = new Date(projectSprint.data_inicio);
-    const sprintFim = new Date(projectSprint.data_fim);
     sprintInicio.setHours(0, 0, 0, 0);
-    sprintFim.setHours(0, 0, 0, 0);
-    
-    // Se está dentro do período da sprint
-    return hoje >= sprintInicio && hoje <= sprintFim;
+    const fechamento = new Date(projectSprint.fechamento_em);
+    const agora = new Date();
+
+    return hoje >= sprintInicio && agora <= fechamento;
   });
 
   // Configurar IntersectionObserver para cada subseção (após calcular as variáveis)
@@ -1739,7 +1736,7 @@ export default function Projects() {
                 <option value="">Selecione uma sprint</option>
                 {sprints.map((sprint) => (
                   <option key={sprint.id} value={sprint.id}>
-                    {sprint.nome} ({formatDate(sprint.data_inicio)} - {formatDate(sprint.data_fim)})
+                    {sprint.nome} ({formatDate(sprint.data_inicio)} - {formatDate(sprintFimDiaParaCalendario(sprint))})
                   </option>
                 ))}
               </select>
@@ -1836,7 +1833,7 @@ export default function Projects() {
                 <option value="">Selecione uma sprint</option>
                 {sprints.map((sprint) => (
                   <option key={sprint.id} value={sprint.id}>
-                    {sprint.nome} ({formatDate(sprint.data_inicio)} - {formatDate(sprint.data_fim)})
+                    {sprint.nome} ({formatDate(sprint.data_inicio)} - {formatDate(sprintFimDiaParaCalendario(sprint))})
                   </option>
                 ))}
               </select>

@@ -6,7 +6,8 @@ type Props = {
 };
 
 /**
- * Explica que o período da sprint grava só datas; o horário de fechamento automático vem da config global em Prioridades.
+ * Explica que a data de início é só o dia; o fechamento automático usa o instante
+ * definido em "Data e hora de fechamento" na sprint (não o horário global em Prioridades).
  */
 export function SprintPeriodHelpNote({ showPrioritiesLink = true }: Props) {
   return (
@@ -14,10 +15,10 @@ export function SprintPeriodHelpNote({ showPrioritiesLink = true }: Props) {
       className="rounded-lg border border-[var(--color-border)] bg-[var(--color-muted)]/40 px-3 py-2.5 text-xs leading-relaxed text-[var(--color-foreground)]"
       role="note"
     >
-      <p className="font-medium">Sobre datas e horário de fechamento</p>
+      <p className="font-medium">Sobre datas e fechamento</p>
       <p className="mt-1.5 text-[var(--color-muted-foreground)]">
-        Apenas o <strong>dia</strong> de início e o <strong>dia</strong> de fim são guardados. O fechamento automático da sprint
-        no último dia ocorre à hora definida em{' '}
+        A <strong>data de início</strong> grava apenas o dia. O <strong>fechamento automático</strong> da sprint ocorre no
+        instante que você definir em <strong>Data e hora de fechamento</strong> — não usa o &quot;Horário limite&quot; de{' '}
         {showPrioritiesLink ? (
           <Link to="/priorities" className="font-medium text-[var(--color-primary)] underline underline-offset-2">
             Prioridades
@@ -25,8 +26,7 @@ export function SprintPeriodHelpNote({ showPrioritiesLink = true }: Props) {
         ) : (
           <strong>Prioridades</strong>
         )}
-        {' '}
-        (modo <strong>semana</strong>), campo <strong>Horário limite</strong> — não pela hora escolhida num calendário de sprint.
+        , que continua valendo só para o fluxo semanal de prioridades.
       </p>
     </div>
   );

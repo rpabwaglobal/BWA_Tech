@@ -74,7 +74,7 @@ print("\n--- Criando Sprint ---")
 sprint = Sprint.objects.create(
     nome='Sprint de Teste - Notificações',
     data_inicio=timezone.now().date(),
-    data_fim=(timezone.now() + timedelta(days=14)).date(),
+    fechamento_em=timezone.now() + timedelta(days=14),
     duracao_dias=14,
     supervisor=supervisor
 )

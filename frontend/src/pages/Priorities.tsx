@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, type ReactElement } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Card, CardContent } from '@/components/ui/card';
 import { Avatar, AvatarImage, AvatarFallback } from '@/components/ui/avatar';
@@ -902,7 +902,7 @@ export default function Priorities() {
                               }
                             }
 
-                            const icons: JSX.Element[] = [];
+                            const icons: ReactElement[] = [];
                             if (isAtrasado) {
                               icons.push(
                                 <AlertCircle
@@ -1349,15 +1349,15 @@ export default function Priorities() {
             <DialogHeader>
               <DialogTitle>Configurar Horário Limite</DialogTitle>
               <DialogDescription>
-                Esta hora é usada nas prioridades da semana e também para o{' '}
-                <strong>fechamento automático de sprints</strong> no último dia (<code className="text-xs">data_fim</code>
-                ), combinando dia + este horário no fuso do servidor.
+                Esta hora é usada nas prioridades da semana (incluindo marcar atrasos na sexta). O{' '}
+                <strong>fechamento automático de cada sprint</strong> usa a data e hora definidas na própria sprint (
+                <code className="text-xs">fechamento_em</code>), não este horário.
               </DialogDescription>
             </DialogHeader>
 
             <div className="space-y-[16px] mt-[16px]">
               <div className="space-y-[8px]">
-                <Label htmlFor="horario-limite">Horário limite (prioridades e fecho de sprint)</Label>
+                <Label htmlFor="horario-limite">Horário limite (prioridades da semana)</Label>
                 <Input
                   id="horario-limite"
                   type="time"
@@ -1368,8 +1368,7 @@ export default function Priorities() {
                   }}
                 />
                 <p className="text-xs text-[var(--color-muted-foreground)]">
-                  Cards não concluídos até este horário na sexta-feira podem ser marcados como atrasados; sprints abertas fecham
-                  automaticamente neste horário no dia de término configurado na sprint.
+                  Cards não concluídos até este horário na sexta-feira podem ser marcados como atrasados no fluxo semanal.
                 </p>
               </div>
               
@@ -1389,8 +1388,7 @@ export default function Priorities() {
                   </Label>
                 </div>
                 <p className="text-xs text-[var(--color-muted-foreground)]">
-                  Se habilitado, a semana e as sprints em aberto são encerradas conforme o agendamento ao chegar no horário
-                  limite no dia correspondente.
+                  Se habilitado, a semana de prioridades é encerrada automaticamente ao chegar no horário limite na sexta-feira.
                 </p>
               </div>
             </div>

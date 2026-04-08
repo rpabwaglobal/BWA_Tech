@@ -10,7 +10,8 @@ export type ProjectDetail = {
     id: string;
     nome: string;
     data_inicio: string;
-    data_fim: string;
+    fechamento_em: string;
+    data_fim?: string;
     duracao_dias: number;
     supervisor: string;
     supervisor_name?: string;

@@ -1,4 +1,4 @@
-import api from './api';
+import api, { fetchAllPaginated } from './api';
 
 export type User = {
   id: string; // UUID
@@ -12,29 +12,13 @@ export type User = {
   date_joined?: string;
 };
 
-// Tipo para resposta paginada
-type PaginatedResponse<T> = {
-  count: number;
-  next: string | null;
-  previous: string | null;
-  results: T[];
-};
-
 export const userService = {
   async getAll(): Promise<User[]> {
-    const response = await api.get<PaginatedResponse<User> | User[]>('/users/');
-    if (Array.isArray(response.data)) {
-      return response.data;
-    }
-    return response.data.results || [];
+    return fetchAllPaginated<User>('/users/');
   },
 
   async getDevelopers(): Promise<User[]> {
-    const response = await api.get<PaginatedResponse<User> | User[]>('/users/?role=desenvolvedor');
-    if (Array.isArray(response.data)) {
-      return response.data;
-    }
-    return response.data.results || [];
+    return fetchAllPaginated<User>('/users/?role=desenvolvedor');
   },
 
   async getById(id: string): Promise<User> {

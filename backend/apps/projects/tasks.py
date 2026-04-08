@@ -203,8 +203,7 @@ def fechar_sprint_em_hora(sprint_id: int, expected_close_at_iso: str):
     """
     Fecha uma sprint exatamente no horário agendado (Celery ETA).
 
-    - expected_close_at_iso: datetime timezone-aware em ISO8601.
-    - Valida que sprint ainda não está finalizada e que a data bate com sprint.data_fim.
+    - expected_close_at_iso: instante em ISO8601 (deve coincidir com sprint.fechamento_em).
     """
     try:
         sprint = Sprint.objects.get(pk=sprint_id)
@@ -218,25 +217,19 @@ def fechar_sprint_em_hora(sprint_id: int, expected_close_at_iso: str):
     if expected_dt.tzinfo is None:
         expected_dt = timezone.make_aware(expected_dt, timezone.get_current_timezone())
 
-    # Se a sprint mudou a data depois do agendamento, não fecha.
-    if expected_dt.date() != sprint.data_fim:
-        return 'date mismatch'
+    stored = sprint.fechamento_em
+    if stored is None:
+        return 'no fechamento_em'
+    if timezone.is_naive(stored):
+        stored = timezone.make_aware(stored, timezone.get_current_timezone())
+
+    # Se o fechamento foi alterado após o agendamento, não fecha com esta task.
+    if abs((expected_dt - stored).total_seconds()) > 120:
+        return 'fechamento mismatch'
 
     now = timezone.now()
-
-    # Recalcula o horário limite atual para evitar fechamento antecipado
-    # quando o supervisor altera o horário depois do agendamento ETA.
-    horario_limite_atual = WeeklyPriorityConfig.get_config().horario_limite
-    current_expected_dt = timezone.make_aware(
-        datetime.combine(sprint.data_fim, horario_limite_atual),
-        timezone.get_current_timezone(),
-    )
-
-    if now < current_expected_dt:
-        return 'not yet time for current limit'
-
-    if expected_dt < current_expected_dt:
-        return 'stale schedule'
+    if now < stored:
+        return 'not yet time'
 
     result = finalizar_sprint_replicacao(sprint, criado_por_user=None)
     if result is None:
@@ -249,43 +242,16 @@ def fechar_sprint_em_hora(sprint_id: int, expected_close_at_iso: str):
 @shared_task
 def finalizar_sprints_por_data():
     """
-    Finaliza sprints automaticamente apenas quando a data_fim JÁ PASSOU
-    E o horário limite do dia também foi alcançado.
-
-    - Usa o campo global WeeklyPriorityConfig.horario_limite como horário de corte.
-    - Antes disso, mesmo após meia-noite, a sprint continua aberta.
-    - A sprint também pode ser finalizada manualmente via botão na página da sprint.
+    Finaliza sprints cujo instante fechamento_em já passou (fallback se Celery ETA falhar).
     """
-    from apps.projects.models import WeeklyPriorityConfig
-    from datetime import datetime
+    agora = timezone.now()
 
-    agora = timezone.localtime()  # datetime com timezone
-    hoje = agora.date()
-
-    # Horário limite configurado globalmente
-    config = WeeklyPriorityConfig.get_config()
-    horario_limite = config.horario_limite  # time
-
-    # Considerar apenas sprints que já chegaram na data_fim (data já passou).
-    # O horário (horario_limite) ainda é validado abaixo via limite_dt.
-    sprints = Sprint.objects.filter(finalizada=False, data_fim__lte=hoje).order_by('data_fim')
+    sprints = Sprint.objects.filter(finalizada=False, fechamento_em__lte=agora).order_by('fechamento_em')
 
     processadas = 0
     sem_destino = 0
 
     for sprint in sprints:
-        data_fim = sprint.data_fim
-
-        # Montar datetime limite da sprint (data_fim + horario_limite)
-        limite_dt = timezone.make_aware(
-            datetime.combine(data_fim, horario_limite),
-            timezone.get_current_timezone(),
-        )
-
-        # Só finalizar automaticamente se já passou do limite
-        if agora < limite_dt:
-            continue
-
         result = finalizar_sprint_replicacao(sprint, criado_por_user=None)
         if result is None:
             sprint.finalizada = True

@@ -77,15 +77,16 @@ export default function Dashboard() {
         (p) => p.status === 'finalizado' || p.status === 'homologado'
       ).length;
 
-      // Filtrar sprints em andamento (hoje está entre data_inicio e data_fim)
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
+      // Sprints em andamento: não finalizadas, já iniciadas e antes do instante de fechamento
+      const now = new Date();
       const sprintsEmAndamento = sprints.filter((sprint) => {
+        if (sprint.finalizada) return false;
         const start = new Date(sprint.data_inicio);
         start.setHours(0, 0, 0, 0);
-        const end = new Date(sprint.data_fim);
-        end.setHours(0, 0, 0, 0);
-        return today >= start && today <= end;
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const fechamento = new Date(sprint.fechamento_em);
+        return today >= start && now <= fechamento;
       });
 
       // Filtrar projetos das sprints em andamento

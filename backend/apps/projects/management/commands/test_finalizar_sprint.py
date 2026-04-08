@@ -3,7 +3,7 @@ Comando para testar a regra de finalização de sprint: cria sprints, projeto e 
 de teste, finaliza a sprint e verifica se o projeto com cards ativos foi replicado
 para a próxima sprint.
 """
-from datetime import timedelta
+from datetime import datetime, time, timedelta
 
 from django.core.management.base import BaseCommand
 from django.utils import timezone
@@ -26,6 +26,7 @@ class Command(BaseCommand):
     def handle(self, *args, **options):
         User = get_user_model()
         hoje = timezone.now().date()
+        tz = timezone.get_current_timezone()
 
         if options.get('clean'):
             self._clean_test_data()
@@ -40,14 +41,18 @@ class Command(BaseCommand):
             return
         self.stdout.write(f'Usando usuário: {user.username} (role={user.role})')
 
-        # 2) Sprint que será finalizada (data_fim já passou)
+        # 2) Sprint que será finalizada (fechamento_em já passou)
         data_fim_origem = hoje - timedelta(days=2)
         data_inicio_origem = data_fim_origem - timedelta(days=14)
+        fechamento_origem = timezone.make_aware(
+            datetime.combine(data_fim_origem, time(18, 0, 0)),
+            tz,
+        )
         sprint_origem, created = Sprint.objects.update_or_create(
             nome='[TESTE] Sprint Origem Finalizar',
             defaults={
                 'data_inicio': data_inicio_origem,
-                'data_fim': data_fim_origem,
+                'fechamento_em': fechamento_origem,
                 'duracao_dias': 14,
                 'supervisor': user,
                 'finalizada': False,
@@ -58,14 +63,18 @@ class Command(BaseCommand):
         else:
             self.stdout.write(f'Sprint origem já existia: {sprint_origem.nome} (id={sprint_origem.id}), datas e finalizada atualizados.')
 
-        # 3) Sprint destino (em andamento: hoje entre data_inicio e data_fim)
+        # 3) Sprint destino (em andamento: já começou e fechamento_em ainda no futuro)
         data_inicio_destino = hoje - timedelta(days=1)
         data_fim_destino = hoje + timedelta(days=13)
+        fechamento_destino = timezone.make_aware(
+            datetime.combine(data_fim_destino, time(18, 0, 0)),
+            tz,
+        )
         sprint_destino, created_dest = Sprint.objects.update_or_create(
             nome='[TESTE] Sprint Destino Em Andamento',
             defaults={
                 'data_inicio': data_inicio_destino,
-                'data_fim': data_fim_destino,
+                'fechamento_em': fechamento_destino,
                 'duracao_dias': 14,
                 'supervisor': user,
             },
@@ -108,7 +117,7 @@ class Command(BaseCommand):
         # 6) Verificar próxima sprint antes de finalizar
         proxima = get_proxima_sprint(sprint_origem)
         if not proxima:
-            self.stdout.write(self.style.ERROR('Nenhuma sprint de destino encontrada. Crie uma sprint "em andamento" ou com data_inicio > data_fim da origem.'))
+            self.stdout.write(self.style.ERROR('Nenhuma sprint de destino encontrada. Crie uma sprint "em andamento" ou com data_inicio após o dia de fechamento da origem.'))
             return
         self.stdout.write(f'Próxima sprint calculada: {proxima.nome} (id={proxima.id})')
 

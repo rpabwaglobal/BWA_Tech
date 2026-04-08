@@ -76,6 +76,7 @@ import {
   SlidersHorizontal,
 } from 'lucide-react';
 import { formatDate, formatDateTime, isCardAtrasado } from '@/lib/dateUtils';
+import { sprintFimDiaParaCalendario } from '@/lib/sprintFechamento';
 import { CardLogsModal } from '@/components/CardLogsModal';
 import { PendenciaModal } from '@/components/PendenciaModal';
 import { ConclusaoModal } from '@/components/ConclusaoModal';
@@ -923,11 +924,12 @@ export default function ProjectDetails() {
     }
   };
 
-  // Verificar se a sprint está finalizada
+  // Verificar se a sprint está encerrada para edição (backend ou já passou o fechamento_em)
   const isSprintFinished = (sprint: Sprint | null): boolean => {
     if (!sprint) return false;
-    // Considerar finalizada apenas quando o backend marcar finalizada=true
-    return !!sprint.finalizada;
+    if (sprint.finalizada) return true;
+    if (!sprint.fechamento_em) return false;
+    return new Date(sprint.fechamento_em).getTime() <= Date.now();
   };
 
   const sprintIsFinished = isSprintFinished(sprint);
@@ -2070,7 +2072,7 @@ export default function ProjectDetails() {
                   </h1>
                   {sprint && (
                     <span className="text-xs text-[var(--color-muted-foreground)]">
-                      {sprint.nome} ({formatDate(sprint.data_inicio)} → {formatDate(sprint.data_fim)})
+                      {sprint.nome} ({formatDate(sprint.data_inicio)} → {formatDate(sprintFimDiaParaCalendario(sprint))})
                     </span>
                   )}
                 </div>

@@ -266,11 +266,8 @@ CELERY_BEAT_SCHEDULE = {
     },
     'finalizar-sprints-por-data': {
         'task': 'apps.projects.tasks.finalizar_sprints_por_data',
-        # Executar com frequência para fechar a sprint logo após o "horario_limite"
-        # (data_fim é DateField; horario_limite vem de WeeklyPriorityConfig).
-        # Assim, o fechamento acontece na hora marcada (com atraso máximo do intervalo).
-        # Fallback de segurança (casos em que agendamento por ETA falhe).
-        # O fechamento "exato" acontece pelo agendamento do Celery ETA em cada Sprint.
+        # Fallback de segurança (casos em que o agendamento por ETA ao salvar a sprint falhe).
+        # O fechamento no instante correto usa Sprint.fechamento_em (não WeeklyPriorityConfig).
         'schedule': 300.0,  # a cada 5 min
     },
 }
