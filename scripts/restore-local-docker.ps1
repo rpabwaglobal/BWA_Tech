@@ -39,7 +39,8 @@ if (-not (Test-Path -LiteralPath $workFile)) {
 }
 
 Write-Host "Parando backend e workers para liberar conexões ao banco..."
-docker compose stop backend celery-worker celery-beat 2>$null | Out-Null
+# docker compose stop escreve no stderr; cmd /c evita RemoteException com $ErrorActionPreference Stop
+cmd /c "docker compose stop backend celery-worker celery-beat"
 
 try {
     Write-Host "Copiando dump para o container db..."
@@ -68,7 +69,7 @@ finally {
         Remove-Item -LiteralPath $tempUncompressed -Force -ErrorAction SilentlyContinue
     }
     Write-Host "Subindo backend e workers..."
-    docker compose start backend celery-worker celery-beat 2>$null | Out-Null
+    cmd /c "docker compose start backend celery-worker celery-beat"
 }
 
 Write-Host "Pronto. Suba o stack se necessário: docker compose up -d"
