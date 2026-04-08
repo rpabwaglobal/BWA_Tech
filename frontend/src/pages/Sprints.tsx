@@ -293,6 +293,18 @@ export default function Sprints() {
       setSprintDialogOpen(false);
       loadData();
     } catch (err: any) {
+      if (err?.code === 'ECONNABORTED' || err?.message?.includes?.('timeout')) {
+        setSprintFormError(
+          'Tempo esgotado ao falar com o servidor. Confirme que a API está a correr e, se usar outra porta (ex.: 8001), defina VITE_API_URL no frontend.'
+        );
+        return;
+      }
+      if (err?.code === 'ERR_NETWORK' && !err?.response) {
+        setSprintFormError(
+          'Não foi possível ligar à API. Verifique se o backend está a correr e se VITE_API_URL aponta para a porta certa (ex.: http://127.0.0.1:8001/api).'
+        );
+        return;
+      }
       const errorData = err.response?.data;
       let errorMessage = 'Erro ao salvar sprint';
       if (errorData) {

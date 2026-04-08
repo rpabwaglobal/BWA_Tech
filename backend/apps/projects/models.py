@@ -1,4 +1,6 @@
-from django.db import models
+import threading
+
+from django.db import models, transaction
 from django.conf import settings
 from django.core.validators import MinValueValidator
 from django.utils import timezone
@@ -56,17 +58,28 @@ class Sprint(models.Model):
         from .tasks import fechar_sprint_em_hora
 
         eta = expected_close_at if expected_close_at > timezone.now() else timezone.now()
-        try:
-            fechar_sprint_em_hora.apply_async(
-                args=[self.id, expected_close_at.isoformat()],
-                eta=eta,
-            )
-        except Exception as e:
-            logging.getLogger(__name__).warning(
-                "Falha ao agendar fechamento ETA da sprint %s: %s",
-                self.id,
-                str(e),
-            )
+        sprint_id = self.id
+        close_iso = expected_close_at.isoformat()
+
+        # Após o commit: a sprint já existe na BD. Publicar no broker numa thread evita
+        # bloquear a resposta HTTP se Redis estiver lento ou indisponível.
+        def schedule_close():
+            def publish():
+                try:
+                    fechar_sprint_em_hora.apply_async(
+                        args=[sprint_id, close_iso],
+                        eta=eta,
+                    )
+                except Exception as e:
+                    logging.getLogger(__name__).warning(
+                        "Falha ao agendar fechamento ETA da sprint %s: %s",
+                        sprint_id,
+                        str(e),
+                    )
+
+            threading.Thread(target=publish, daemon=True).start()
+
+        transaction.on_commit(schedule_close)
 
 
 class ProjectStatus(models.TextChoices):

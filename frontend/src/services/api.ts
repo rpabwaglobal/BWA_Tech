@@ -8,6 +8,8 @@ const baseURL =
 
 const api = axios.create({
   baseURL,
+  /** Sem timeout o axios pode ficar indefinidamente à espera se o servidor não responder. */
+  timeout: 60000,
   headers: {
     'Content-Type': 'application/json',
   },

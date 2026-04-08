@@ -106,7 +106,13 @@ class SprintSerializer(serializers.ModelSerializer):
                  'supervisor', 'supervisor_name', 'projects_count',
                  'cards_total', 'cards_finalizados', 'cards_em_andamento', 'cards_em_atraso',
                  'finalizada', 'created_at', 'updated_at']
-        read_only_fields = ['created_at', 'updated_at', 'finalizada', 'data_fim']
+        read_only_fields = [
+            'created_at',
+            'updated_at',
+            'finalizada',
+            'data_fim',
+            'duracao_dias',  # calculado em create/update a partir de data_inicio e fechamento_em
+        ]
 
 
 class ProjectSerializer(serializers.ModelSerializer):

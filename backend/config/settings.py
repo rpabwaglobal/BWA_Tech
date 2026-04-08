@@ -251,6 +251,12 @@ CELERY_RESULT_SERIALIZER = 'json'
 CELERY_TIMEZONE = TIME_ZONE
 # Desabilitar conexão automática ao broker na inicialização (evita erros quando Redis não está rodando)
 CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = False
+# Falha rápida se Redis não responder (evita pedidos HTTP presos ao criar sprint com apply_async)
+CELERY_BROKER_CONNECTION_TIMEOUT = 3
+CELERY_BROKER_TRANSPORT_OPTIONS = {
+    'socket_connect_timeout': 3,
+    'socket_timeout': 3,
+}
 
 # Beat schedule (só funciona com Celery Beat rodando)
 from celery.schedules import crontab
