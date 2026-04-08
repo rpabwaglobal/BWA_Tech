@@ -36,14 +36,9 @@ def format_user_name(user):
 
 class SprintSerializer(serializers.ModelSerializer):
     supervisor_name = serializers.SerializerMethodField()
-    data_inicio = serializers.DateTimeField(
-        input_formats=[
-            '%Y-%m-%d',
-            '%Y-%m-%dT%H:%M:%S',
-            '%Y-%m-%dT%H:%M',
-            '%Y-%m-%dT%H:%M:%S.%f',
-        ]
-    )
+    # Sem input_formats restritivos: usa o padrão DRF (ISO 8601 / parse_datetime),
+    # igual a fechamento_em — aceita strings do browser (ex.: ...Z de toISOString()).
+    data_inicio = serializers.DateTimeField()
     fechamento_em = serializers.DateTimeField()
     # Compatível com telas antigas: só o dia final (derivado de fechamento_em)
     data_fim = serializers.SerializerMethodField(read_only=True)
