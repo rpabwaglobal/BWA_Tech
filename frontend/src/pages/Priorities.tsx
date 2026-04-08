@@ -1349,13 +1349,15 @@ export default function Priorities() {
             <DialogHeader>
               <DialogTitle>Configurar Horário Limite</DialogTitle>
               <DialogDescription>
-                Defina o horário limite de sexta-feira para conclusão das prioridades da semana
+                Esta hora é usada nas prioridades da semana e também para o{' '}
+                <strong>fechamento automático de sprints</strong> no último dia (<code className="text-xs">data_fim</code>
+                ), combinando dia + este horário no fuso do servidor.
               </DialogDescription>
             </DialogHeader>
 
             <div className="space-y-[16px] mt-[16px]">
               <div className="space-y-[8px]">
-                <Label htmlFor="horario-limite">Horário Limite (Sexta-feira)</Label>
+                <Label htmlFor="horario-limite">Horário limite (prioridades e fecho de sprint)</Label>
                 <Input
                   id="horario-limite"
                   type="time"
@@ -1366,7 +1368,8 @@ export default function Priorities() {
                   }}
                 />
                 <p className="text-xs text-[var(--color-muted-foreground)]">
-                  Cards não concluídos até este horário na sexta-feira serão marcados como atrasados
+                  Cards não concluídos até este horário na sexta-feira podem ser marcados como atrasados; sprints abertas fecham
+                  automaticamente neste horário no dia de término configurado na sprint.
                 </p>
               </div>
               
@@ -1386,7 +1389,8 @@ export default function Priorities() {
                   </Label>
                 </div>
                 <p className="text-xs text-[var(--color-muted-foreground)]">
-                  Se habilitado, a semana será fechada automaticamente ao chegar no horário limite na sexta-feira
+                  Se habilitado, a semana e as sprints em aberto são encerradas conforme o agendamento ao chegar no horário
+                  limite no dia correspondente.
                 </p>
               </div>
             </div>

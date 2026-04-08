@@ -11,10 +11,13 @@ import { cn } from "@/lib/utils";
 
 export interface DateRangePickerProps
   extends Omit<React.InputHTMLAttributes<HTMLInputElement>, 'type' | 'value' | 'onChange'> {
-  startValue?: string; // YYYY-MM-DDTHH:mm format
-  endValue?: string; // YYYY-MM-DDTHH:mm format
+  startValue?: string; // YYYY-MM-DD or YYYY-MM-DDTHH:mm
+  endValue?: string;
   onStartChange?: (e: React.ChangeEvent<HTMLInputElement>) => void;
   onEndChange?: (e: React.ChangeEvent<HTMLInputElement>) => void;
+  /** Só envia YYYY-MM-DD (sem hora). Esconde seletores de hora — alinhado ao backend que usa só a data. */
+  dateOnly?: boolean;
+  dialogTitle?: string;
 }
 
 // Converte YYYY-MM-DDTHH:mm para DD/MM/YYYY HH:mm
@@ -63,8 +66,28 @@ const extractTime = (isoDateTime: string): { hours: number; minutes: number } =>
   return { hours: hours || 0, minutes: minutes || 0 };
 };
 
+const toYmd = (d: Date) => {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+};
+
 const DateRangePicker = React.forwardRef<HTMLInputElement, DateRangePickerProps>(
-  ({ className, startValue = '', endValue = '', onStartChange, onEndChange, disabled, ...props }, ref) => {
+  (
+    {
+      className,
+      startValue = '',
+      endValue = '',
+      onStartChange,
+      onEndChange,
+      disabled,
+      dateOnly = false,
+      dialogTitle,
+      ...props
+    },
+    ref,
+  ) => {
     const [isOpen, setIsOpen] = React.useState(false);
     const [startDate, setStartDate] = React.useState<Date | null>(() => parseISO(startValue));
     const [endDate, setEndDate] = React.useState<Date | null>(() => parseISO(endValue));
@@ -155,13 +178,23 @@ const DateRangePicker = React.forwardRef<HTMLInputElement, DateRangePickerProps>
         finalEndTime = startTime;
       }
       
+      if (dateOnly) {
+        onStartChange?.({
+          target: { value: toYmd(finalStartDate) },
+        } as React.ChangeEvent<HTMLInputElement>);
+        onEndChange?.({
+          target: { value: toYmd(finalEndDate) },
+        } as React.ChangeEvent<HTMLInputElement>);
+        setIsOpen(false);
+        return;
+      }
+
       const startIso = formatToISO(finalStartDate, finalStartTime);
       const endIso = formatToISO(finalEndDate, finalEndTime);
-      
-      // Atualizar ambas as datas simultaneamente
+
       onStartChange?.({ target: { value: startIso } } as React.ChangeEvent<HTMLInputElement>);
       onEndChange?.({ target: { value: endIso } } as React.ChangeEvent<HTMLInputElement>);
-      
+
       setIsOpen(false);
     };
 
@@ -379,7 +412,7 @@ const DateRangePicker = React.forwardRef<HTMLInputElement, DateRangePickerProps>
         <Dialog open={isOpen} onOpenChange={setIsOpen}>
           <DialogContent className="max-w-[500px] p-0" onClose={() => setIsOpen(false)}>
             <DialogHeader className="p-6 pb-4">
-              <DialogTitle>Selecionar Intervalo da Sprint</DialogTitle>
+              <DialogTitle>{dialogTitle ?? 'Selecionar intervalo de datas'}</DialogTitle>
             </DialogHeader>
 
             <div className="p-6 pt-0 space-y-6">
@@ -463,7 +496,8 @@ const DateRangePicker = React.forwardRef<HTMLInputElement, DateRangePickerProps>
                 </div>
               </div>
 
-              {/* Seletores de Hora */}
+              {/* Seletores de Hora (omitidos em dateOnly: o backend da sprint usa só calendário) */}
+              {!dateOnly && (
               <div className="space-y-4">
                 <div className="text-sm font-medium text-[var(--color-foreground)]">
                   Horários
@@ -539,6 +573,7 @@ const DateRangePicker = React.forwardRef<HTMLInputElement, DateRangePickerProps>
                   </div>
                 </div>
               </div>
+              )}
 
               {/* Botões de ação */}
               <div className="flex items-center justify-between gap-3 pt-4 border-t border-[var(--color-border)]">

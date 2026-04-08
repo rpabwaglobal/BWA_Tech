@@ -12,6 +12,7 @@ import { DateRangePicker } from '@/components/ui/date-range-picker';
 import { Textarea } from '@/components/ui/textarea';
 import { UserSelect } from '@/components/ui/user-select';
 import { RequestDueDateChangeModal } from '@/components/RequestDueDateChangeModal';
+import { SprintPeriodHelpNote } from '@/components/SprintPeriodHelpNote';
 import {
   Dialog,
   DialogContent,
@@ -2920,7 +2921,7 @@ export default function SprintDetails() {
           <DialogHeader>
             <DialogTitle>Editar Sprint</DialogTitle>
             <DialogDescription>
-              Atualize as informações da sprint.
+              Atualize o nome e o período (apenas dias).
             </DialogDescription>
           </DialogHeader>
 
@@ -2939,6 +2940,8 @@ export default function SprintDetails() {
             <div className="space-y-[8px]">
               <Label>Período da Sprint</Label>
               <DateRangePicker
+                dateOnly
+                dialogTitle="Período da sprint (somente datas)"
                 startValue={sprintFormData.data_inicio}
                 endValue={sprintFormData.data_fim}
                 onStartChange={(e) => {
@@ -2957,6 +2960,7 @@ export default function SprintDetails() {
                 }}
                 required
               />
+              <SprintPeriodHelpNote showPrioritiesLink={canCreate} />
             </div>
 
             {sprintFormError && (

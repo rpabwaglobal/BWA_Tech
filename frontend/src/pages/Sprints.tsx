@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { SprintPeriodHelpNote } from '@/components/SprintPeriodHelpNote';
 import { useAuth } from '@/context/AuthContext';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -1058,8 +1059,8 @@ export default function Sprints() {
             </DialogTitle>
             <DialogDescription>
               {editingSprint
-                ? 'Atualize as informações da sprint.'
-                : 'Preencha os dados para criar uma nova sprint.'}
+                ? 'Atualize o nome e o período (apenas dias).'
+                : 'Defina o nome e o intervalo de datas da sprint.'}
             </DialogDescription>
           </DialogHeader>
 
@@ -1078,6 +1079,8 @@ export default function Sprints() {
             <div className="space-y-[8px]">
               <Label>Período da Sprint</Label>
               <DateRangePicker
+                dateOnly
+                dialogTitle="Período da sprint (somente datas)"
                 startValue={sprintFormData.data_inicio}
                 endValue={sprintFormData.data_fim}
                 onStartChange={(e) => {
@@ -1096,6 +1099,7 @@ export default function Sprints() {
                 }}
                 required
               />
+              <SprintPeriodHelpNote showPrioritiesLink={canCreate} />
             </div>
 
             {sprintFormError && (
