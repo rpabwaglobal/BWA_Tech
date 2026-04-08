@@ -722,7 +722,26 @@ class WeeklyPriorityConfigViewSet(viewsets.ModelViewSet):
         if self.request.user.role not in ['supervisor', 'admin']:
             from rest_framework.exceptions import PermissionDenied
             raise PermissionDenied("Apenas supervisores e administradores podem atualizar configurações de prioridades semanais.")
-        serializer.save()
+        config = serializer.save()
+
+        # Reagenda o fechamento ETA das sprints abertas com o novo horário limite.
+        from .tasks import fechar_sprint_em_hora
+
+        now = timezone.now()
+        for sprint in Sprint.objects.filter(finalizada=False).order_by('data_fim'):
+            if not sprint.data_fim:
+                continue
+
+            expected_close_at = timezone.make_aware(
+                datetime.combine(sprint.data_fim, config.horario_limite),
+                timezone.get_current_timezone(),
+            )
+            eta = expected_close_at if expected_close_at > now else now
+
+            fechar_sprint_em_hora.apply_async(
+                args=[sprint.id, expected_close_at.isoformat()],
+                eta=eta,
+            )
     
     def destroy(self, request, *args, **kwargs):
         # Verificar se o usuário é supervisor ou admin

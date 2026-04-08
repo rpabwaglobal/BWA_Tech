@@ -465,6 +465,19 @@ export default function Sprints() {
     });
   };
 
+  const formatDateTime = (dateString?: string) => {
+    if (!dateString) return 'N/A';
+    const d = new Date(dateString);
+    if (Number.isNaN(d.getTime())) return 'N/A';
+    return d.toLocaleString('pt-BR', {
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+  };
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-[256px]">
@@ -840,6 +853,18 @@ export default function Sprints() {
                           <div className="flex items-center gap-[8px] text-sm text-[var(--color-muted-foreground)]">
                             <Clock className="h-[16px] w-[16px]" />
                             <span>
+                              Criada em: {formatDateTime(sprint.created_at)}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-[8px] text-sm text-[var(--color-muted-foreground)]">
+                            <CheckCircle2 className="h-[16px] w-[16px]" />
+                            <span>
+                              Fechada em: {sprint.finalizada ? formatDateTime(sprint.updated_at) : 'Sprint aberta'}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-[8px] text-sm text-[var(--color-muted-foreground)]">
+                            <Clock className="h-[16px] w-[16px]" />
+                            <span>
                               Duração: {calcularDiasTotais(sprint.data_inicio, sprint.data_fim)} dias ({calcularDiasUteis(sprint.data_inicio, sprint.data_fim)} úteis)
                             </span>
                           </div>
@@ -981,6 +1006,18 @@ export default function Sprints() {
                             <div className="flex items-center gap-[8px] text-sm text-[var(--color-muted-foreground)]">
                               <Clock className="h-[16px] w-[16px]" />
                               <span>
+                              Criada em: {formatDateTime(sprint.created_at)}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-[8px] text-sm text-[var(--color-muted-foreground)]">
+                            <CheckCircle2 className="h-[16px] w-[16px]" />
+                            <span>
+                              Fechada em: {sprint.finalizada ? formatDateTime(sprint.updated_at) : 'Sprint aberta'}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-[8px] text-sm text-[var(--color-muted-foreground)]">
+                            <Clock className="h-[16px] w-[16px]" />
+                            <span>
                                 Duração: {calcularDiasTotais(sprint.data_inicio, sprint.data_fim)} dias ({calcularDiasUteis(sprint.data_inicio, sprint.data_fim)} úteis)
                               </span>
                             </div>

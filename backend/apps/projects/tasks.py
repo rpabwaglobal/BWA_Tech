@@ -223,9 +223,20 @@ def fechar_sprint_em_hora(sprint_id: int, expected_close_at_iso: str):
         return 'date mismatch'
 
     now = timezone.now()
-    if now < expected_dt:
-        # Celery deveria executar no eta, mas guardamos para segurança.
-        return 'not yet time'
+
+    # Recalcula o horário limite atual para evitar fechamento antecipado
+    # quando o supervisor altera o horário depois do agendamento ETA.
+    horario_limite_atual = WeeklyPriorityConfig.get_config().horario_limite
+    current_expected_dt = timezone.make_aware(
+        datetime.combine(sprint.data_fim, horario_limite_atual),
+        timezone.get_current_timezone(),
+    )
+
+    if now < current_expected_dt:
+        return 'not yet time for current limit'
+
+    if expected_dt < current_expected_dt:
+        return 'stale schedule'
 
     result = finalizar_sprint_replicacao(sprint, criado_por_user=None)
     if result is None:

@@ -53,6 +53,7 @@ def finalizar_sprint_replicacao(sprint, criado_por_user=None):
         return None
 
     nao_entregues = [CardStatus.FINALIZADO, CardStatus.INVIABILIZADO]
+    projetos_concluidos = {ProjectStatus.ENTREGUE, ProjectStatus.HOMOLOGADO}
 
     with transaction.atomic():
         projetos_criados = 0
@@ -67,7 +68,13 @@ def finalizar_sprint_replicacao(sprint, criado_por_user=None):
 
         for project in sprint.projects.all():
             cards_pendentes = project.cards.exclude(status__in=nao_entregues)
-            if not cards_pendentes.exists():
+            project_nao_concluido = project.status not in projetos_concluidos
+
+            # Copia o projeto quando:
+            # 1) há cards não concluídos, ou
+            # 2) o próprio projeto ainda não está concluído.
+            # Em ambos os casos, mantém o projeto original na sprint passada.
+            if not cards_pendentes.exists() and not project_nao_concluido:
                 continue
 
             nome_norm = _norm_nome_projeto(project.nome)

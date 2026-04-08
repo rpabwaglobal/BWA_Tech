@@ -15,6 +15,9 @@ $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $root = Split-Path -Parent $scriptDir
 Set-Location $root
 
+# Alinhado com deploy.sh / deploy.bat (COMPOSE_PROJECT_NAME=bwaproj)
+if (-not $env:COMPOSE_PROJECT_NAME) { $env:COMPOSE_PROJECT_NAME = 'bwaproj' }
+
 $resolved = Resolve-Path -LiteralPath $DumpPath
 $workFile = $resolved.Path
 $tempUncompressed = $null
