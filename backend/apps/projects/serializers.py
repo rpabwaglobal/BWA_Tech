@@ -47,6 +47,8 @@ class SprintSerializer(serializers.ModelSerializer):
     cards_finalizados = serializers.IntegerField(read_only=True)
     cards_em_andamento = serializers.IntegerField(read_only=True)
     cards_em_atraso = serializers.IntegerField(read_only=True)
+    cards_entregues_atrasados = serializers.IntegerField(read_only=True)
+    cards_abertos_atrasados = serializers.IntegerField(read_only=True)
 
     def get_supervisor_name(self, obj):
         return format_user_name(obj.supervisor)
@@ -105,6 +107,7 @@ class SprintSerializer(serializers.ModelSerializer):
         fields = ['id', 'nome', 'data_inicio', 'fechamento_em', 'data_fim', 'duracao_dias',
                  'supervisor', 'supervisor_name', 'projects_count',
                  'cards_total', 'cards_finalizados', 'cards_em_andamento', 'cards_em_atraso',
+                 'cards_entregues_atrasados', 'cards_abertos_atrasados',
                  'finalizada', 'created_at', 'updated_at']
         read_only_fields = [
             'created_at',

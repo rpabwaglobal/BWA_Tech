@@ -18,6 +18,7 @@ import {
   Settings,
   BarChart3,
   FileText,
+  Headset,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -30,6 +31,7 @@ const navigation = [
   { path: '/people', label: 'Pessoas', icon: Users },
   { path: '/metrics', label: 'Métricas', icon: BarChart3 },
   { path: '/reports', label: 'Relatórios', icon: FileText },
+  { path: '/support', label: 'Suporte', icon: Headset },
   { path: '/geekday', label: 'Geek Day', icon: Sparkles },
 ];
 
@@ -95,8 +97,8 @@ export default function Sidebar() {
         </div>
 
         {/* Navigation */}
-        <nav className="flex-1 space-y-[8px] p-[8px] flex flex-col">
-          <div className="space-y-[8px]">
+        <nav className="flex-1 p-[8px] flex flex-col min-h-0">
+          <div className="space-y-[8px] overflow-y-auto pr-[4px]">
             {navigation.map((item) => {
               const isActive = location.pathname === item.path;
               const Icon = item.icon;

@@ -126,7 +126,9 @@ export default function Sprints() {
     return projects.filter((p) => {
       const projectSprintId = String(p.sprint || '');
       const targetSprintId = String(sprintId || '');
-      return projectSprintId === targetSprintId;
+      const normalizedName = normalizeProjectName(p.nome || '');
+      const isSupportProject = normalizedName === 'suporte' || normalizedName.includes('suporte');
+      return projectSprintId === targetSprintId && !isSupportProject;
     });
   };
 
@@ -667,7 +669,7 @@ export default function Sprints() {
                       </CardHeader>
                       <CardContent className="p-[24px] pt-0">
                         {/* Subcards de Estatísticas */}
-                        <div className="grid grid-cols-2 md:grid-cols-5 gap-[16px]">
+                        <div className="grid grid-cols-2 md:grid-cols-5 lg:grid-cols-6 gap-[16px]">
                           <div className="bg-[var(--color-muted)]/30 rounded-[8px] border border-[var(--color-border)] p-[16px]">
                             <div className="flex items-center gap-[8px] mb-[8px]">
                               <FolderKanban className="h-[16px] w-[16px] text-[var(--color-muted-foreground)]" />
@@ -707,10 +709,19 @@ export default function Sprints() {
                           <div className="bg-[var(--color-muted)]/30 rounded-[8px] border border-[var(--color-border)] p-[16px]">
                             <div className="flex items-center gap-[8px] mb-[8px]">
                               <XCircle className="h-[16px] w-[16px] text-red-600" />
-                              <span className="text-xs text-[var(--color-muted-foreground)]">Em Atraso</span>
+                              <span className="text-xs text-[var(--color-muted-foreground)]">Entregues atrasados</span>
                             </div>
                             <p className="text-2xl font-bold text-red-600">
-                              {stats.emAtraso}
+                              {sprint.cards_entregues_atrasados ?? 0}
+                            </p>
+                          </div>
+                          <div className="bg-[var(--color-muted)]/30 rounded-[8px] border border-[var(--color-border)] p-[16px]">
+                            <div className="flex items-center gap-[8px] mb-[8px]">
+                              <AlertCircle className="h-[16px] w-[16px] text-amber-600" />
+                              <span className="text-xs text-[var(--color-muted-foreground)]">Abertos atrasados</span>
+                            </div>
+                            <p className="text-2xl font-bold text-amber-600">
+                              {sprint.cards_abertos_atrasados ?? 0}
                             </p>
                           </div>
                         </div>
@@ -1202,4 +1213,12 @@ export default function Sprints() {
       </Dialog>
     </div>
   );
+}
+
+function normalizeProjectName(value: string) {
+  return value
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .trim();
 }

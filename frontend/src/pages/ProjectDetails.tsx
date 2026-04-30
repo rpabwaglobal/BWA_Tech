@@ -74,6 +74,7 @@ import {
   Pencil,
   Settings,
   SlidersHorizontal,
+  Headset,
 } from 'lucide-react';
 import { formatDate, formatDateTime, isCardAtrasado } from '@/lib/dateUtils';
 import { sprintFimDiaParaCalendario } from '@/lib/sprintFechamento';
@@ -933,6 +934,13 @@ export default function ProjectDetails() {
   };
 
   const sprintIsFinished = isSprintFinished(sprint);
+  const isSupportProject = normalizeProjectName(project?.nome || '') === 'suporte';
+
+  useEffect(() => {
+    if (isSupportProject && cardPriorityFilter) {
+      setCardPriorityFilter('');
+    }
+  }, [isSupportProject, cardPriorityFilter]);
 
   const getCardsByStage = (stageId: string) => {
     let filtered = cards.filter((card) => card.status === stageId);
@@ -959,7 +967,7 @@ export default function ProjectDetails() {
     }
 
     // Filtro por prioridade
-    if (cardPriorityFilter) {
+    if (cardPriorityFilter && !isSupportProject) {
       filtered = filtered.filter((card) => card.prioridade === cardPriorityFilter);
     }
 
@@ -1549,6 +1557,12 @@ export default function ProjectDetails() {
   };
 
   const openCreateCardDialog = () => {
+    if (isSupportProject) {
+      setAlertMessage('Neste projeto, os cards são criados automaticamente via integração. A criação manual está desabilitada.');
+      setAlertDialogOpen(true);
+      return;
+    }
+
     setEditingCard(null);
     setCardFormData({
       nome: '',
@@ -1740,6 +1754,11 @@ export default function ProjectDetails() {
     }
     if (editingCard && (editingCard.status === 'finalizado' || editingCard.status === 'inviabilizado')) {
       setCardFormError('Cards finalizados ou inviabilizados não podem ser editados.');
+      return;
+    }
+
+    if (!editingCard && isSupportProject) {
+      setCardFormError('A criação manual de cards está desabilitada no projeto de suporte.');
       return;
     }
     
@@ -2061,7 +2080,11 @@ export default function ProjectDetails() {
         </Button>
         <div className="flex items-center gap-[16px] flex-1">
           <div className="flex h-[48px] w-[48px] items-center justify-center rounded-[8px] bg-[var(--color-primary)]/10">
-            <FolderKanban className="h-[24px] w-[24px] text-[var(--color-primary)]" />
+            {isSupportProject ? (
+              <Headset className="h-[24px] w-[24px] text-[var(--color-primary)]" />
+            ) : (
+              <FolderKanban className="h-[24px] w-[24px] text-[var(--color-primary)]" />
+            )}
           </div>
           <div className="flex-1">
             <div className="flex items-center justify-between gap-[16px]">
@@ -2084,13 +2107,12 @@ export default function ProjectDetails() {
               </div>
               {/* Botão de criar card - visível para todos e em azul */}
               <div className="flex items-center gap-[8px]">
-                <Button
-                  variant="default"
-                  onClick={openCreateCardDialog}
-                >
-                  <Plus className="h-4 w-4 mr-2" />
-                  Criar Card
-                </Button>
+                {!isSupportProject && (
+                  <Button variant="default" onClick={openCreateCardDialog}>
+                    <Plus className="h-4 w-4 mr-2" />
+                    Criar Card
+                  </Button>
+                )}
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
                     <Button
@@ -2176,21 +2198,22 @@ export default function ProjectDetails() {
           </div>
         </div>
 
-        {/* Filtro de prioridade */}
-        <div className="flex-1 lg:flex-initial lg:w-[200px]">
-          <span className="text-xs text-[var(--color-muted-foreground)] mb-[4px] block">
-            Prioridade
-          </span>
-          <FilterSelect
-            options={CARD_PRIORITIES.map((prioridade) => ({
-              value: prioridade.value,
-              label: prioridade.label,
-            }))}
-            value={cardPriorityFilter}
-            onChange={setCardPriorityFilter}
-            placeholder="Todas as prioridades"
-          />
-        </div>
+        {!isSupportProject && (
+          <div className="flex-1 lg:flex-initial lg:w-[200px]">
+            <span className="text-xs text-[var(--color-muted-foreground)] mb-[4px] block">
+              Prioridade
+            </span>
+            <FilterSelect
+              options={CARD_PRIORITIES.map((prioridade) => ({
+                value: prioridade.value,
+                label: prioridade.label,
+              }))}
+              value={cardPriorityFilter}
+              onChange={setCardPriorityFilter}
+              placeholder="Todas as prioridades"
+            />
+          </div>
+        )}
 
         {/* Filtro de tipo de projeto (tipo do card) */}
         <div className="flex-1 lg:flex-initial lg:w-[220px]">
@@ -3203,4 +3226,12 @@ export default function ProjectDetails() {
       />
     </div>
   );
+}
+
+function normalizeProjectName(value: string) {
+  return value
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .trim();
 }

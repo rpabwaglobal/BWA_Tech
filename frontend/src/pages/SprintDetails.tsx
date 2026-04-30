@@ -73,7 +73,7 @@ import {
   Download,
   Filter,
 } from 'lucide-react';
-import { calcularDiasTotais, calcularDiasUteis, formatDate, formatDateTime, isCardAtrasado } from '@/lib/dateUtils';
+import { calcularDiasTotais, calcularDiasUteis, formatDate, formatDateTime } from '@/lib/dateUtils';
 import {
   fechamentoIsoToDatetimeLocal,
   datetimeLocalToFechamentoIso,
@@ -1715,15 +1715,40 @@ export default function SprintDetails() {
   const sprintProjects = getProjectsForSprint(sprint.id);
   const status = getSprintStatus(sprint);
 
-  const sprintProjectsNoSuggestions = sprintProjects.filter((p) => p.nome !== 'Sugestões');
+  const sprintProjectsNoSuggestions = sprintProjects.filter((p) => {
+    const normalizedName = normalizeProjectName(p.nome || '');
+    return normalizedName !== 'sugestoes' && normalizedName !== 'suporte';
+  });
   const sprintProjectIdsSet = new Set(sprintProjectsNoSuggestions.map((p) => String(p.id).trim()));
   const sprintCardsForList = cards.filter((c) =>
     sprintProjectIdsSet.has(String(c.projeto || '').trim()),
   );
   const visibleCardsForList = getFilteredAndSortedCards(sprintCardsForList);
+  const deliveredLateCount = sprintCardsForList.filter(
+    (card) =>
+      card.status === 'finalizado' &&
+      !!card.data_fim &&
+      new Date(card.data_fim).getTime() > new Date(sprint.fechamento_em).getTime(),
+  ).length;
+  const openLateCount = sprintCardsForList.filter(
+    (card) =>
+      card.status !== 'finalizado' &&
+      card.status !== 'inviabilizado' &&
+      !!card.data_fim &&
+      new Date(card.data_fim).getTime() < Date.now(),
+  ).length;
 
   const selectedColumnDefs = SPRINT_CARDS_COLUMN_DEFS.filter((c) => selectedColumnIds.includes(c.id));
   const selectedColumnDefsSafe = selectedColumnDefs;
+  const isCardLateForSprintView = (card: CardType): boolean => {
+    if (!card.data_fim) return false;
+    const due = new Date(card.data_fim).getTime();
+    if (card.status === 'finalizado') {
+      return due > new Date(sprint.fechamento_em).getTime();
+    }
+    if (card.status === 'inviabilizado') return false;
+    return due < Date.now();
+  };
 
   /** Nome base: «nome da sprint» - datahora (local), seguro para nome de arquivo */
   const getExportFileBaseName = () => {
@@ -1886,7 +1911,7 @@ export default function SprintDetails() {
               {formatDateTime(card.data_fim)}
             </div>
             <div className="flex items-center gap-[8px]">
-              {isCardAtrasado(card) ? (
+              {isCardLateForSprintView(card) ? (
                 <Badge variant="destructive" className="text-[10px] px-[6px] py-0 shrink-0">
                   Atrasado
                 </Badge>
@@ -2018,6 +2043,14 @@ export default function SprintDetails() {
               <span className="flex items-center gap-[4px]">
                 <Clock className="h-[14px] w-[14px]" />
                 {calcularDiasTotais(sprintInicioDiaParaCalendario(sprint), sprintFimDiaParaCalendario(sprint))} dias ({calcularDiasUteis(sprintInicioDiaParaCalendario(sprint), sprintFimDiaParaCalendario(sprint))} úteis)
+              </span>
+              <span className="flex items-center gap-[6px]">
+                <Badge variant="outline" className="text-[11px]">
+                  Entregues atrasados: {deliveredLateCount}
+                </Badge>
+                <Badge variant="outline" className="text-[11px]">
+                  Abertos atrasados: {openLateCount}
+                </Badge>
               </span>
             </div>
           </div>
@@ -2432,8 +2465,9 @@ export default function SprintDetails() {
           <div className="flex gap-[16px] overflow-x-auto pb-[16px] flex-1 min-h-0">
             {sprintProjects
               .filter((project) => {
-                // Ocultar projeto especial "Sugestões" do Kanban da sprint
-                if (project.nome === 'Sugestões') return false;
+                // Ocultar projetos especiais do Kanban da sprint
+                const normalizedName = normalizeProjectName(project.nome || '');
+                if (normalizedName === 'sugestoes' || normalizedName === 'suporte') return false;
 
                 // Se há busca ativa, verificar se o projeto ou algum card corresponde
                 if (cardSearchQuery.trim()) {
@@ -3782,4 +3816,12 @@ export default function SprintDetails() {
       />
     </div>
   );
+}
+
+function normalizeProjectName(value: string) {
+  return value
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .trim();
 }

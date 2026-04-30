@@ -16,6 +16,7 @@ import GeekDay from './pages/GeekDay';
 import Settings from './pages/Settings';
 import Metrics from './pages/Metrics';
 import Reports from './pages/Reports';
+import Support from './pages/Support';
 import Layout from './components/layout/Layout';
 import { Loader2 } from 'lucide-react';
 
@@ -89,6 +90,7 @@ function AppRoutes() {
         <Route path="mytasks" element={<MyTasks />} />
         <Route path="metrics" element={<Metrics />} />
         <Route path="reports" element={<Reports />} />
+        <Route path="support" element={<Support />} />
         <Route path="geekday" element={<GeekDay />} />
         <Route path="settings" element={<Settings />} />
       </Route>

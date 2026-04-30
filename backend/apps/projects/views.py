@@ -4,7 +4,7 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from django_filters.rest_framework import DjangoFilterBackend
 from django.db import transaction
-from django.db.models import Q, Max, Count
+from django.db.models import Q, Max, Count, F
 from django.utils import timezone
 from datetime import datetime, timedelta
 from .models import (
@@ -57,6 +57,24 @@ class SprintViewSet(viewsets.ModelViewSet):
                     filter=Q(projects__cards__status__in=['em_desenvolvimento', 'em_homologacao']),
                 ),
                 cards_em_atraso=Count(
+                    'projects__cards',
+                    filter=(
+                        (
+                            Q(projects__cards__data_fim__date__lt=hoje)
+                            & ~Q(projects__cards__status__in=['finalizado', 'inviabilizado'])
+                        )
+                        | (
+                            Q(projects__cards__status='finalizado')
+                            & Q(projects__cards__data_fim__gt=F('fechamento_em'))
+                        )
+                    ),
+                ),
+                cards_entregues_atrasados=Count(
+                    'projects__cards',
+                    filter=Q(projects__cards__status='finalizado')
+                    & Q(projects__cards__data_fim__gt=F('fechamento_em')),
+                ),
+                cards_abertos_atrasados=Count(
                     'projects__cards',
                     filter=Q(projects__cards__data_fim__date__lt=hoje)
                     & ~Q(projects__cards__status__in=['finalizado', 'inviabilizado']),

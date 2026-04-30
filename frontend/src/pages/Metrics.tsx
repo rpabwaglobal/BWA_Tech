@@ -97,6 +97,19 @@ function getRoleBarColor(role: string): string {
   }
 }
 
+function normalizeProjectName(value?: string | null): string {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .trim();
+}
+
+function isSpecialProjectName(value?: string | null): boolean {
+  const n = normalizeProjectName(value);
+  return n === 'suporte' || n === 'sugestoes' || n === 'projetos descartados';
+}
+
 export default function Metrics() {
   const { user: authUser } = useAuth();
   const isSupervisor = authUser?.role === 'supervisor' || authUser?.role === 'admin';
@@ -192,11 +205,20 @@ export default function Metrics() {
   const projectToSprint = useMemo(() => {
     const map = new Map<string, Sprint>();
     for (const p of projects) {
+      if (isSpecialProjectName(p.nome)) continue;
       const s = sprints.find((sp) => String(sp.id) === String(p.sprint));
       if (s) map.set(String(p.id), s);
     }
     return map;
   }, [projects, sprints]);
+
+  const visibleProjectIds = useMemo(() => {
+    return new Set(
+      projects
+        .filter((p) => !isSpecialProjectName(p.nome))
+        .map((p) => String(p.id)),
+    );
+  }, [projects]);
 
   const getSprintForCard = (card: CardType): Sprint | null => {
     const fromDetail = card.projeto_detail?.sprint_detail;
@@ -206,10 +228,16 @@ export default function Metrics() {
     return projectToSprint.get(String(card.projeto)) ?? null;
   };
 
-  const closedCards = useMemo(
-    () => cards.filter((c) => c.status === CLOSED_STATUS && c.data_fim),
-    [cards]
-  );
+  const closedCards = useMemo(() => {
+    return cards.filter((c) => {
+      if (c.status !== CLOSED_STATUS || !c.data_fim) return false;
+
+      const nameFromDetail = c.projeto_detail?.nome;
+      if (nameFromDetail && isSpecialProjectName(nameFromDetail)) return false;
+
+      return visibleProjectIds.has(String(c.projeto));
+    });
+  }, [cards, visibleProjectIds]);
 
   const getDayOfSprint = (card: CardType): { sprint: Sprint; day: number } | null => {
     const sprint = getSprintForCard(card);

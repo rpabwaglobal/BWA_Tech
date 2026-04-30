@@ -13,6 +13,7 @@ const pageTitles: Record<string, string> = {
   '/people': 'Pessoas',
   '/priorities': 'Prioridades',
   '/mytasks': 'Meus Afazeres',
+  '/support': 'Suporte',
   '/geekday': 'Geek Day',
   '/settings': 'Configurações',
   '/tree': 'Árvore de Projetos',
@@ -40,6 +41,8 @@ export default function Layout() {
       pageTitle = 'Pessoas';
     } else if (pathname.startsWith('/metrics')) {
       pageTitle = 'Métricas';
+    } else if (pathname.startsWith('/support')) {
+      pageTitle = 'Suporte';
     } else if (pathname.startsWith('/geekday')) {
       pageTitle = 'Geek Day';
     } else if (pathname.startsWith('/settings')) {

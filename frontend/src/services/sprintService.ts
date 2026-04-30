@@ -16,6 +16,8 @@ export type Sprint = {
   cards_finalizados?: number;
   cards_em_andamento?: number;
   cards_em_atraso?: number;
+  cards_entregues_atrasados?: number;
+  cards_abertos_atrasados?: number;
   finalizada?: boolean;
   created_at?: string;
   updated_at?: string;
