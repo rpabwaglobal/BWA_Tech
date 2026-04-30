@@ -160,12 +160,41 @@ class ProjectViewSet(viewsets.ModelViewSet):
     def _is_supervisor_editor(self, request):
         return request.user.role in ['supervisor', 'admin']
 
+    def _ensure_project_default_kanban_config(self, project: Project):
+        """
+        Garante compatibilidade para projetos legados que não possuem
+        ProjectKanbanStageConfig persistido.
+        """
+        has_any = ProjectKanbanStageConfig.objects.filter(project=project).exists()
+        if has_any:
+            return
+
+        default_stage_keys_order = [
+            'a_desenvolver',
+            'em_desenvolvimento',
+            'parado_pendencias',
+            'em_homologacao',
+            'finalizado',
+            'inviabilizado',
+        ]
+
+        for idx, stage_key in enumerate(default_stage_keys_order):
+            stage = KanbanStage.objects.filter(key=stage_key).first()
+            if not stage:
+                continue
+            ProjectKanbanStageConfig.objects.get_or_create(
+                project=project,
+                stage=stage,
+                defaults={'order': idx},
+            )
+
     @action(detail=True, methods=['get'], url_path='kanban-config')
     def kanban_config(self, request, pk=None):
         """
         Retorna as etapas/colunas configuradas para o projeto em ordem.
         """
         project = self.get_object()
+        self._ensure_project_default_kanban_config(project)
         configs = (
             ProjectKanbanStageConfig.objects.select_related('stage')
             .filter(project=project)
