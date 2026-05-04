@@ -53,6 +53,13 @@ const isCompleted = (status: string) => {
   return status === 'finalizado';
 };
 
+/** Etapa atual do card (Kanban), para exibir junto ao projeto. */
+function cardEtapaLabel(card: { status: string; status_display?: string | null }): string {
+  const d = card.status_display?.trim();
+  if (d) return d;
+  return CARD_STATUSES.find((s) => s.value === card.status)?.label ?? card.status;
+}
+
 type UserWithCards = {
   usuario: {
     id: string;
@@ -818,7 +825,7 @@ export default function Priorities() {
                                           }
                                         }}
                                       >
-                                        {card.projeto_detail.nome}
+                                        {card.projeto_detail.nome} - {cardEtapaLabel(card)}
                                       </p>
                                     )}
                                   </div>
@@ -961,7 +968,7 @@ export default function Priorities() {
                                         }
                                       }}
                                     >
-                                      {card.projeto_detail.nome}
+                                      {card.projeto_detail.nome} - {cardEtapaLabel(card)}
                                     </p>
                                   )}
                                 </div>
@@ -1326,7 +1333,7 @@ export default function Priorities() {
                               </p>
                               {card.projeto && (
                                 <p className="text-xs text-[var(--color-muted-foreground)] mt-[4px]">
-                                  Projeto: {card.projeto_detail?.nome || card.projeto}
+                                  Projeto: {(card.projeto_detail?.nome || card.projeto) + ' - ' + cardEtapaLabel(card)}
                                 </p>
                               )}
                             </div>
@@ -1667,7 +1674,7 @@ export default function Priorities() {
                         </p>
                         {card.projeto_detail?.nome && (
                           <p className="text-xs text-[var(--color-muted-foreground)] mt-[4px]">
-                            {card.projeto_detail.nome}
+                            {card.projeto_detail.nome} - {cardEtapaLabel(card)}
                           </p>
                         )}
                       </div>
