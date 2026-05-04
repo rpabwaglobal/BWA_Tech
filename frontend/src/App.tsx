@@ -1,4 +1,4 @@
-import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Navigate, useParams } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { NotificationProvider } from './context/NotificationContext';
 import { SidebarProvider } from './context/SidebarContext';
@@ -19,6 +19,17 @@ import Reports from './pages/Reports';
 import Support from './pages/Support';
 import Layout from './components/layout/Layout';
 import { Loader2 } from 'lucide-react';
+import { ROUTES } from './routes';
+
+function LegacyProjectToProjeto() {
+  const { id } = useParams();
+  return <Navigate to={ROUTES.projeto(id!)} replace />;
+}
+
+function LegacySprintPorIdRedirect() {
+  const { sprintId } = useParams();
+  return <Navigate to={ROUTES.sprintPorId(sprintId!)} replace />;
+}
 
 function PrivateRoute({ children }: { children: React.ReactNode }) {
   const { isAuthenticated, loading } = useAuth();
@@ -31,7 +42,7 @@ function PrivateRoute({ children }: { children: React.ReactNode }) {
     );
   }
 
-  return isAuthenticated ? <>{children}</> : <Navigate to="/login" />;
+  return isAuthenticated ? <>{children}</> : <Navigate to={ROUTES.entrar} />;
 }
 
 function PublicRoute({ children }: { children: React.ReactNode }) {
@@ -45,14 +56,15 @@ function PublicRoute({ children }: { children: React.ReactNode }) {
     );
   }
 
-  return isAuthenticated ? <Navigate to="/dashboard" /> : <>{children}</>;
+  return isAuthenticated ? <Navigate to={ROUTES.painel} /> : <>{children}</>;
 }
 
 function AppRoutes() {
   return (
     <Routes>
+      {/* Rotas públicas (português) */}
       <Route
-        path="/login"
+        path={ROUTES.entrar}
         element={
           <PublicRoute>
             <Login />
@@ -60,13 +72,17 @@ function AppRoutes() {
         }
       />
       <Route
-        path="/register"
+        path={ROUTES.cadastro}
         element={
           <PublicRoute>
             <Register />
           </PublicRoute>
         }
       />
+      {/* Redirecionamento de URLs antigas (inglês) */}
+      <Route path="/login" element={<Navigate to={ROUTES.entrar} replace />} />
+      <Route path="/register" element={<Navigate to={ROUTES.cadastro} replace />} />
+
       <Route
         path="/"
         element={
@@ -79,20 +95,39 @@ function AppRoutes() {
           </PrivateRoute>
         }
       >
-        <Route index element={<Navigate to="/dashboard" replace />} />
-        <Route path="dashboard" element={<Dashboard />} />
-        <Route path="sprints/:sprintId" element={<SprintDetails />} />
-        <Route path="sprints" element={<Sprints />} />
-        <Route path="projects/:id" element={<ProjectDetails />} />
-        <Route path="projects" element={<Projects />} />
-        <Route path="people" element={<People />} />
-        <Route path="priorities" element={<Priorities />} />
-        <Route path="mytasks" element={<MyTasks />} />
-        <Route path="metrics" element={<Metrics />} />
-        <Route path="reports" element={<Reports />} />
-        <Route path="support" element={<Support />} />
-        <Route path="geekday" element={<GeekDay />} />
-        <Route path="settings" element={<Settings />} />
+        <Route index element={<Navigate to={ROUTES.painel} replace />} />
+        <Route path={ROUTES.painel.replace(/^\//, '')} element={<Dashboard />} />
+        <Route path="sprint/:sprintId/card/:cardId" element={<SprintDetails />} />
+        <Route path="sprint/:sprintId" element={<SprintDetails />} />
+        <Route path={ROUTES.sprint.replace(/^\//, '')} element={<Sprints />} />
+        <Route path="iteracoes" element={<Navigate to={ROUTES.sprint} replace />} />
+        <Route path="iteracao/:sprintId" element={<LegacySprintPorIdRedirect />} />
+        <Route path="sprints" element={<Navigate to={ROUTES.sprint} replace />} />
+        <Route path="sprints/:sprintId" element={<LegacySprintPorIdRedirect />} />
+        <Route path="projeto/:id/card/:cardId" element={<ProjectDetails />} />
+        <Route path="projeto/:id" element={<ProjectDetails />} />
+        <Route path={ROUTES.projetos.replace(/^\//, '')} element={<Projects />} />
+        <Route path={ROUTES.pessoas.replace(/^\//, '')} element={<People />} />
+        <Route path={ROUTES.prioridades.replace(/^\//, '')} element={<Priorities />} />
+        <Route path="meus-afazeres" element={<MyTasks />} />
+        <Route path={ROUTES.metricas.replace(/^\//, '')} element={<Metrics />} />
+        <Route path={ROUTES.relatorios.replace(/^\//, '')} element={<Reports />} />
+        <Route path={ROUTES.suporte.replace(/^\//, '')} element={<Support />} />
+        <Route path="dia-geek" element={<GeekDay />} />
+        <Route path={ROUTES.configuracoes.replace(/^\//, '')} element={<Settings />} />
+
+        {/* Legado: painel e demais rotas em inglês */}
+        <Route path="dashboard" element={<Navigate to={ROUTES.painel} replace />} />
+        <Route path="people" element={<Navigate to={ROUTES.pessoas} replace />} />
+        <Route path="priorities" element={<Navigate to={ROUTES.prioridades} replace />} />
+        <Route path="mytasks" element={<Navigate to={ROUTES.meusAfazeres} replace />} />
+        <Route path="metrics" element={<Navigate to={ROUTES.metricas} replace />} />
+        <Route path="reports" element={<Navigate to={ROUTES.relatorios} replace />} />
+        <Route path="support" element={<Navigate to={ROUTES.suporte} replace />} />
+        <Route path="geekday" element={<Navigate to={ROUTES.diaGeek} replace />} />
+        <Route path="settings" element={<Navigate to={ROUTES.configuracoes} replace />} />
+        <Route path="projects" element={<Navigate to={ROUTES.projetos} replace />} />
+        <Route path="projects/:id" element={<LegacyProjectToProjeto />} />
       </Route>
     </Routes>
   );

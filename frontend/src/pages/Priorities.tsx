@@ -24,6 +24,7 @@ import { cardService, type Card as CardType, CARD_AREAS, CARD_TYPES, CARD_PRIORI
 import { userService, type User as UserType } from '@/services/userService';
 import { weeklyPriorityService } from '@/services/weeklyPriorityService';
 import { cn, normalizeExternalUrl } from '@/lib/utils';
+import { ROUTES } from '@/routes';
 // Formatação de data sem dependência externa
 
 type CardData = {
@@ -813,7 +814,7 @@ export default function Priorities() {
                                         onClick={(e) => {
                                           e.stopPropagation();
                                           if (card.projeto) {
-                                            navigate(`/projects/${card.projeto}`);
+                                            navigate(ROUTES.projeto(String(card.projeto)));
                                           }
                                         }}
                                       >
@@ -956,7 +957,7 @@ export default function Priorities() {
                                       onClick={(e) => {
                                         e.stopPropagation();
                                         if (card.projeto) {
-                                          navigate(`/projects/${card.projeto}`);
+                                          navigate(ROUTES.projeto(String(card.projeto)));
                                         }
                                       }}
                                     >
@@ -1246,7 +1247,7 @@ export default function Priorities() {
                     type="button"
                     onClick={() => {
                       setViewCardDialogOpen(false);
-                      navigate(`/projects/${selectedCard.projeto}`);
+                      navigate(ROUTES.projeto(String(selectedCard.projeto)));
                     }}
                   >
                     Ir para Projeto

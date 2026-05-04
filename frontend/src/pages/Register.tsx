@@ -14,6 +14,7 @@ import {
 } from '@/components/ui/dialog';
 import { ImageCrop } from '@/components/ui/image-crop';
 import { Loader2, UserPlus, Camera, Eye, EyeOff } from 'lucide-react';
+import { ROUTES } from '../routes';
 
 const EMAIL_DOMAIN = '@bwa.global';
 const PASSWORD_REGEX = /^(?=.*[a-z])(?=.*[A-Z])(?=.*[\W_]).{8,}$/;
@@ -120,7 +121,7 @@ export default function Register() {
         password,
         profile_picture: profilePictureFile ?? undefined,
       });
-      navigate('/dashboard');
+      navigate(ROUTES.painel);
     } catch (err: unknown) {
       const ax = err as { response?: { data?: Record<string, string | string[]> } };
       const data = ax.response?.data;
@@ -324,7 +325,7 @@ export default function Register() {
 
               <p className="text-center text-sm text-muted-foreground">
                 Já tem conta?{' '}
-                <Link to="/login" className="text-[var(--color-primary)] font-medium hover:underline">
+                <Link to={ROUTES.entrar} className="text-[var(--color-primary)] font-medium hover:underline">
                   Entrar
                 </Link>
               </p>

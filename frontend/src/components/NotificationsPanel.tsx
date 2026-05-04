@@ -5,6 +5,7 @@ import { useNotifications } from '@/context/NotificationContext';
 import { formatDateTime } from '@/lib/dateUtils';
 import { Button } from './ui/button';
 import { cn } from '@/lib/utils';
+import { ROUTES } from '@/routes';
 
 interface NotificationsPanelProps {
   onClose: () => void;
@@ -83,15 +84,13 @@ export function NotificationsPanel({ onClose }: NotificationsPanelProps) {
 
     // Navegar baseado no tipo e referências
     if (notification.card_id && notification.project_id) {
-      // Navegar para projeto e abrir card
-      navigate(`/projects/${notification.project_id}`);
-      // O card será aberto automaticamente se necessário
+      navigate(ROUTES.projetoCard(String(notification.project_id), String(notification.card_id)));
     } else if (notification.sprint_id) {
-      navigate(`/sprints/${notification.sprint_id}`);
+      navigate(ROUTES.sprintPorId(String(notification.sprint_id)));
     } else if (notification.project_id) {
-      navigate(`/projects/${notification.project_id}`);
+      navigate(ROUTES.projeto(String(notification.project_id)));
     } else if (notification.tipo === 'role_changed') {
-      navigate('/people');
+      navigate(ROUTES.pessoas);
     }
 
     onClose();

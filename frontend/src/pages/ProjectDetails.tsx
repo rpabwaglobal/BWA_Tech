@@ -49,7 +49,7 @@ import { sprintService } from '@/services/sprintService';
 import { cardTodoService } from '@/services/cardTodoService';
 import { kanbanStageService } from '@/services/kanbanStageService';
 import type { KanbanStage as KanbanStageType } from '@/services/kanbanStageService';
-import { getTodosByArea } from '@/constants/cardTodos';
+import { ROUTES } from '@/routes';
 import type { Project } from '@/services/projectService';
 import type { Card as CardType } from '@/services/cardService';
 import type { Sprint } from '@/services/sprintService';
@@ -83,7 +83,7 @@ import {
 } from 'lucide-react';
 import { formatDate, formatDateTime, isCardAtrasado, calcularDiasTotais, calcularDiasUteis } from '@/lib/dateUtils';
 import { sprintFimDiaParaCalendario, sprintInicioDiaParaCalendario } from '@/lib/sprintFechamento';
-import { CardLogsModal } from '@/components/CardLogsModal';
+import { CardLogsModal, CARD_TIMELINE_LAYOUT_RESERVE_PX } from '@/components/CardLogsModal';
 import { PendenciaModal } from '@/components/PendenciaModal';
 import { ConclusaoModal } from '@/components/ConclusaoModal';
 import { cardLogService } from '@/services/cardLogService';
@@ -674,7 +674,7 @@ function KanbanCard({
 }
 
 export default function ProjectDetails() {
-  const { id } = useParams<{ id: string }>();
+  const { id, cardId } = useParams<{ id: string; cardId?: string }>();
   const navigate = useNavigate();
   const { user } = useAuth();
   const [project, setProject] = useState<Project | null>(null);
@@ -704,7 +704,7 @@ export default function ProjectDetails() {
   
   // Card dialog state
   const [cardDialogOpen, setCardDialogOpen] = useState(false);
-  
+
   // Delete/Alert dialogs
   const [deleteCardDialogOpen, setDeleteCardDialogOpen] = useState(false);
   const [cardToDelete, setCardToDelete] = useState<string | null>(null);
@@ -1210,6 +1210,16 @@ export default function ProjectDetails() {
     }
   };
 
+  const closeCardDialog = () => {
+    setCardDialogOpen(false);
+    setLogsModalOpen(false);
+    setPendingStatusChange(null);
+    const routeProjectId = id || editingCard?.projeto;
+    if (routeProjectId && cardId) {
+      navigate(ROUTES.projeto(String(routeProjectId)), { replace: true });
+    }
+  };
+
   // Função para detectar mudanças nos campos do card
   const detectCardChanges = (oldCard: CardType, newData: any, excludeStatus: boolean = false): string[] => {
     const changes: string[] = [];
@@ -1522,8 +1532,7 @@ export default function ProjectDetails() {
       
       // Fechar dialog de edição se estiver aberto
       if (dataToSend) {
-        setCardDialogOpen(false);
-        setLogsModalOpen(false);
+        closeCardDialog();
       }
       
       // Recarregar dados para garantir sincronização
@@ -1583,7 +1592,20 @@ export default function ProjectDetails() {
     }
   };
 
-  const openEditCardDialog = async (card: CardType) => {
+  const openEditCardDialog = async (card: CardType, options?: { skipUrlSync?: boolean }) => {
+    const projectKey = String(id || card.projeto || project?.id || '').trim();
+
+    if (editingCard?.id === card.id && cardDialogOpen) {
+      if (!options?.skipUrlSync && projectKey) {
+        navigate(ROUTES.projetoCard(projectKey, String(card.id)), { replace: true });
+      }
+      return;
+    }
+
+    if (!options?.skipUrlSync && projectKey) {
+      navigate(ROUTES.projetoCard(projectKey, String(card.id)), { replace: true });
+    }
+
     // Buscar o card completo do servidor para garantir que temos todos os dados atualizados
     let fullCard = card;
     try {
@@ -1680,6 +1702,12 @@ export default function ProjectDetails() {
       return;
     }
 
+    setLogsModalOpen(false);
+
+    if (id && cardId) {
+      navigate(ROUTES.projeto(id), { replace: true });
+    }
+
     setEditingCard(null);
     setCardFormData({
       nome: '',
@@ -1705,6 +1733,18 @@ export default function ProjectDetails() {
     setCardFormError('');
     setCardDialogOpen(true);
   };
+
+  // Link direto: /projeto/:id/card/:cardId abre o formulário do card
+  useEffect(() => {
+    if (!id || !cardId || cards.length === 0) return;
+    if (cardDialogOpen && editingCard && String(editingCard.id) === String(cardId)) return;
+    const card = cards.find((c) => String(c.id) === String(cardId));
+    if (!card) {
+      navigate(ROUTES.projeto(id), { replace: true });
+      return;
+    }
+    void openEditCardDialog(card, { skipUrlSync: true });
+  }, [id, cardId, cards, cardDialogOpen, editingCard]);
 
   const normalizeStagesFromApi = (apiStages: any[] | undefined | null): ProjectStage[] => {
     if (!apiStages || !apiStages.length) return DEFAULT_PROJECT_STAGES;
@@ -1993,12 +2033,7 @@ export default function ProjectDetails() {
             );
             
             // Fechar o dialog
-            setCardDialogOpen(false);
-            // Fechar modal de logs quando o modal de edição for fechado
-            setLogsModalOpen(false);
-            // Recarregar dados para garantir sincronização
-            loadData();
-            return; // Retornar para não executar o código abaixo
+            closeCardDialog();
           } else {
             // Se ainda faltam dados, salvar sem mudar o status
             await cardService.update(editingCard.id, dataToSend);
@@ -2064,12 +2099,7 @@ export default function ProjectDetails() {
           }
         }
       }
-      setCardDialogOpen(false);
-      // Fechar modal de logs quando o modal de edição for fechado
-      setLogsModalOpen(false);
-      // Recarregar dados para garantir sincronização
-      loadData();
-    } catch (err: any) {
+      closeCardDialog();
       const errorData = err.response?.data;
       let errorMessage = 'Erro ao salvar card';
       if (errorData) {
@@ -2304,7 +2334,7 @@ export default function ProjectDetails() {
     setDeleteProjectLoading(true);
     try {
       await projectService.delete(project.id);
-      navigate('/projects');
+      navigate(ROUTES.projetos);
     } catch (error) {
       console.error('Erro ao excluir projeto:', error);
       setAlertMessage('Erro ao excluir projeto. Tente novamente.');
@@ -2578,19 +2608,17 @@ export default function ProjectDetails() {
       </div>
 
       {/* Card Dialog */}
-      <Dialog open={cardDialogOpen} onOpenChange={(open) => {
-        setCardDialogOpen(open);
-        if (!open) {
-          // Limpar movimento pendente se o dialog for fechado sem salvar
-          setPendingStatusChange(null);
-          // Fechar modal de logs quando o modal de edição for fechado
-          setLogsModalOpen(false);
+      <Dialog
+        open={cardDialogOpen}
+        reserveRightPx={editingCard && logsModalOpen ? CARD_TIMELINE_LAYOUT_RESERVE_PX : undefined}
+        onOpenChange={(open) => {
+        if (open) {
+          setCardDialogOpen(true);
+        } else {
+          closeCardDialog();
         }
       }}>
-        <DialogContent onClose={() => {
-          setCardDialogOpen(false);
-          setLogsModalOpen(false);
-        }} className="max-w-[600px]">
+        <DialogContent onClose={closeCardDialog} className="max-w-[600px]">
           <DialogHeader>
             <DialogTitle>
               {editingCard 
@@ -3192,10 +3220,7 @@ export default function ProjectDetails() {
             />
 
             <DialogFooter>
-              <Button type="button" variant="outline" onClick={() => {
-                setCardDialogOpen(false);
-                setLogsModalOpen(false);
-              }}>
+              <Button type="button" variant="outline" onClick={closeCardDialog}>
                 {(editingCard && (editingCard.status === 'finalizado' || editingCard.status === 'inviabilizado')) || sprintIsFinished ? 'Fechar' : 'Cancelar'}
               </Button>
               {!(editingCard && (editingCard.status === 'finalizado' || editingCard.status === 'inviabilizado')) && !sprintIsFinished && (

@@ -6,6 +6,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Loader2 } from 'lucide-react';
+import { ROUTES } from '../routes';
 
 export default function Login() {
   const [username, setUsername] = useState('');
@@ -22,7 +23,7 @@ export default function Login() {
 
     try {
       await login(username, password);
-      navigate('/dashboard');
+      navigate(ROUTES.painel);
     } catch (err: any) {
       setError(err.response?.data?.message || 'Credenciais inválidas. Tente novamente.');
     } finally {
@@ -89,7 +90,7 @@ export default function Login() {
 
             <p className="text-center text-sm text-muted-foreground mt-[var(--space-2)]">
               Não tem conta?{' '}
-              <Link to="/register" className="text-[var(--color-primary)] font-medium hover:underline">
+              <Link to={ROUTES.cadastro} className="text-[var(--color-primary)] font-medium hover:underline">
                 Criar conta
               </Link>
             </p>

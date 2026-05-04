@@ -41,6 +41,7 @@ import { Avatar, AvatarImage, AvatarFallback } from '@/components/ui/avatar';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { RequestDueDateChangeModal } from '@/components/RequestDueDateChangeModal';
 import { cardDateChangeRequestService, type CardDueDateChangeRequest } from '@/services/cardDateChangeRequestService';
+import { ROUTES } from '@/routes';
 
 export default function Projects() {
   const { user } = useAuth();
@@ -1022,7 +1023,7 @@ export default function Projects() {
                     <Card
                       key={project.id}
                       className="cursor-pointer hover:shadow-md transition-shadow"
-                      onClick={() => navigate(`/projects/${project.id}`)}
+                      onClick={() => navigate(ROUTES.projeto(String(project.id)))}
                     >
                       <CardHeader>
                         <div className="flex items-start justify-between">
@@ -1109,7 +1110,7 @@ export default function Projects() {
                     <Card
                       key={project.id}
                       className="cursor-pointer hover:shadow-md transition-shadow"
-                      onClick={() => navigate(`/projects/${project.id}`)}
+                      onClick={() => navigate(ROUTES.projeto(String(project.id)))}
                     >
                       <CardHeader>
                         <div className="flex items-start justify-between">
@@ -1196,7 +1197,7 @@ export default function Projects() {
                     <Card
                       key={project.id}
                       className="cursor-pointer hover:shadow-md transition-shadow"
-                      onClick={() => navigate(`/projects/${project.id}`)}
+                      onClick={() => navigate(ROUTES.projeto(String(project.id)))}
                     >
                       <CardHeader>
                         <div className="flex items-start justify-between">
@@ -1273,7 +1274,7 @@ export default function Projects() {
                   <Card
                     key={project.id}
                     className="cursor-pointer hover:shadow-md transition-shadow"
-                    onClick={() => navigate(`/projects/${project.id}`)}
+                    onClick={() => navigate(ROUTES.projeto(String(project.id)))}
                   >
                     <CardHeader>
                       <div className="flex items-start justify-between">

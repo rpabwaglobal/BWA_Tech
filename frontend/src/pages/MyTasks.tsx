@@ -20,6 +20,7 @@ import {
 import { cardService, type Card as CardType } from '@/services/cardService';
 import { cardTodoService, type CardTodo } from '@/services/cardTodoService';
 import { cn } from '@/lib/utils';
+import { ROUTES } from '@/routes';
 
 type TodoStatus = 'pending' | 'completed' | 'blocked' | 'warning';
 
@@ -216,13 +217,13 @@ function TaskCard({
 
   const handleProjectClick = (e: React.MouseEvent) => {
     e.stopPropagation();
-    navigate(`/projects/${card.projeto}`);
+    navigate(ROUTES.projeto(String(card.projeto)));
   };
 
   const handleSprintClick = (e: React.MouseEvent) => {
     e.stopPropagation();
     if (card.projeto_detail?.sprint_detail?.id) {
-      navigate(`/sprints/${card.projeto_detail.sprint_detail.id}`);
+      navigate(ROUTES.sprintPorId(String(card.projeto_detail.sprint_detail.id)));
     }
   };
 
@@ -1384,7 +1385,7 @@ export default function MyTasks() {
                     type="button"
                     onClick={() => {
                       setViewCardDialogOpen(false);
-                      navigate(`/projects/${selectedCard.projeto}`);
+                      navigate(ROUTES.projeto(String(selectedCard.projeto)));
                     }}
                   >
                     Ir para Projeto

@@ -3,6 +3,7 @@ import { Navigate } from 'react-router-dom';
 import { Loader2 } from 'lucide-react';
 import { projectService, type Project } from '@/services/projectService';
 import { sprintService, type Sprint } from '@/services/sprintService';
+import { ROUTES } from '@/routes';
 
 const SUPPORT_STAGE_KEYS_ORDER = [
   'a_desenvolver',      // Tickets abertos
@@ -81,7 +82,7 @@ export default function Support() {
     );
   }
 
-  return <Navigate to={`/projects/${supportProject.id}`} replace />;
+  return <Navigate to={ROUTES.projeto(String(supportProject.id))} replace />;
 }
 
 function normalize(value: string) {

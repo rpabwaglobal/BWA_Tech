@@ -5,17 +5,18 @@ import { NotificationsButton } from '@/components/NotificationsButton';
 import { cn } from '@/lib/utils';
 import { useTheme } from '@/context/ThemeContext';
 import { Moon, Sun } from 'lucide-react';
+import { ROUTES } from '@/routes';
 
-const pageTitles: Record<string, string> = {
-  '/dashboard': 'Dashboard',
-  '/sprints': 'Sprints',
-  '/projects': 'Projetos',
-  '/people': 'Pessoas',
-  '/priorities': 'Prioridades',
-  '/mytasks': 'Meus Afazeres',
-  '/support': 'Suporte',
-  '/geekday': 'Geek Day',
-  '/settings': 'Configurações',
+const pageTitlesExact: Record<string, string> = {
+  [ROUTES.painel]: 'Dashboard',
+  [ROUTES.sprint]: 'Sprints',
+  [ROUTES.projetos]: 'Projetos',
+  [ROUTES.pessoas]: 'Pessoas',
+  [ROUTES.prioridades]: 'Prioridades',
+  [ROUTES.meusAfazeres]: 'Meus Afazeres',
+  [ROUTES.suporte]: 'Suporte',
+  [ROUTES.diaGeek]: 'Geek Day',
+  [ROUTES.configuracoes]: 'Configurações',
   '/tree': 'Árvore de Projetos',
   '/suggestions': 'Sugestões',
 };
@@ -26,26 +27,27 @@ export default function Layout() {
   const { theme, toggleTheme } = useTheme();
   const pathname = location.pathname;
 
-  // Títulos baseados na rota \"mãe\" (ex.: /projects e /projects/:id → \"Projetos\")
-  let pageTitle = pageTitles[pathname];
+  let pageTitle = pageTitlesExact[pathname];
   if (!pageTitle) {
-    if (pathname.startsWith('/projects')) {
-      pageTitle = 'Projetos';
-    } else if (pathname.startsWith('/sprints')) {
+    if (pathname.startsWith('/sprint/')) {
       pageTitle = 'Sprints';
-    } else if (pathname.startsWith('/priorities')) {
+    } else if (pathname.startsWith('/projeto/')) {
+      pageTitle = 'Projetos';
+    } else if (pathname.startsWith(ROUTES.prioridades)) {
       pageTitle = 'Prioridades';
-    } else if (pathname.startsWith('/mytasks')) {
+    } else if (pathname.startsWith(ROUTES.meusAfazeres)) {
       pageTitle = 'Meus Afazeres';
-    } else if (pathname.startsWith('/people')) {
+    } else if (pathname.startsWith(ROUTES.pessoas)) {
       pageTitle = 'Pessoas';
-    } else if (pathname.startsWith('/metrics')) {
+    } else if (pathname.startsWith(ROUTES.metricas)) {
       pageTitle = 'Métricas';
-    } else if (pathname.startsWith('/support')) {
+    } else if (pathname.startsWith(ROUTES.relatorios)) {
+      pageTitle = 'Relatórios';
+    } else if (pathname.startsWith(ROUTES.suporte)) {
       pageTitle = 'Suporte';
-    } else if (pathname.startsWith('/geekday')) {
+    } else if (pathname.startsWith(ROUTES.diaGeek)) {
       pageTitle = 'Geek Day';
-    } else if (pathname.startsWith('/settings')) {
+    } else if (pathname.startsWith(ROUTES.configuracoes)) {
       pageTitle = 'Configurações';
     } else {
       pageTitle = 'BWA Tech';

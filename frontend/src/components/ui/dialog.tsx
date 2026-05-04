@@ -9,17 +9,47 @@ interface DialogProps {
   children: React.ReactNode;
   /** Classes do wrapper externo (largura). Padrão: max-w-lg */
   containerClassName?: string;
+  /**
+   * Largura reservada à direita (px), ex. painel da timeline — o backdrop não cobre essa faixa.
+   * O conteúdo do modal permanece centralizado na tela inteira (50% / 50%), como sem reserva.
+   */
+  reserveRightPx?: number;
 }
 
-// Backdrop z-50; card centralizado z-[60] (sem camada full-screen). Confetti z-55 fica visível ao redor do card.
-const Dialog: React.FC<DialogProps> = ({ open, onOpenChange, children, containerClassName }) => {
+ // Com reserveRightPx, o backdrop deixa a timeline à direita fora do escurecimento; o painel do modal usa o mesmo centro da viewport.
+const Dialog: React.FC<DialogProps> = ({ open, onOpenChange, children, containerClassName, reserveRightPx }) => {
   if (!open) return null;
+
+  const backdropStyle: React.CSSProperties =
+    reserveRightPx != null
+      ? { top: 0, left: 0, bottom: 0, right: reserveRightPx }
+      : { top: 0, left: 0, right: 0, bottom: 0 };
+
+  const contentWrapperClassName =
+    reserveRightPx != null
+      ? cn('w-full px-4', containerClassName ?? 'max-w-lg')
+      : cn(
+          'fixed left-1/2 top-1/2 z-[60] w-full -translate-x-1/2 -translate-y-1/2 px-4',
+          containerClassName ?? 'max-w-lg',
+        );
+
+  const contentWrapperStyle: React.CSSProperties | undefined =
+    reserveRightPx != null
+      ? {
+          position: 'fixed',
+          top: '50%',
+          left: '50%',
+          transform: 'translate(-50%, -50%)',
+          zIndex: 60,
+        }
+      : undefined;
 
   return (
     <>
       {createPortal(
         <div
-          className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm"
+          className="fixed z-50 bg-black/50 backdrop-blur-sm"
+          style={backdropStyle}
           onClick={() => onOpenChange(false)}
           aria-hidden
         />,
@@ -27,10 +57,8 @@ const Dialog: React.FC<DialogProps> = ({ open, onOpenChange, children, container
       )}
       {createPortal(
         <div
-          className={cn(
-            'fixed left-1/2 top-1/2 z-[60] w-full -translate-x-1/2 -translate-y-1/2 px-4',
-            containerClassName ?? 'max-w-lg',
-          )}
+          className={contentWrapperClassName}
+          style={contentWrapperStyle}
           onClick={(e) => e.stopPropagation()}
         >
           {children}

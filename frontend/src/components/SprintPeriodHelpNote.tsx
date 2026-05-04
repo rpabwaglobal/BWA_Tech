@@ -1,4 +1,5 @@
 import { Link } from 'react-router-dom';
+import { ROUTES } from '@/routes';
 
 type Props = {
   /** Mostrar link para /prioridades (supervisor/admin) */
@@ -20,7 +21,7 @@ export function SprintPeriodHelpNote({ showPrioritiesLink = true }: Props) {
         A <strong>data de início</strong> grava apenas o dia. O <strong>fechamento automático</strong> da sprint ocorre no
         instante que você definir em <strong>Data e hora de fechamento</strong> — não usa o &quot;Horário limite&quot; de{' '}
         {showPrioritiesLink ? (
-          <Link to="/priorities" className="font-medium text-[var(--color-primary)] underline underline-offset-2">
+          <Link to={ROUTES.prioridades} className="font-medium text-[var(--color-primary)] underline underline-offset-2">
             Prioridades
           </Link>
         ) : (

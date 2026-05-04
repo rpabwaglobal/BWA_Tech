@@ -21,18 +21,19 @@ import {
   Headset,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { ROUTES, isNavRouteActive } from '@/routes';
 
 const navigation = [
-  { path: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
-  { path: '/sprints', label: 'Sprints', icon: Zap },
-  { path: '/projects', label: 'Projetos', icon: FolderKanban },
-  { path: '/priorities', label: 'Prioridades', icon: Target },
-  { path: '/mytasks', label: 'Meus Afazeres', icon: CheckSquare },
-  { path: '/people', label: 'Pessoas', icon: Users },
-  { path: '/metrics', label: 'Métricas', icon: BarChart3 },
-  { path: '/reports', label: 'Relatórios', icon: FileText },
-  { path: '/support', label: 'Suporte', icon: Headset },
-  { path: '/geekday', label: 'Geek Day', icon: Sparkles },
+  { path: ROUTES.painel, label: 'Dashboard', icon: LayoutDashboard },
+  { path: ROUTES.sprint, label: 'Sprints', icon: Zap },
+  { path: ROUTES.projetos, label: 'Projetos', icon: FolderKanban },
+  { path: ROUTES.prioridades, label: 'Prioridades', icon: Target },
+  { path: ROUTES.meusAfazeres, label: 'Meus Afazeres', icon: CheckSquare },
+  { path: ROUTES.pessoas, label: 'Pessoas', icon: Users },
+  { path: ROUTES.metricas, label: 'Métricas', icon: BarChart3 },
+  { path: ROUTES.relatorios, label: 'Relatórios', icon: FileText },
+  { path: ROUTES.suporte, label: 'Suporte', icon: Headset },
+  { path: ROUTES.diaGeek, label: 'Geek Day', icon: Sparkles },
 ];
 
 export default function Sidebar() {
@@ -100,7 +101,7 @@ export default function Sidebar() {
         <nav className="flex-1 p-[8px] flex flex-col min-h-0">
           <div className="space-y-[8px] overflow-y-auto pr-[4px]">
             {navigation.map((item) => {
-              const isActive = location.pathname === item.path;
+              const isActive = isNavRouteActive(item.path, location.pathname);
               const Icon = item.icon;
               return (
                 <Link
@@ -123,10 +124,10 @@ export default function Sidebar() {
           </div>
           {/* Configurações - parte de baixo */}
           <Link
-            to="/settings"
+            to={ROUTES.configuracoes}
             className={cn(
               "flex items-center gap-[16px] rounded-[8px] px-[16px] py-[8px] text-sm font-medium transition-colors h-[40px] mt-auto",
-              location.pathname === '/settings'
+              location.pathname === ROUTES.configuracoes
                 ? "bg-[var(--color-primary)] text-[var(--color-primary-foreground)]"
                 : "text-[var(--color-muted-foreground)] hover:bg-[var(--color-accent)] hover:text-[var(--color-foreground)]",
               collapsed && "justify-center px-[8px]"

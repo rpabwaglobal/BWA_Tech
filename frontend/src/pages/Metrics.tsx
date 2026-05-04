@@ -33,6 +33,7 @@ import { userService, type User } from '@/services/userService';
 import { projectService, type Project } from '@/services/projectService';
 import { useAuth } from '@/context/AuthContext';
 import { cn } from '@/lib/utils';
+import { ROUTES } from '@/routes';
 
 const CLOSED_STATUS = 'finalizado';
 
@@ -2355,7 +2356,7 @@ export default function Metrics() {
                       setOnTimeViewCardOpen(false);
                       setOnTimeViewSelectedCard(null);
                       setOnTimeViewCardForm({ ...EMPTY_METRICS_CARD_FORM });
-                      navigate(`/projects/${projectId}`);
+                      navigate(ROUTES.projeto(String(projectId)));
                     }}
                   >
                     Ir para o projeto

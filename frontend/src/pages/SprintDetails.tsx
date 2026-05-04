@@ -34,11 +34,12 @@ import { userService } from '@/services/userService';
 import { cardLogService } from '@/services/cardLogService';
 import { cardTodoService } from '@/services/cardTodoService';
 import { getTodosByArea } from '@/constants/cardTodos';
-import { CardLogsModal } from '@/components/CardLogsModal';
+import { CardLogsModal, CARD_TIMELINE_LAYOUT_RESERVE_PX } from '@/components/CardLogsModal';
 import type { Sprint } from '@/services/sprintService';
 import type { Project } from '@/services/projectService';
 import type { Card as CardType, CardLink } from '@/services/cardService';
 import type { User as UserType } from '@/services/userService';
+import { ROUTES } from '@/routes';
 import {
   Plus,
   Calendar,
@@ -142,7 +143,7 @@ const getShortDisplayName = (user: UserType): string => {
 };
 
 export default function SprintDetails() {
-  const { sprintId } = useParams<{ sprintId: string }>();
+  const { sprintId, cardId } = useParams<{ sprintId: string; cardId?: string }>();
   const navigate = useNavigate();
   const { user } = useAuth();
   const [sprint, setSprint] = useState<Sprint | null>(null);
@@ -932,12 +933,26 @@ export default function SprintDetails() {
   };
 
   // Card handlers
+  const closeCardDialog = () => {
+    setCardDialogOpen(false);
+    setLogsModalOpen(false);
+    const sid = sprintId?.trim();
+    if (sid && cardId) {
+      navigate(ROUTES.sprintPorId(sid), { replace: true });
+    }
+  };
+
   const openCreateCardDialog = (projectId: string) => {
     const project = projects.find(p => p.id === projectId);
     if (project && isProjectFromFinishedSprint(project)) {
       setAlertMessage('Não é possível criar cards em projetos de sprints finalizadas.');
       setAlertDialogOpen(true);
       return;
+    }
+    setLogsModalOpen(false);
+    const sid = sprintId?.trim();
+    if (sid && cardId) {
+      navigate(ROUTES.sprintPorId(sid), { replace: true });
     }
     setEditingCard(null);
     setSelectedProjectForCard(projectId);
@@ -982,9 +997,25 @@ export default function SprintDetails() {
     setCardDialogOpen(true);
   };
 
-  const openEditCardDialog = async (e: React.MouseEvent, card: CardType) => {
-    e.stopPropagation();
-    
+  const openEditCardDialog = async (
+    e: React.MouseEvent | null,
+    card: CardType,
+    options?: { skipUrlSync?: boolean },
+  ) => {
+    e?.stopPropagation();
+
+    const sid = sprintId?.trim();
+    if (editingCard?.id === card.id && cardDialogOpen) {
+      if (!options?.skipUrlSync && sid) {
+        navigate(ROUTES.sprintCard(sid, String(card.id)), { replace: true });
+      }
+      return;
+    }
+
+    if (!options?.skipUrlSync && sid) {
+      navigate(ROUTES.sprintCard(sid, String(card.id)), { replace: true });
+    }
+
     // Buscar o card completo do servidor para garantir que temos todos os dados atualizados
     let fullCard = card;
     try {
@@ -1075,6 +1106,19 @@ export default function SprintDetails() {
     setCardFormError('');
     setCardDialogOpen(true);
   };
+
+  // Link direto: /sprint/:sprintId/card/:cardId
+  useEffect(() => {
+    const sid = sprintId?.trim();
+    if (!sid || !cardId || cards.length === 0) return;
+    if (cardDialogOpen && editingCard && String(editingCard.id) === String(cardId)) return;
+    const card = cards.find((c) => String(c.id) === String(cardId));
+    if (!card) {
+      navigate(ROUTES.sprintPorId(sid), { replace: true });
+      return;
+    }
+    void openEditCardDialog(null, card, { skipUrlSync: true });
+  }, [sprintId, cardId, cards, cardDialogOpen, editingCard]);
 
   // Função auxiliar para obter label do status
   const getStageLabel = (status: string): string => {
@@ -1449,8 +1493,7 @@ export default function SprintDetails() {
         // Atualizar trigger para recarregar logs em tempo real
         setLogsRefreshTrigger(prev => prev + 1);
       }
-      setCardDialogOpen(false);
-      setLogsModalOpen(false); // Fechar modal de logs quando o modal de edição for fechado
+      closeCardDialog();
     } catch (err: any) {
       const errorData = err.response?.data;
       let errorMessage = 'Erro ao salvar card';
@@ -1496,6 +1539,9 @@ export default function SprintDetails() {
       setCards((prevCards) => prevCards.filter((card) => card.id !== cardToDelete.id));
       setDeleteCardDialogOpen(false);
       setCardToDelete(null);
+      if (editingCard?.id === cardToDelete.id || (cardId && String(cardToDelete.id) === String(cardId))) {
+        closeCardDialog();
+      }
     } catch (error) {
       console.error('Erro ao excluir card:', error);
     } finally {
@@ -1584,7 +1630,7 @@ export default function SprintDetails() {
     try {
       await sprintService.delete(sprint.id);
       setDeleteSprintDialogOpen(false);
-      navigate('/sprints');
+      navigate(ROUTES.sprint);
     } catch (error) {
       console.error('Erro ao excluir sprint:', error);
     } finally {
@@ -2588,7 +2634,7 @@ export default function SprintDetails() {
                   {/* Header da Coluna (Projeto) */}
                   <div 
                     className="p-[16px] border-b border-[var(--color-border)] cursor-pointer hover:bg-[var(--color-muted)]/50 transition-colors"
-                    onClick={() => navigate(`/projects/${project.id}`)}
+                    onClick={() => navigate(ROUTES.projeto(String(project.id)))}
                   >
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-[12px] flex-1">
@@ -3077,16 +3123,18 @@ export default function SprintDetails() {
       </Dialog>
 
       {/* Card Dialog */}
-      <Dialog open={cardDialogOpen} onOpenChange={(open) => {
-        setCardDialogOpen(open);
-        if (!open) {
-          setLogsModalOpen(false); // Fechar modal de logs quando o modal de edição for fechado
-        }
-      }}>
-        <DialogContent onClose={() => {
-          setCardDialogOpen(false);
-          setLogsModalOpen(false); // Fechar modal de logs quando o modal de edição for fechado
-        }} className="max-w-[600px]">
+      <Dialog
+        open={cardDialogOpen}
+        reserveRightPx={editingCard && logsModalOpen ? CARD_TIMELINE_LAYOUT_RESERVE_PX : undefined}
+        onOpenChange={(open) => {
+          if (open) {
+            setCardDialogOpen(true);
+          } else {
+            closeCardDialog();
+          }
+        }}
+      >
+        <DialogContent onClose={closeCardDialog} className="max-w-[600px]">
           <DialogHeader>
             <DialogTitle>
               {editingCard 
@@ -3691,10 +3739,7 @@ export default function SprintDetails() {
             />
 
             <DialogFooter>
-              <Button type="button" variant="outline" onClick={() => {
-                setCardDialogOpen(false);
-                setLogsModalOpen(false); // Fechar modal de logs quando o modal de edição for fechado
-              }}>
+              <Button type="button" variant="outline" onClick={closeCardDialog}>
                 {(editingCard && (editingCard.status === 'finalizado' || editingCard.status === 'inviabilizado')) || (editingCard && isCardFromFinishedSprint(editingCard)) ? 'Fechar' : 'Cancelar'}
               </Button>
               {!(editingCard && (editingCard.status === 'finalizado' || editingCard.status === 'inviabilizado')) && !(editingCard && isCardFromFinishedSprint(editingCard)) && (

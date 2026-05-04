@@ -48,6 +48,7 @@ import {
   sprintFimDiaParaCalendario,
   sprintInicioDiaParaCalendario,
 } from '@/lib/sprintFechamento';
+import { ROUTES } from '@/routes';
 
 type SortField = 'nome' | 'created_at' | 'supervisor_name' | 'projects_count';
 type SortDirection = 'asc' | 'desc';
@@ -610,7 +611,7 @@ export default function Sprints() {
                     <Card
                       key={sprint.id}
                       className="group relative cursor-pointer hover:shadow-md transition-shadow w-full"
-                      onClick={() => navigate(`/sprints/${sprint.id}`)}
+                      onClick={() => navigate(ROUTES.sprintPorId(String(sprint.id)))}
                     >
                       <CardHeader className="p-[24px] pb-[16px]">
                         <div className="flex items-start justify-between">
@@ -758,7 +759,7 @@ export default function Sprints() {
                       <Card
                         key={sprint.id}
                         className="group relative cursor-pointer hover:shadow-md transition-shadow"
-                        onClick={() => navigate(`/sprints/${sprint.id}`)}
+                        onClick={() => navigate(ROUTES.sprintPorId(String(sprint.id)))}
                       >
                         <CardHeader className="p-[16px] pb-[8px]">
                           <div className="flex items-start justify-between">
@@ -911,7 +912,7 @@ export default function Sprints() {
                         <Card
                           key={sprint.id}
                           className="group relative cursor-pointer hover:shadow-md transition-shadow"
-                          onClick={() => navigate(`/sprints/${sprint.id}`)}
+                          onClick={() => navigate(ROUTES.sprintPorId(String(sprint.id)))}
                         >
                           <CardHeader className="p-[16px] pb-[8px]">
                             <div className="flex items-start justify-between">
