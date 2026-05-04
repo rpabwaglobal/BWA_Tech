@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
 import { Button } from '@/components/ui/button';
@@ -75,6 +75,8 @@ import {
   Settings,
   SlidersHorizontal,
   Headset,
+  CheckSquare,
+  FolderInput,
 } from 'lucide-react';
 import { formatDate, formatDateTime, isCardAtrasado } from '@/lib/dateUtils';
 import { sprintFimDiaParaCalendario } from '@/lib/sprintFechamento';
@@ -337,6 +339,8 @@ function KanbanColumn({
   userRole,
   users,
   showPriorityColorsOnCards,
+  selectionMode,
+  selectedCardIds,
 }: {
   stage: ProjectStage;
   cards: CardType[];
@@ -346,6 +350,8 @@ function KanbanColumn({
   userRole?: string;
   users: UserType[];
   showPriorityColorsOnCards: boolean;
+  selectionMode: boolean;
+  selectedCardIds: string[];
 }) {
   const { setNodeRef, isOver } = useDroppable({
     id: stage.id,
@@ -407,6 +413,11 @@ function KanbanColumn({
                   userRole={userRole}
                   users={users}
                   showPriorityColorsOnCards={showPriorityColorsOnCards}
+                  selectionMode={selectionMode}
+                  selected={selectedCardIds.includes(card.id)}
+                  excludedFromBulkMove={
+                    selectionMode && (card.status === 'finalizado' || card.status === 'inviabilizado')
+                  }
                 />
               ))}
             </SortableContext>
@@ -427,6 +438,9 @@ function KanbanCard({
   userRole,
   users,
   showPriorityColorsOnCards,
+  selectionMode,
+  selected,
+  excludedFromBulkMove,
 }: {
   card: CardType;
   onClick: () => void;
@@ -437,12 +451,16 @@ function KanbanCard({
   userRole?: string;
   users: UserType[];
   showPriorityColorsOnCards: boolean;
+  selectionMode: boolean;
+  selected: boolean;
+  /** Em modo seleção: card em etapa de conclusão não entra na seleção para mover */
+  excludedFromBulkMove: boolean;
 }) {
   // Verificar se card está finalizado ou inviabilizado
   const isCardFinished = card.status === 'finalizado' || card.status === 'inviabilizado';
   const isInviabilizado = card.status === 'inviabilizado';
-  // Desabilitar drag apenas se sprint finalizada ou card finalizado
-  const isDragDisabled = disabled || isCardFinished;
+  // Desabilitar drag na sprint finalizada, card finalizado ou modo seleção (clique marca card)
+  const isDragDisabled = disabled || isCardFinished || selectionMode;
   // Permitir clique para visualização sempre (mesmo se sprint finalizada ou card finalizado)
   const canClick = true;
   // Permitir delete: 
@@ -486,7 +504,14 @@ function KanbanCard({
       className={cn(
         'p-[12px] bg-[var(--color-kanban-card)] rounded-[8px] border-l-[3px] shadow-sm hover:shadow-md transition-shadow cursor-pointer group',
         !showPriorityColorsOnCards && 'border-l-[var(--color-border)]',
+        selected && 'ring-2 ring-[var(--color-primary)] border-[var(--color-primary)]',
+        excludedFromBulkMove && 'cursor-not-allowed opacity-50',
       )}
+      title={
+        excludedFromBulkMove
+          ? 'Cards em Finalizado ou Inviabilizado não podem ser movidos em massa.'
+          : undefined
+      }
       onClick={onClick}
     >
       {/* Aplica cor exata via inline style (garante HEX) */}
@@ -684,6 +709,19 @@ export default function ProjectDetails() {
   const [showPriorityColorsOnCards, setShowPriorityColorsOnCards] = useState(
     readShowPriorityColorsOnKanbanCards,
   );
+
+  /** Seleção em massa no Kanban (barra inferior + modais). */
+  const [cardSelectionMode, setCardSelectionMode] = useState(false);
+  const [selectedKanbanCardIds, setSelectedKanbanCardIds] = useState<string[]>([]);
+  const [bulkDeleteCardsDialogOpen, setBulkDeleteCardsDialogOpen] = useState(false);
+  const [bulkDeleteCardsLoading, setBulkDeleteCardsLoading] = useState(false);
+  const [bulkMoveCardsDialogOpen, setBulkMoveCardsDialogOpen] = useState(false);
+  const [bulkMoveCardsLoading, setBulkMoveCardsLoading] = useState(false);
+  const [bulkMoveCardsForm, setBulkMoveCardsForm] = useState({ sprint: '', projeto: '' });
+  const [bulkMoveCardsError, setBulkMoveCardsError] = useState('');
+  const [bulkMoveCardsSprints, setBulkMoveCardsSprints] = useState<Sprint[]>([]);
+  const [bulkMoveCardsProjects, setBulkMoveCardsProjects] = useState<Project[]>([]);
+  const [bulkMoveCardsCatalogLoading, setBulkMoveCardsCatalogLoading] = useState(false);
 
   // Estimador de complexidade
   const [showTimeEstimator, setShowTimeEstimator] = useState(false);
@@ -926,15 +964,33 @@ export default function ProjectDetails() {
   };
 
   // Verificar se a sprint está encerrada para edição (backend ou já passou o fechamento_em)
-  const isSprintFinished = (sprint: Sprint | null): boolean => {
-    if (!sprint) return false;
-    if (sprint.finalizada) return true;
-    if (!sprint.fechamento_em) return false;
-    return new Date(sprint.fechamento_em).getTime() <= Date.now();
+  const isSprintFinished = (spr: Sprint | null): boolean => {
+    if (!spr) return false;
+    if (spr.finalizada) return true;
+    if (!spr.fechamento_em) return false;
+    const dayStr = sprintFimDiaParaCalendario(spr);
+    if (dayStr) {
+      const parts = dayStr.split('-').map((x) => parseInt(x, 10));
+      if (parts.length === 3 && parts.every((n) => !Number.isNaN(n))) {
+        const [y, mo, d] = parts;
+        const endOfClosingDay = new Date(y, mo - 1, d, 23, 59, 59, 999);
+        return Date.now() > endOfClosingDay.getTime();
+      }
+    }
+    return new Date(spr.fechamento_em).getTime() <= Date.now();
   };
 
   const sprintIsFinished = isSprintFinished(sprint);
   const isSupportProject = normalizeProjectName(project?.nome || '') === 'suporte';
+
+  const selectedKanbanIdsEligibleForMove = useMemo(
+    () =>
+      selectedKanbanCardIds.filter((cid) => {
+        const c = cards.find((x) => x.id === cid);
+        return c && c.status !== 'finalizado' && c.status !== 'inviabilizado';
+      }),
+    [selectedKanbanCardIds, cards],
+  );
 
   useEffect(() => {
     if (isSupportProject && cardPriorityFilter) {
@@ -2007,6 +2063,154 @@ export default function ProjectDetails() {
     }
   };
 
+  const getBulkMoveUserLabel = (userId?: string | null) => {
+    if (!userId) return '—';
+    const u = users.find((x) => String(x.id) === String(userId));
+    if (!u) return String(userId);
+    const name = `${u.first_name ?? ''} ${u.last_name ?? ''}`.trim();
+    return name || u.username;
+  };
+
+  const canBulkDeleteKanbanCard = (card: CardType): boolean => {
+    if (sprintIsFinished) return false;
+    if (card.status === 'inviabilizado' && user?.role !== 'admin' && user?.role !== 'supervisor') {
+      return false;
+    }
+    return true;
+  };
+
+  const toggleKanbanCardSelected = (cardId: string) => {
+    setSelectedKanbanCardIds((prev) =>
+      prev.includes(cardId) ? prev.filter((id) => id !== cardId) : [...prev, cardId],
+    );
+  };
+
+  const exitKanbanCardSelection = () => {
+    setCardSelectionMode(false);
+    setSelectedKanbanCardIds([]);
+  };
+
+  const openBulkMoveCardsModal = () => {
+    const movableIds = selectedKanbanCardIds.filter((cid) => {
+      const c = cards.find((x) => x.id === cid);
+      return c && c.status !== 'finalizado' && c.status !== 'inviabilizado';
+    });
+    if (movableIds.length === 0) {
+      setAlertMessage(
+        'Só é possível mover cards que não estão nas etapas Finalizado ou Inviabilizado.',
+      );
+      setAlertDialogOpen(true);
+      return;
+    }
+    if (movableIds.length < selectedKanbanCardIds.length) {
+      setSelectedKanbanCardIds(movableIds);
+    }
+    setBulkMoveCardsForm({ sprint: '', projeto: '' });
+    setBulkMoveCardsError('');
+    setBulkMoveCardsDialogOpen(true);
+    setBulkMoveCardsCatalogLoading(true);
+    void (async () => {
+      try {
+        const [sprintsData, projectsData] = await Promise.all([
+          sprintService.getAll(),
+          projectService.getAll(),
+        ]);
+        setBulkMoveCardsSprints(Array.isArray(sprintsData) ? sprintsData : []);
+        setBulkMoveCardsProjects(Array.isArray(projectsData) ? projectsData : []);
+      } catch {
+        setBulkMoveCardsError('Não foi possível carregar sprints e projetos.');
+        setBulkMoveCardsSprints([]);
+        setBulkMoveCardsProjects([]);
+      } finally {
+        setBulkMoveCardsCatalogLoading(false);
+      }
+    })();
+  };
+
+  const handleBulkDeleteKanbanCardsConfirm = async () => {
+    const ids = selectedKanbanCardIds.filter((cid) => {
+      const c = cards.find((x) => x.id === cid);
+      return c && canBulkDeleteKanbanCard(c);
+    });
+    if (ids.length === 0) {
+      setBulkDeleteCardsDialogOpen(false);
+      setAlertMessage('Nenhum dos cards selecionados pode ser apagado (sprint encerrada ou permissão).');
+      setAlertDialogOpen(true);
+      return;
+    }
+    setBulkDeleteCardsLoading(true);
+    const failed: string[] = [];
+    for (const id of ids) {
+      try {
+        await cardService.delete(id);
+      } catch {
+        failed.push(id);
+      }
+    }
+    setCards((prev) => prev.filter((c) => !ids.includes(c.id) || failed.includes(c.id)));
+    setSelectedKanbanCardIds((prev) => prev.filter((id) => failed.includes(id)));
+    setBulkDeleteCardsLoading(false);
+    setBulkDeleteCardsDialogOpen(false);
+    if (failed.length === 0) {
+      exitKanbanCardSelection();
+      setAlertMessage(`${ids.length} card(s) apagado(s).`);
+    } else {
+      setAlertMessage(
+        `${ids.length - failed.length} apagado(s). ${failed.length} falharam (rede ou permissão na API).`,
+      );
+    }
+    setAlertDialogOpen(true);
+  };
+
+  const handleBulkMoveKanbanCardsSubmit = async () => {
+    setBulkMoveCardsError('');
+    if (!bulkMoveCardsForm.sprint || !bulkMoveCardsForm.projeto) {
+      setBulkMoveCardsError('Selecione uma sprint e um projeto de destino.');
+      return;
+    }
+    if (String(bulkMoveCardsForm.projeto) === String(project?.id)) {
+      setBulkMoveCardsError('Escolha um projeto diferente do atual.');
+      return;
+    }
+    setBulkMoveCardsLoading(true);
+    const ids = selectedKanbanCardIds.filter((cid) => {
+      const c = cards.find((x) => x.id === cid);
+      return c && c.status !== 'finalizado' && c.status !== 'inviabilizado';
+    });
+    if (ids.length === 0) {
+      setBulkMoveCardsLoading(false);
+      setBulkMoveCardsError(
+        'Nenhum card elegível: remova da seleção os que estão em Finalizado ou Inviabilizado.',
+      );
+      return;
+    }
+    const failed: { id: string; detail: string }[] = [];
+    for (const cardId of ids) {
+      try {
+        await cardService.update(cardId, { projeto: bulkMoveCardsForm.projeto });
+      } catch (err: unknown) {
+        const ax = err as { response?: { data?: { detail?: string } } };
+        failed.push({
+          id: cardId,
+          detail: ax.response?.data?.detail ?? 'Erro ao mover',
+        });
+      }
+    }
+    setBulkMoveCardsLoading(false);
+    setBulkMoveCardsDialogOpen(false);
+    await loadData();
+    if (failed.length === 0) {
+      exitKanbanCardSelection();
+      setAlertMessage(`${ids.length} card(s) movido(s) para o projeto selecionado.`);
+    } else {
+      setSelectedKanbanCardIds(failed.map((f) => f.id));
+      setAlertMessage(
+        `${ids.length - failed.length} movido(s). ${failed.length} falharam (etapa inexistente no destino ou permissão).`,
+      );
+    }
+    setAlertDialogOpen(true);
+  };
+
   const handleDeleteProject = () => {
     if (!project) return;
     
@@ -2108,10 +2312,25 @@ export default function ProjectDetails() {
               {/* Botão de criar card - visível para todos e em azul */}
               <div className="flex items-center gap-[8px]">
                 {!isSupportProject && (
-                  <Button variant="default" onClick={openCreateCardDialog}>
-                    <Plus className="h-4 w-4 mr-2" />
-                    Criar Card
-                  </Button>
+                  <>
+                    <Button variant="default" onClick={openCreateCardDialog}>
+                      <Plus className="h-4 w-4 mr-2" />
+                      Criar Card
+                    </Button>
+                    <Button
+                      type="button"
+                      variant={cardSelectionMode ? 'default' : 'outline'}
+                      onClick={() => {
+                        setCardSelectionMode((m) => {
+                          if (m) setSelectedKanbanCardIds([]);
+                          return !m;
+                        });
+                      }}
+                    >
+                      <CheckSquare className="h-4 w-4 mr-2" />
+                      {cardSelectionMode ? 'Sair do modo seleção' : 'Selecionar cards'}
+                    </Button>
+                  </>
                 )}
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
@@ -2261,13 +2480,22 @@ export default function ProjectDetails() {
                 stage={stage}
                 cards={getCardsByStage(stage.id)}
                 onCardClick={(card) => {
-                  openEditCardDialog(card);
+                  if (cardSelectionMode) {
+                    if (card.status === 'finalizado' || card.status === 'inviabilizado') {
+                      return;
+                    }
+                    toggleKanbanCardSelected(card.id);
+                  } else {
+                    openEditCardDialog(card);
+                  }
                 }}
                 onCardDelete={handleCardDelete}
                 disabled={sprintIsFinished}
                 userRole={user?.role}
                 users={users}
                 showPriorityColorsOnCards={showPriorityColorsOnCards}
+                selectionMode={cardSelectionMode}
+                selectedCardIds={selectedKanbanCardIds}
               />
             ))}
           </div>
@@ -3158,6 +3386,290 @@ export default function ProjectDetails() {
               onClick={handleConfirmMoveAndRemove}
             >
               Mover e remover
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {!isSupportProject && selectedKanbanCardIds.length > 0 && (
+        <div className="pointer-events-none fixed inset-x-0 bottom-6 z-40 flex justify-center px-4">
+          <div className="pointer-events-auto flex max-w-[min(100%,560px)] flex-wrap items-center justify-center gap-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-background)] px-5 py-3 shadow-lg">
+            <span className="text-sm font-medium text-[var(--color-foreground)]">
+              {selectedKanbanCardIds.length} card(s) selecionado(s)
+            </span>
+            <Button
+              type="button"
+              variant="destructive"
+              size="sm"
+              onClick={() => setBulkDeleteCardsDialogOpen(true)}
+            >
+              <Trash2 className="h-4 w-4 mr-2" />
+              Apagar cards
+            </Button>
+            <Button
+              type="button"
+              variant="default"
+              size="sm"
+              onClick={openBulkMoveCardsModal}
+              disabled={selectedKanbanIdsEligibleForMove.length === 0}
+              title={
+                selectedKanbanIdsEligibleForMove.length === 0
+                  ? 'Nenhum card selecionado pode ser movido (exclua Finalizado ou Inviabilizado da seleção).'
+                  : undefined
+              }
+            >
+              <FolderInput className="h-4 w-4 mr-2" />
+              Mover cards
+            </Button>
+            <Button type="button" variant="outline" size="sm" onClick={exitKanbanCardSelection}>
+              Cancelar
+            </Button>
+          </div>
+        </div>
+      )}
+
+      <Dialog open={bulkDeleteCardsDialogOpen} onOpenChange={setBulkDeleteCardsDialogOpen}>
+        <DialogContent className="max-w-[520px]">
+          <DialogHeader>
+            <DialogTitle>Apagar cards selecionados</DialogTitle>
+            <DialogDescription asChild>
+              <div className="space-y-3 text-[var(--color-muted-foreground)]">
+                <p>Os cards serão removidos permanentemente. A exclusão obedece às mesmas regras do ícone de lixeira no Kanban.</p>
+                {(() => {
+                  const sel = cards.filter((c) => selectedKanbanCardIds.includes(c.id));
+                  const ok = sel.filter((c) => canBulkDeleteKanbanCard(c));
+                  const blocked = sel.filter((c) => !canBulkDeleteKanbanCard(c));
+                  return (
+                    <ul className="list-inside list-disc text-sm space-y-1">
+                      <li>
+                        Serão apagados: <strong className="text-[var(--color-foreground)]">{ok.length}</strong>
+                      </li>
+                      {blocked.length > 0 && (
+                        <li>
+                          Ignorados (sprint encerrada ou sem permissão para inviabilizado):{' '}
+                          <strong className="text-[var(--color-foreground)]">{blocked.length}</strong>
+                        </li>
+                      )}
+                    </ul>
+                  );
+                })()}
+              </div>
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setBulkDeleteCardsDialogOpen(false)}
+              disabled={bulkDeleteCardsLoading}
+            >
+              Voltar
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              disabled={
+                bulkDeleteCardsLoading ||
+                cards.filter((c) => selectedKanbanCardIds.includes(c.id) && canBulkDeleteKanbanCard(c)).length === 0
+              }
+              onClick={() => void handleBulkDeleteKanbanCardsConfirm()}
+            >
+              {bulkDeleteCardsLoading ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Apagando...
+                </>
+              ) : (
+                'Confirmar exclusão'
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={bulkMoveCardsDialogOpen} onOpenChange={setBulkMoveCardsDialogOpen}>
+        <DialogContent className="max-h-[90vh] max-w-[min(100vw-2rem,720px)] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Mover {selectedKanbanCardIds.length} card(s)</DialogTitle>
+            <DialogDescription>
+              Escolha a sprint e o projeto de destino. O status atual de cada card é mantido (o projeto de destino precisa
+              ter a mesma etapa no Kanban). Apenas cards fora das etapas <strong>Finalizado</strong> e{' '}
+              <strong>Inviabilizado</strong> entram neste movimento.
+            </DialogDescription>
+          </DialogHeader>
+
+          {bulkMoveCardsCatalogLoading ? (
+            <div className="flex items-center justify-center gap-2 py-10 text-sm text-[var(--color-muted-foreground)]">
+              <Loader2 className="h-5 w-5 animate-spin" />
+              Carregando sprints e projetos…
+            </div>
+          ) : (
+            <div className="mt-4 space-y-6">
+              <div>
+                <h4 className="mb-2 text-sm font-semibold text-[var(--color-foreground)]">1. Sprint de destino</h4>
+                <div className="max-h-[280px] space-y-2 overflow-y-auto pr-1">
+                  {bulkMoveCardsSprints.map((sp) => {
+                    const selected = String(bulkMoveCardsForm.sprint) === String(sp.id);
+                    return (
+                      <button
+                        key={sp.id}
+                        type="button"
+                        onClick={() => setBulkMoveCardsForm({ sprint: sp.id, projeto: '' })}
+                        className={cn(
+                          'w-full rounded-lg border p-3 text-left text-sm transition-colors',
+                          selected
+                            ? 'border-[var(--color-primary)] bg-[var(--color-accent)] ring-2 ring-[var(--color-primary)]'
+                            : 'border-[var(--color-border)] hover:bg-[var(--color-accent)]',
+                        )}
+                      >
+                        <div className="font-medium text-[var(--color-foreground)]">{sp.nome}</div>
+                        <dl className="mt-2 grid gap-1 text-[var(--color-muted-foreground)] sm:grid-cols-2">
+                          <div>
+                            <dt className="text-xs uppercase tracking-wide">Início</dt>
+                            <dd>{formatDate(sp.data_inicio)}</dd>
+                          </div>
+                          <div>
+                            <dt className="text-xs uppercase tracking-wide">Fechamento</dt>
+                            <dd>{formatDate(sp.fechamento_em)}</dd>
+                          </div>
+                          <div>
+                            <dt className="text-xs uppercase tracking-wide">Fim (calendário)</dt>
+                            <dd>{formatDate(sprintFimDiaParaCalendario(sp))}</dd>
+                          </div>
+                          <div>
+                            <dt className="text-xs uppercase tracking-wide">Duração (dias)</dt>
+                            <dd>{sp.duracao_dias}</dd>
+                          </div>
+                          <div className="sm:col-span-2">
+                            <dt className="text-xs uppercase tracking-wide">Supervisor</dt>
+                            <dd>{sp.supervisor_name ?? getBulkMoveUserLabel(sp.supervisor)}</dd>
+                          </div>
+                          <div>
+                            <dt className="text-xs uppercase tracking-wide">Finalizada</dt>
+                            <dd>{sp.finalizada ? 'Sim' : 'Não'}</dd>
+                          </div>
+                        </dl>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div>
+                <h4 className="mb-2 text-sm font-semibold text-[var(--color-foreground)]">2. Projeto de destino</h4>
+                {!bulkMoveCardsForm.sprint ? (
+                  <p className="text-sm text-[var(--color-muted-foreground)]">Selecione uma sprint acima.</p>
+                ) : (
+                  <div className="max-h-[320px] space-y-2 overflow-y-auto pr-1">
+                    {bulkMoveCardsProjects
+                      .filter((p) => String(p.sprint || '') === String(bulkMoveCardsForm.sprint))
+                      .filter((p) => p.nome !== 'Sugestões')
+                      .filter((p) => String(p.id) !== String(project?.id))
+                      .map((p) => {
+                        const selected = String(bulkMoveCardsForm.projeto) === String(p.id);
+                        const sprintNome =
+                          p.sprint_name ?? bulkMoveCardsSprints.find((s) => String(s.id) === String(p.sprint))?.nome;
+                        return (
+                          <button
+                            key={p.id}
+                            type="button"
+                            onClick={() => setBulkMoveCardsForm((f) => ({ ...f, projeto: p.id }))}
+                            className={cn(
+                              'w-full rounded-lg border p-3 text-left text-sm transition-colors',
+                              selected
+                                ? 'border-[var(--color-primary)] bg-[var(--color-accent)] ring-2 ring-[var(--color-primary)]'
+                                : 'border-[var(--color-border)] hover:bg-[var(--color-accent)]',
+                            )}
+                          >
+                            <div className="font-medium text-[var(--color-foreground)]">{p.nome}</div>
+                            <dl className="mt-2 grid gap-1 text-[var(--color-muted-foreground)] sm:grid-cols-2">
+                              <div className="sm:col-span-2">
+                                <dt className="text-xs uppercase tracking-wide">Descrição</dt>
+                                <dd className="whitespace-pre-wrap break-words">{p.descricao || '—'}</dd>
+                              </div>
+                              <div>
+                                <dt className="text-xs uppercase tracking-wide">Status</dt>
+                                <dd>{p.status_display || p.status}</dd>
+                              </div>
+                              <div>
+                                <dt className="text-xs uppercase tracking-wide">Sprint (nome)</dt>
+                                <dd>{sprintNome ?? '—'}</dd>
+                              </div>
+                              <div>
+                                <dt className="text-xs uppercase tracking-wide">Gerente</dt>
+                                <dd>{p.gerente_name ?? getBulkMoveUserLabel(p.gerente_atribuido)}</dd>
+                              </div>
+                              <div>
+                                <dt className="text-xs uppercase tracking-wide">Desenvolvedor</dt>
+                                <dd>{p.desenvolvedor_name ?? getBulkMoveUserLabel(p.desenvolvedor)}</dd>
+                              </div>
+                              <div>
+                                <dt className="text-xs uppercase tracking-wide">Criação</dt>
+                                <dd>
+                                  {p.data_criacao
+                                    ? formatDate(p.data_criacao)
+                                    : p.created_at
+                                      ? formatDate(p.created_at)
+                                      : '—'}
+                                </dd>
+                              </div>
+                              <div>
+                                <dt className="text-xs uppercase tracking-wide">Cards (totais)</dt>
+                                <dd>
+                                  {p.cards_count != null ? p.cards_count : '—'}
+                                  {p.cards_entregues_count != null && (
+                                    <span className="ml-1">({p.cards_entregues_count} entregues)</span>
+                                  )}
+                                </dd>
+                              </div>
+                            </dl>
+                          </button>
+                        );
+                      })}
+                    {bulkMoveCardsProjects.filter(
+                      (p) =>
+                        String(p.sprint || '') === String(bulkMoveCardsForm.sprint) &&
+                        p.nome !== 'Sugestões' &&
+                        String(p.id) !== String(project?.id),
+                    ).length === 0 && (
+                      <p className="text-sm text-[var(--color-muted-foreground)]">
+                        Não há outro projeto nesta sprint para receber os cards.
+                      </p>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {bulkMoveCardsError && (
+                <div className="rounded-lg border border-red-200 bg-red-50 p-2 text-sm text-[var(--color-destructive)]">
+                  {bulkMoveCardsError}
+                </div>
+              )}
+            </div>
+          )}
+
+          <DialogFooter className="mt-6 gap-2 sm:gap-0">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setBulkMoveCardsDialogOpen(false)}
+              disabled={bulkMoveCardsLoading}
+            >
+              Cancelar
+            </Button>
+            <Button
+              type="button"
+              onClick={() => void handleBulkMoveKanbanCardsSubmit()}
+              disabled={bulkMoveCardsLoading || bulkMoveCardsCatalogLoading}
+            >
+              {bulkMoveCardsLoading ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Movendo...
+                </>
+              ) : (
+                'Confirmar movimento'
+              )}
             </Button>
           </DialogFooter>
         </DialogContent>

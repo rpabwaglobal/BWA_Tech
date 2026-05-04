@@ -22,7 +22,21 @@ import { userService, type User } from '@/services/userService';
 import { kanbanStageService, type KanbanStage } from '@/services/kanbanStageService';
 import { formatDate } from '@/lib/dateUtils';
 import { sprintFimDiaParaCalendario } from '@/lib/sprintFechamento';
-import { Plus, FolderKanban, Calendar, User as UserIcon, CheckCircle2, Clock, XCircle, AlertCircle, Eye, Loader2, Pencil, Trash2, ArrowRight } from 'lucide-react';
+import {
+  Plus,
+  FolderKanban,
+  Calendar,
+  User as UserIcon,
+  CheckCircle2,
+  Clock,
+  XCircle,
+  AlertCircle,
+  Eye,
+  Loader2,
+  Pencil,
+  Trash2,
+  ArrowRight,
+} from 'lucide-react';
 import { Avatar, AvatarImage, AvatarFallback } from '@/components/ui/avatar';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { RequestDueDateChangeModal } from '@/components/RequestDueDateChangeModal';
