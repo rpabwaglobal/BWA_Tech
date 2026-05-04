@@ -1,15 +1,38 @@
-import { useEffect, useState, useMemo, useRef } from 'react';
+import { useEffect, useState, useMemo, useRef, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Avatar, AvatarImage, AvatarFallback } from '@/components/ui/avatar';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
+import { DateTimePicker } from '@/components/ui/datetime-picker';
+import { UserSelect } from '@/components/ui/user-select';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { BarChart3, Trophy, Flame, Target, Loader2, FolderKanban, ChevronDown, ChevronRight, Search } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Cell } from 'recharts';
 import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from '@/components/ui/chart';
-import { cardService, type Card as CardType, CARD_TYPES } from '@/services/cardService';
+import {
+  cardService,
+  type Card as CardType,
+  CARD_AREAS,
+  CARD_TYPES,
+  CARD_PRIORITIES,
+  CARD_STATUSES,
+} from '@/services/cardService';
 import { sprintService, type Sprint } from '@/services/sprintService';
 import { userService, type User } from '@/services/userService';
 import { projectService, type Project } from '@/services/projectService';
 import { useAuth } from '@/context/AuthContext';
+import { cn } from '@/lib/utils';
 
 const CLOSED_STATUS = 'finalizado';
 
@@ -118,6 +141,97 @@ function getCardDeliveryDate(card: CardType): Date | null {
   return Number.isNaN(d.getTime()) ? null : d;
 }
 
+function formatConsistencyDateTime(value?: string | null): string {
+  if (!value) return '—';
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return '—';
+  return d.toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' });
+}
+
+function sortCardsByDeliveryDesc(a: CardType, b: CardType): number {
+  const da = getCardDeliveryDate(a)?.getTime() ?? 0;
+  const db = getCardDeliveryDate(b)?.getTime() ?? 0;
+  return db - da;
+}
+
+const EMPTY_METRICS_CARD_FORM = {
+  nome: '',
+  descricao: '',
+  script_url: '',
+  area: 'backend',
+  tipo: 'feature',
+  prioridade: 'media',
+  status: 'a_desenvolver',
+  responsavel: '',
+  data_inicio: '',
+  data_fim: '',
+};
+
+/** Linha clicável no modal de consistência (lista de entregues). */
+function MetricsDeliveredCardRow({
+  card,
+  variant,
+  onSelect,
+}: {
+  card: CardType;
+  variant: 'onTime' | 'late';
+  onSelect: (id: string) => void;
+}) {
+  const badge =
+    variant === 'onTime' ? (
+      <Badge className="shrink-0 border-green-600/40 bg-green-500/15 text-green-800 dark:text-green-400">
+        No prazo
+      </Badge>
+    ) : (
+      <Badge className="shrink-0 border-red-600/40 bg-red-500/15 text-red-800 dark:text-red-400">
+        Fora do prazo
+      </Badge>
+    );
+  return (
+    <li>
+      <button
+        type="button"
+        className="w-full rounded-md border border-[var(--color-border)] bg-[var(--color-card)] p-3 text-left text-sm transition-colors hover:bg-[var(--color-accent)]"
+        onClick={() => void onSelect(card.id)}
+      >
+        <div className="flex flex-wrap items-start justify-between gap-2">
+          <span className="font-medium text-[var(--color-foreground)]">{card.nome}</span>
+          {badge}
+        </div>
+        {card.projeto_detail?.nome && (
+          <p className="mt-1 text-xs text-[var(--color-muted-foreground)]">Projeto: {card.projeto_detail.nome}</p>
+        )}
+        <dl className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-xs sm:grid-cols-4">
+          <div>
+            <dt className="text-[var(--color-muted-foreground)]">Criação</dt>
+            <dd className="font-medium text-[var(--color-foreground)]">
+              {formatConsistencyDateTime(card.created_at)}
+            </dd>
+          </div>
+          <div>
+            <dt className="text-[var(--color-muted-foreground)]">Em desenvolvimento</dt>
+            <dd className="font-medium text-[var(--color-foreground)]">
+              {formatConsistencyDateTime(card.data_inicio)}
+            </dd>
+          </div>
+          <div>
+            <dt className="text-[var(--color-muted-foreground)]">Entrega agendada</dt>
+            <dd className="font-medium text-[var(--color-foreground)]">
+              {formatConsistencyDateTime(card.data_fim)}
+            </dd>
+          </div>
+          <div>
+            <dt className="text-[var(--color-muted-foreground)]">Conclusão real</dt>
+            <dd className="font-medium text-[var(--color-foreground)]">
+              {formatConsistencyDateTime(card.finalizado_em || card.updated_at)}
+            </dd>
+          </div>
+        </dl>
+      </button>
+    </li>
+  );
+}
+
 export default function Metrics() {
   const { user: authUser } = useAuth();
   const isSupervisor = authUser?.role === 'supervisor' || authUser?.role === 'admin';
@@ -165,6 +279,14 @@ export default function Metrics() {
   const [onTimeUsersDropdownOpen, setOnTimeUsersDropdownOpen] = useState(false);
   const [onTimeUsersSearchQuery, setOnTimeUsersSearchQuery] = useState('');
   const onTimeUsersDropdownRef = useRef<HTMLDivElement | null>(null);
+
+  const navigate = useNavigate();
+  const [onTimeListModalUserId, setOnTimeListModalUserId] = useState<string | null>(null);
+  const [onTimeListTab, setOnTimeListTab] = useState<'onTime' | 'late'>('onTime');
+  const [onTimeViewCardOpen, setOnTimeViewCardOpen] = useState(false);
+  const [onTimeViewCardLoading, setOnTimeViewCardLoading] = useState(false);
+  const [onTimeViewSelectedCard, setOnTimeViewSelectedCard] = useState<CardType | null>(null);
+  const [onTimeViewCardForm, setOnTimeViewCardForm] = useState(() => ({ ...EMPTY_METRICS_CARD_FORM }));
 
   const [onTimeScope, setOnTimeScope] = useState<'sprint' | 'year' | 'month' | 'interval' | 'users'>('year');
   const [onTimeSprint, setOnTimeSprint] = useState<string>('');
@@ -589,7 +711,10 @@ export default function Metrics() {
   ]);
 
   const onTimeTable = useMemo(() => {
-    const byUser = new Map<string, { total: number; onTime: number }>();
+    const byUser = new Map<
+      string,
+      { total: number; onTime: number; onTimeCards: CardType[]; lateCards: CardType[] }
+    >();
     for (const card of closedCardsForOnTime) {
       if (!getSprintForCard(card) || !card.data_fim || !card.responsavel) continue;
       const uid = String(card.responsavel);
@@ -599,10 +724,15 @@ export default function Metrics() {
         : card.updated_at
           ? new Date(card.updated_at).getTime()
           : scheduledEnd;
-      const onTime = completedAt <= scheduledEnd;
-      const cur = byUser.get(uid) ?? { total: 0, onTime: 0 };
+      const isOnTime = completedAt <= scheduledEnd;
+      const cur = byUser.get(uid) ?? { total: 0, onTime: 0, onTimeCards: [], lateCards: [] };
       cur.total += 1;
-      if (onTime) cur.onTime += 1;
+      if (isOnTime) {
+        cur.onTime += 1;
+        cur.onTimeCards.push(card);
+      } else {
+        cur.lateCards.push(card);
+      }
       byUser.set(uid, cur);
     }
     const isUsersScopeWithSelection = onTimeScope === 'users' && onTimeScopeUserIds.length > 0;
@@ -611,8 +741,13 @@ export default function Metrics() {
       : Array.from(byUser.keys());
     const rows = userIdsToShow.map((userId) => {
       const uid = String(userId);
-      const stats = byUser.get(uid) ?? { total: 0, onTime: 0 };
-      const { total, onTime } = stats;
+      const stats = byUser.get(uid) ?? {
+        total: 0,
+        onTime: 0,
+        onTimeCards: [] as CardType[],
+        lateCards: [] as CardType[],
+      };
+      const { total, onTime, onTimeCards, lateCards } = stats;
       const late = total - onTime;
       const user = users.find((u) => String(u.id) === uid) ?? users.find((u) => u.id === userId) ?? { id: userId, username: String(userId), email: '', first_name: '', last_name: '', role: '', role_display: '', profile_picture_url: null };
       return {
@@ -622,6 +757,8 @@ export default function Metrics() {
         total,
         onTime,
         late,
+        onTimeCards,
+        lateCards,
         pct: total ? Math.round((onTime / total) * 100) : 0,
       };
     });
@@ -642,6 +779,75 @@ export default function Metrics() {
     if (onTimeFilterUserIds == null || onTimeFilterUserIds.length === 0) return onTimeTable;
     return onTimeTable.filter((row) => onTimeFilterUserIds.includes(row.userId));
   }, [onTimeTable, onTimeFilterUserIds]);
+
+  const onTimeListModalRow = useMemo(() => {
+    if (!onTimeListModalUserId) return null;
+    return onTimeTable.find((r) => String(r.userId) === String(onTimeListModalUserId)) ?? null;
+  }, [onTimeTable, onTimeListModalUserId]);
+
+  const onTimeScopeDescription = useMemo(() => {
+    switch (onTimeScope) {
+      case 'sprint': {
+        const sp = sprints.find((s) => String(s.id) === String(onTimeSprint));
+        return sp ? `Sprint: ${sp.nome}` : 'Por sprint';
+      }
+      case 'year':
+        return `Ano ${onTimeYear}`;
+      case 'month':
+        return `${MONTH_NAMES[onTimeMonth - 1] ?? 'Mês'} de ${onTimeMonthYear}`;
+      case 'interval':
+        return onTimeStartDate && onTimeEndDate
+          ? `De ${onTimeStartDate} até ${onTimeEndDate}`
+          : 'Por intervalo';
+      case 'users':
+        return onTimeScopeUserIds.length > 0
+          ? `Escopo: ${onTimeScopeUserIds.length} usuário(s) selecionado(s)`
+          : 'Por usuários';
+      default:
+        return '';
+    }
+  }, [
+    onTimeScope,
+    onTimeSprint,
+    onTimeYear,
+    onTimeMonth,
+    onTimeMonthYear,
+    onTimeStartDate,
+    onTimeEndDate,
+    onTimeScopeUserIds,
+    sprints,
+  ]);
+
+  const openConsistencyCardFromMetrics = useCallback(async (cardId: string) => {
+    setOnTimeListModalUserId(null);
+    try {
+      setOnTimeViewCardLoading(true);
+      const card = await cardService.getById(cardId);
+      setOnTimeViewSelectedCard(card);
+      setOnTimeViewCardForm({
+        nome: card.nome || '',
+        descricao: card.descricao || '',
+        script_url: card.script_url || '',
+        area: card.area || 'backend',
+        tipo: card.tipo || 'feature',
+        prioridade: card.prioridade || 'media',
+        status: card.status || 'a_desenvolver',
+        responsavel: card.responsavel || '',
+        data_inicio: card.data_inicio || '',
+        data_fim: card.data_fim || '',
+      });
+      setOnTimeViewCardOpen(true);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setOnTimeViewCardLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!onTimeListModalRow) return;
+    setOnTimeListTab(onTimeListModalRow.onTimeCards.length > 0 ? 'onTime' : 'late');
+  }, [onTimeListModalUserId, onTimeListModalRow]);
 
   const onTimeTableUserList = useMemo(() => {
     const seen = new Set<string>();
@@ -1443,7 +1649,7 @@ export default function Metrics() {
                 Consistência de entrega
               </CardTitle>
               <CardDescription>
-                Percentual de cards concluídos até a data e hora de entrega agendadas no card (campo de fim). A entrega real usa o instante em que o card passou a finalizado pela última vez. Meta: 80% para permanecer na gincana.
+                Percentual de cards concluídos até a data e hora de entrega agendadas no card (campo de fim). A entrega real usa o instante em que o card passou a finalizado pela última vez. Meta: 80% para permanecer na gincana. Clique numa linha da tabela para ver a lista de cards daquele usuário com os filtros atuais.
               </CardDescription>
             </div>
             <div className="flex flex-wrap gap-4 pt-2">
@@ -1646,7 +1852,20 @@ export default function Metrics() {
                   return (
                     <tr
                       key={row.userId}
-                      className={`${rowBg} border-b border-[var(--color-border)]`}
+                      role={row.total > 0 ? 'button' : undefined}
+                      tabIndex={row.total > 0 ? 0 : undefined}
+                      className={`${rowBg} border-b border-[var(--color-border)]${
+                        row.total > 0 ? ' cursor-pointer hover:opacity-90' : ''
+                      }`}
+                      onClick={() => {
+                        if (row.total > 0) setOnTimeListModalUserId(String(row.userId));
+                      }}
+                      onKeyDown={(e) => {
+                        if (row.total > 0 && (e.key === 'Enter' || e.key === ' ')) {
+                          e.preventDefault();
+                          setOnTimeListModalUserId(String(row.userId));
+                        }
+                      }}
                     >
                       <td className="p-3 border-r border-[var(--color-border)] w-0 whitespace-nowrap">
                         <div className="flex justify-center">{topCell}</div>
@@ -1826,6 +2045,255 @@ export default function Metrics() {
           )}
         </CardContent>
       </Card>
+
+      <Dialog
+        open={onTimeListModalUserId != null && onTimeListModalRow != null}
+        onOpenChange={(open) => {
+          if (!open) setOnTimeListModalUserId(null);
+        }}
+        containerClassName="max-w-2xl"
+      >
+        <DialogContent
+          onClose={() => setOnTimeListModalUserId(null)}
+          className="max-h-[90vh] flex flex-col overflow-hidden"
+        >
+          <DialogHeader>
+            <DialogTitle>Cards entregues</DialogTitle>
+            <DialogDescription>
+              {onTimeListModalRow
+                ? `${onTimeListModalRow.name} · ${onTimeScopeDescription}`
+                : ''}
+            </DialogDescription>
+          </DialogHeader>
+          {onTimeListModalRow && (
+            <div className="mt-2 flex min-h-0 flex-1 flex-col gap-0">
+              <div className="flex gap-[8px] border-b border-[var(--color-border)]">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  disabled={onTimeListModalRow.onTimeCards.length === 0}
+                  onClick={() => setOnTimeListTab('onTime')}
+                  className={cn(
+                    'rounded-none border-b-2 border-transparent px-[16px] py-[8px] h-auto',
+                    onTimeListTab === 'onTime'
+                      ? 'border-[var(--color-primary)] text-[var(--color-primary)] font-semibold'
+                      : 'text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]',
+                  )}
+                >
+                  No prazo ({onTimeListModalRow.onTimeCards.length})
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  disabled={onTimeListModalRow.lateCards.length === 0}
+                  onClick={() => setOnTimeListTab('late')}
+                  className={cn(
+                    'rounded-none border-b-2 border-transparent px-[16px] py-[8px] h-auto',
+                    onTimeListTab === 'late'
+                      ? 'border-[var(--color-primary)] text-[var(--color-primary)] font-semibold'
+                      : 'text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]',
+                  )}
+                >
+                  Fora do prazo ({onTimeListModalRow.lateCards.length})
+                </Button>
+              </div>
+              <div className="min-h-0 max-h-[min(60vh,520px)] flex-1 overflow-y-auto pr-1 pt-3">
+                {onTimeListTab === 'onTime' ? (
+                  onTimeListModalRow.onTimeCards.length > 0 ? (
+                    <ul className="space-y-2">
+                      {[...onTimeListModalRow.onTimeCards].sort(sortCardsByDeliveryDesc).map((card) => (
+                        <MetricsDeliveredCardRow
+                          key={card.id}
+                          card={card}
+                          variant="onTime"
+                          onSelect={openConsistencyCardFromMetrics}
+                        />
+                      ))}
+                    </ul>
+                  ) : (
+                    <p className="text-sm text-[var(--color-muted-foreground)]">Nenhum card no prazo neste filtro.</p>
+                  )
+                ) : onTimeListModalRow.lateCards.length > 0 ? (
+                  <ul className="space-y-2">
+                    {[...onTimeListModalRow.lateCards].sort(sortCardsByDeliveryDesc).map((card) => (
+                      <MetricsDeliveredCardRow
+                        key={card.id}
+                        card={card}
+                        variant="late"
+                        onSelect={openConsistencyCardFromMetrics}
+                      />
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="text-sm text-[var(--color-muted-foreground)]">Nenhum card fora do prazo neste filtro.</p>
+                )}
+              </div>
+              <DialogFooter className="mt-0 shrink-0 border-t border-[var(--color-border)] pt-4">
+                <Button type="button" variant="outline" onClick={() => setOnTimeListModalUserId(null)}>
+                  Fechar
+                </Button>
+              </DialogFooter>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={onTimeViewCardOpen}
+        onOpenChange={(open) => {
+          setOnTimeViewCardOpen(open);
+          if (!open) {
+            setOnTimeViewSelectedCard(null);
+            setOnTimeViewCardForm({ ...EMPTY_METRICS_CARD_FORM });
+          }
+        }}
+        containerClassName="max-w-[600px]"
+      >
+        <DialogContent
+          onClose={() => {
+            setOnTimeViewCardOpen(false);
+            setOnTimeViewSelectedCard(null);
+            setOnTimeViewCardForm({ ...EMPTY_METRICS_CARD_FORM });
+          }}
+          className="max-w-[600px]"
+        >
+          <DialogHeader>
+            <DialogTitle>Ver card</DialogTitle>
+            <DialogDescription>Somente leitura. Use o botão abaixo para abrir o projeto no quadro.</DialogDescription>
+          </DialogHeader>
+          {onTimeViewCardLoading ? (
+            <div className="flex items-center justify-center py-8">
+              <Loader2 className="h-8 w-8 animate-spin text-[var(--color-primary)]" />
+            </div>
+          ) : (
+            <form className="mt-4 max-h-[70vh] space-y-4 overflow-y-auto pr-2" onSubmit={(e) => e.preventDefault()}>
+              <div className="space-y-2">
+                <Label htmlFor="metrics-card-nome">Nome</Label>
+                <Input id="metrics-card-nome" value={onTimeViewCardForm.nome} disabled readOnly />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="metrics-card-desc">Descrição</Label>
+                <Textarea id="metrics-card-desc" value={onTimeViewCardForm.descricao} disabled readOnly rows={4} />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="metrics-card-script">Link do script</Label>
+                <Input id="metrics-card-script" type="url" value={onTimeViewCardForm.script_url} disabled readOnly />
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="metrics-card-area">Área</Label>
+                  <select
+                    id="metrics-card-area"
+                    className="flex h-10 w-full rounded-md border border-[var(--color-input)] bg-[var(--color-background)] px-3 text-sm disabled:opacity-60"
+                    value={onTimeViewCardForm.area}
+                    disabled
+                  >
+                    {CARD_AREAS.map((a) => (
+                      <option key={a.value} value={a.value}>
+                        {a.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="metrics-card-tipo">Tipo</Label>
+                  <select
+                    id="metrics-card-tipo"
+                    className="flex h-10 w-full rounded-md border border-[var(--color-input)] bg-[var(--color-background)] px-3 text-sm disabled:opacity-60"
+                    value={onTimeViewCardForm.tipo}
+                    disabled
+                  >
+                    {CARD_TYPES.map((t) => (
+                      <option key={t.value} value={t.value}>
+                        {t.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="metrics-card-prio">Prioridade</Label>
+                  <select
+                    id="metrics-card-prio"
+                    className="flex h-10 w-full rounded-md border border-[var(--color-input)] bg-[var(--color-background)] px-3 text-sm disabled:opacity-60"
+                    value={onTimeViewCardForm.prioridade}
+                    disabled
+                  >
+                    {CARD_PRIORITIES.map((p) => (
+                      <option key={p.value} value={p.value}>
+                        {p.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="metrics-card-status">Status</Label>
+                  <select
+                    id="metrics-card-status"
+                    className="flex h-10 w-full rounded-md border border-[var(--color-input)] bg-[var(--color-background)] px-3 text-sm disabled:opacity-60"
+                    value={onTimeViewCardForm.status}
+                    disabled
+                  >
+                    {CARD_STATUSES.map((s) => (
+                      <option key={s.value} value={s.value}>
+                        {s.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+              <div className="space-y-2">
+                <Label>Responsável</Label>
+                <UserSelect
+                  users={users}
+                  value={onTimeViewCardForm.responsavel || ''}
+                  onChange={() => {}}
+                  disabled
+                  placeholder="—"
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label>Início</Label>
+                  <DateTimePicker value={onTimeViewCardForm.data_inicio} onChange={() => {}} disabled />
+                </div>
+                <div className="space-y-2">
+                  <Label>Entrega agendada</Label>
+                  <DateTimePicker value={onTimeViewCardForm.data_fim} onChange={() => {}} disabled />
+                </div>
+              </div>
+              <DialogFooter>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => {
+                    setOnTimeViewCardOpen(false);
+                    setOnTimeViewSelectedCard(null);
+                    setOnTimeViewCardForm({ ...EMPTY_METRICS_CARD_FORM });
+                  }}
+                >
+                  Fechar
+                </Button>
+                {onTimeViewSelectedCard?.projeto && (
+                  <Button
+                    type="button"
+                    onClick={() => {
+                      const projectId = onTimeViewSelectedCard.projeto;
+                      setOnTimeViewCardOpen(false);
+                      setOnTimeViewSelectedCard(null);
+                      setOnTimeViewCardForm({ ...EMPTY_METRICS_CARD_FORM });
+                      navigate(`/projects/${projectId}`);
+                    }}
+                  >
+                    Ir para o projeto
+                  </Button>
+                )}
+              </DialogFooter>
+            </form>
+          )}
+        </DialogContent>
+      </Dialog>
 
     </div>
   );
