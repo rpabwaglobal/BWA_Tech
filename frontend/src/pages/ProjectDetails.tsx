@@ -2522,7 +2522,7 @@ export default function ProjectDetails() {
             Responsável
           </span>
           <UserSelect
-            users={users.filter((u) => u.role === 'desenvolvedor' || u.role === 'gerente')}
+            users={users.filter((u) => u.role !== 'admin')}
             value={cardDeveloperFilter}
             onChange={setCardDeveloperFilter}
             placeholder="Todos os responsáveis"
