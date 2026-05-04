@@ -1,11 +1,26 @@
 #!/bin/bash
 # GerProj/BWAproj - Deploy no Linux (equivalente ao deploy.bat do Windows)
 # Uso: ./deploy.sh   ou   bash deploy.sh
+#
+# Logs (na raiz do repositório, mesmo diretório deste script):
+#   - deploy_full_YYYYMMDD_HHMMSS.log  (uma cópia por execução)
+#   - deploy_latest.log                (symlink → último deploy_full_*.log)
+# Ver o último deploy:  tail -n 250 deploy_latest.log
+# Se o terminal fechar, SSH de novo e:  tail -n 250 /caminho/do/repo/deploy_latest.log
 
 set -e
 set -o pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
+
+# Toda a saída (stdout+stderr) desta execução vai para ficheiro + terminal
+DEPLOY_FULL_LOG="$SCRIPT_DIR/deploy_full_$(date +%Y%m%d_%H%M%S).log"
+ln -sf "$DEPLOY_FULL_LOG" "$SCRIPT_DIR/deploy_latest.log"
+exec > >(tee -a "$DEPLOY_FULL_LOG") 2>&1
+echo ""
+echo " [INFO] Log completo desta execução: $DEPLOY_FULL_LOG"
+echo " [INFO] Atalho: $SCRIPT_DIR/deploy_latest.log"
+echo ""
 
 # Credenciais do superadmin. Altere via variáveis de ambiente se precisar.
 SU_USER="${ADMIN_USERNAME:-italoadmin}"
@@ -55,7 +70,6 @@ echo ""
 echo " [3/7] Parando containers ativos do projeto..."
 docker compose down >/dev/null 2>&1 || true
 echo " [3/7] Subindo containers (banco + backend + frontend)..."
-DEPLOY_LOG="deploy_$(date +%Y%m%d_%H%M%S).log"
 APP_PORT=8000
 for p in 8000 8001 8002 8003 8004 8005 8006 8007 8008 8009 8010; do
     if ! (ss -tln 2>/dev/null | grep -q ":${p} ") && ! (netstat -tln 2>/dev/null | grep -q ":${p} "); then
@@ -76,12 +90,13 @@ if [ "$APP_PORT" != "8000" ]; then
 fi
 export APP_PORT
 echo ""
-if ! docker compose up -d --build 2>&1 | tee "$DEPLOY_LOG"; then
+if ! docker compose up -d --build; then
     echo ""
     echo " [ERRO] Falha ao subir os containers."
-    echo "        Log completo: $DEPLOY_LOG"
+    echo "        Log completo: $DEPLOY_FULL_LOG"
+    echo "        Atalho: $SCRIPT_DIR/deploy_latest.log"
     echo "        Últimas linhas do log:"
-    tail -n 80 "$DEPLOY_LOG" || true
+    tail -n 120 "$DEPLOY_FULL_LOG" || true
     echo ""
     echo "        Dica: verificar build do frontend e backend:"
     echo "        docker compose logs --tail=120 backend"
