@@ -33,6 +33,11 @@ export type LoginResponse = {
 
 export const authService = {
   async register(data: RegisterData): Promise<LoginResponse> {
+    const saveToken = (token: string) => {
+      localStorage.setItem('auth_token', token);
+      localStorage.setItem('auth_expires_at', String(Date.now() + 24 * 60 * 60 * 1000));
+    };
+
     if (data.profile_picture) {
       const formData = new FormData();
       formData.append('first_name', data.first_name);
@@ -41,9 +46,7 @@ export const authService = {
       formData.append('password', data.password);
       formData.append('profile_picture', data.profile_picture, data.profile_picture.name);
       const response = await api.post('/users/register/', formData);
-      if (response.data.token) {
-        localStorage.setItem('auth_token', response.data.token);
-      }
+      if (response.data.token) saveToken(response.data.token);
       return response.data;
     }
     const response = await api.post('/users/register/', {
@@ -52,17 +55,15 @@ export const authService = {
       email: data.email,
       password: data.password,
     });
-    if (response.data.token) {
-      localStorage.setItem('auth_token', response.data.token);
-    }
+    if (response.data.token) saveToken(response.data.token);
     return response.data;
   },
 
   async login(data: LoginData): Promise<LoginResponse> {
     const response = await api.post('/users/login/', data);
-    // Salva o token no localStorage
     if (response.data.token) {
       localStorage.setItem('auth_token', response.data.token);
+      localStorage.setItem('auth_expires_at', String(Date.now() + 24 * 60 * 60 * 1000));
     }
     return response.data;
   },
@@ -72,6 +73,7 @@ export const authService = {
       await api.post('/users/logout/');
     } finally {
       localStorage.removeItem('auth_token');
+      localStorage.removeItem('auth_expires_at');
     }
   },
 
@@ -85,7 +87,21 @@ export const authService = {
   },
 
   isLoggedIn(): boolean {
-    return !!localStorage.getItem('auth_token');
+    if (!localStorage.getItem('auth_token')) return false;
+    const expiresAt = Number(localStorage.getItem('auth_expires_at') ?? 0);
+    if (expiresAt && Date.now() > expiresAt) {
+      localStorage.removeItem('auth_token');
+      localStorage.removeItem('auth_expires_at');
+      return false;
+    }
+    return true;
+  },
+
+  /** Milissegundos restantes até a sessão expirar (0 se já expirou ou sem token). */
+  msUntilExpiry(): number {
+    const expiresAt = Number(localStorage.getItem('auth_expires_at') ?? 0);
+    if (!expiresAt) return 0;
+    return Math.max(0, expiresAt - Date.now());
   },
 
   async changePassword(currentPassword: string, newPassword: string): Promise<void> {

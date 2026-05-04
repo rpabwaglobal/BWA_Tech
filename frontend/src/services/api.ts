@@ -45,6 +45,7 @@ api.interceptors.response.use(
   (error) => {
     if (error.response?.status === 401 && !isPublic(error.config?.url ?? '')) {
       localStorage.removeItem('auth_token');
+      localStorage.removeItem('auth_expires_at');
       window.location.href = '/login';
     }
     return Promise.reject(error);
