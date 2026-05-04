@@ -154,6 +154,15 @@ function sortCardsByDeliveryDesc(a: CardType, b: CardType): number {
   return db - da;
 }
 
+/** Altura por linha nos gráficos de barras horizontais (avatar + nome no eixo Y). */
+const USER_BAR_CHART_ROW_PX = 48;
+const USER_BAR_CHART_MAX_PX = 1400;
+
+function userVerticalBarChartHeight(rowCount: number, minPx: number): number {
+  if (rowCount <= 0) return minPx;
+  return Math.min(USER_BAR_CHART_MAX_PX, Math.max(minPx, rowCount * USER_BAR_CHART_ROW_PX));
+}
+
 const EMPTY_METRICS_CARD_FORM = {
   nome: '',
   descricao: '',
@@ -1150,30 +1159,41 @@ export default function Metrics() {
           </div>
         </CardHeader>
         <CardContent>
-          <div className="h-[320px]">
+          <div
+            className="w-full max-h-[min(85vh,1400px)] overflow-y-auto overflow-x-hidden rounded-md"
+            style={{ height: `${userVerticalBarChartHeight(cardsPerUserData.length, 320)}px` }}
+          >
             {cardsPerUserData.length ? (
-              <ChartContainer config={chartConfigCount} className="h-full w-full">
-                <BarChart data={cardsPerUserData} layout="vertical" margin={{ left: 20, right: 20 }}>
+              <ChartContainer
+                config={chartConfigCount}
+                className="h-full w-full min-h-[200px] aspect-auto [&_.recharts-surface]:overflow-visible"
+              >
+                <BarChart data={cardsPerUserData} layout="vertical" margin={{ left: 12, right: 16, top: 8, bottom: 8 }}>
                   <CartesianGrid strokeDasharray="3 3" vertical={false} />
                   <XAxis type="number" tickLine={false} axisLine={false} />
                   <YAxis
                     type="category"
                     dataKey="name"
-                    width={200}
+                    width={248}
+                    interval={0}
                     tickLine={false}
                     axisLine={false}
-                    tick={(props) => {
-                      const { x, y, payload } = props;
-                      const p = payload as { index?: number; value?: string };
-                      const idx = cardsPerUserData.findIndex((r) => r.name === p?.value);
-                      const index = p?.index ?? (idx >= 0 ? idx : 0);
-                      const row = cardsPerUserData[index];
+                    tick={(props: { x: number; y: number; payload?: { value?: string }; index?: number }) => {
+                      const { x, y, payload, index } = props;
+                      const i =
+                        typeof index === 'number' && index >= 0
+                          ? index
+                          : cardsPerUserData.findIndex((r) => r.name === payload?.value);
+                      const row = i >= 0 ? cardsPerUserData[i] : undefined;
                       if (!row) return null;
                       return (
                         <g transform={`translate(${x},${y})`}>
-                          <foreignObject x={-192} y={-12} width={190} height={24} className="overflow-visible">
-                            <div className="flex items-center gap-2 h-6">
-                              <Avatar className="h-6 w-6 shrink-0 rounded-full">
+                          <foreignObject x={-236} y={-18} width={232} height={36} style={{ overflow: 'visible' }}>
+                            <div
+                              xmlns="http://www.w3.org/1999/xhtml"
+                              className="flex h-9 min-h-9 items-center gap-2 pr-1"
+                            >
+                              <Avatar className="h-7 w-7 shrink-0 rounded-full border border-[var(--color-border)]/60">
                                 {row.profile_picture_url ? (
                                   <AvatarImage src={row.profile_picture_url} alt={row.name} />
                                 ) : null}
@@ -1181,7 +1201,9 @@ export default function Metrics() {
                                   {row.name.slice(0, 2).toUpperCase() || '?'}
                                 </AvatarFallback>
                               </Avatar>
-                              <span className="text-xs font-medium text-[var(--color-foreground)] truncate">{row.name}</span>
+                              <span className="min-w-0 flex-1 text-xs font-medium leading-tight text-[var(--color-foreground)] break-words">
+                                {row.name}
+                              </span>
                             </div>
                           </foreignObject>
                         </g>
@@ -1399,26 +1421,34 @@ export default function Metrics() {
           </div>
         </CardHeader>
         <CardContent>
-          <div className="h-[280px]">
+          <div
+            className="w-full max-h-[min(85vh,1400px)] overflow-y-auto overflow-x-hidden rounded-md"
+            style={{ height: `${userVerticalBarChartHeight(leaderboardData.length, 300)}px` }}
+          >
             {leaderboardData.length ? (
-              <ChartContainer config={chartConfigCount} className="h-full w-full">
-                <BarChart data={leaderboardData} layout="vertical" margin={{ left: 20, right: 20 }}>
+              <ChartContainer
+                config={chartConfigCount}
+                className="h-full w-full min-h-[200px] aspect-auto [&_.recharts-surface]:overflow-visible"
+              >
+                <BarChart data={leaderboardData} layout="vertical" margin={{ left: 12, right: 16, top: 8, bottom: 8 }}>
                   <CartesianGrid strokeDasharray="3 3" vertical={false} />
                   <XAxis type="number" tickLine={false} axisLine={false} />
                   <YAxis
                     type="category"
                     dataKey="name"
-                    width={200}
+                    width={248}
+                    interval={0}
                     tickLine={false}
                     axisLine={false}
-                    tick={(props) => {
-                      const { x, y, payload } = props;
-                      const p = payload as { index?: number; value?: string };
-                      const idx = leaderboardData.findIndex((r) => r.name === p?.value);
-                      const index = p?.index ?? (idx >= 0 ? idx : 0);
-                      const row = leaderboardData[index];
+                    tick={(props: { x: number; y: number; payload?: { value?: string }; index?: number }) => {
+                      const { x, y, payload, index } = props;
+                      const i =
+                        typeof index === 'number' && index >= 0
+                          ? index
+                          : leaderboardData.findIndex((r) => r.name === payload?.value);
+                      const row = i >= 0 ? leaderboardData[i] : undefined;
                       if (!row) return null;
-                      const position = index + 1;
+                      const position = i + 1;
                       const medalFrame =
                         position === 1
                           ? 'ring-2 ring-amber-400 ring-offset-2 ring-offset-[var(--color-card)]'
@@ -1429,9 +1459,14 @@ export default function Metrics() {
                               : '';
                       return (
                         <g transform={`translate(${x},${y})`}>
-                          <foreignObject x={-192} y={-12} width={190} height={24} className="overflow-visible">
-                            <div className="flex items-center gap-2 h-6">
-                              <Avatar className={`h-6 w-6 shrink-0 rounded-full ${medalFrame}`}>
+                          <foreignObject x={-236} y={-18} width={232} height={36} style={{ overflow: 'visible' }}>
+                            <div
+                              xmlns="http://www.w3.org/1999/xhtml"
+                              className="flex h-9 min-h-9 items-center gap-2 pr-1"
+                            >
+                              <Avatar
+                                className={`h-7 w-7 shrink-0 rounded-full border border-[var(--color-border)]/60 ${medalFrame}`}
+                              >
                                 {row.profile_picture_url ? (
                                   <AvatarImage src={row.profile_picture_url} alt={row.name} />
                                 ) : null}
@@ -1439,7 +1474,9 @@ export default function Metrics() {
                                   {row.name.slice(0, 2).toUpperCase() || '?'}
                                 </AvatarFallback>
                               </Avatar>
-                              <span className="text-xs font-medium text-[var(--color-foreground)] truncate">{row.name}</span>
+                              <span className="min-w-0 flex-1 text-xs font-medium leading-tight text-[var(--color-foreground)] break-words">
+                                {row.name}
+                              </span>
                             </div>
                           </foreignObject>
                         </g>
