@@ -2435,10 +2435,10 @@ export default function SprintDetails() {
           {/* 4. Desenvolvedores */}
             <div className="min-w-0 w-full shrink-0 sm:w-[220px] sm:max-w-full lg:w-[220px] lg:max-w-[220px]">
               <UserSelect
-                users={users.filter((u) => u.role === 'desenvolvedor' || u.role === 'gerente')}
+                users={users.filter((u) => u.role !== 'admin')}
                 value={projectDeveloperFilter}
                 onChange={setProjectDeveloperFilter}
-                placeholder="Todos os desenvolvedores"
+                placeholder="Todos os responsáveis"
               />
             </div>
           {/* 5. Filtros */}
