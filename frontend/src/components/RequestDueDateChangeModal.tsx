@@ -8,7 +8,10 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { DatePicker } from '@/components/ui/date-picker';
 import { cardService, CARD_STATUSES, type Card as CardType } from '@/services/cardService';
 import { cardDateChangeRequestService } from '@/services/cardDateChangeRequestService';
+import { sprintService } from '@/services/sprintService';
 import { formatDateTime } from '@/lib/dateUtils';
+import { ATRASADO_STATUS_BADGE, EM_DIA_STATUS_BADGE } from '@/lib/dueDateBadgeClasses';
+import { getSprintIdsEmAndamentoJanela } from '@/lib/sprintFechamento';
 import { cn } from '@/lib/utils';
 
 /** Compara só a data local (início do dia) para “em dia” / “atrasado” em qualquer etapa ativa. */
@@ -27,25 +30,31 @@ function cardStageLabel(card: CardType): string {
   return CARD_STATUSES.find((s) => s.value === card.status)?.label ?? card.status;
 }
 
+function isSuggestionProjeto(card: CardType): boolean {
+  return card.projeto_detail?.nome === 'Sugestões';
+}
+
 /**
- * Cards elegíveis: com data de entrega e não concluídos (qualquer etapa do Kanban).
- * Opcionalmente restringe à sprint da página (`sprintId`).
+ * Cards elegíveis: data de entrega preenchida, não concluídos, atribuídos ao solicitante,
+ * projeto numa sprint da janela ativa (calendário + fechamento, alinhado ao Dashboard).
  */
 export function filterCardsEligibleForDueDateRequest(
   cards: CardType[],
-  options?: { sprintId?: string | null },
+  options: { allowedSprintIds: Set<string>; requesterUserId: string },
 ): CardType[] {
-  const sid = options?.sprintId;
-  const restrictSprint = sid != null && String(sid).length > 0;
+  const allowed = options.allowedSprintIds;
+  const uid = String(options.requesterUserId);
 
   return cards.filter((c) => {
     if (!c.data_fim) return false;
     if (['finalizado', 'inviabilizado'].includes(c.status)) return false;
+    if (!c.responsavel || String(c.responsavel) !== uid) return false;
+    if (isSuggestionProjeto(c)) return false;
 
-    if (restrictSprint) {
-      const sprintRef = c.projeto_detail?.sprint;
-      if (!sprintRef || String(sprintRef) !== String(sid)) return false;
-    }
+    const sprintRef = c.projeto_detail?.sprint;
+    if (!sprintRef) return false;
+    if (allowed.size === 0) return false;
+    if (!allowed.has(String(sprintRef))) return false;
 
     return true;
   });
@@ -56,7 +65,6 @@ type Props = {
   onOpenChange: (open: boolean) => void;
   preselectedCardId?: string | null;
   onCreated?: () => void;
-  sprintId?: string | null;
 };
 
 export function RequestDueDateChangeModal({
@@ -64,11 +72,11 @@ export function RequestDueDateChangeModal({
   onOpenChange,
   preselectedCardId,
   onCreated,
-  sprintId = null,
 }: Props) {
   const { user } = useAuth();
   const [loadingCards, setLoadingCards] = useState(false);
   const [cards, setCards] = useState<CardType[]>([]);
+  const [hasActiveSprintWindow, setHasActiveSprintWindow] = useState(false);
 
   const [selectedCardId, setSelectedCardId] = useState<string>('');
   const [requestedDate, setRequestedDate] = useState<string>('');
@@ -90,11 +98,18 @@ export function RequestDueDateChangeModal({
     void (async () => {
       setLoadingCards(true);
       try {
-        const data = await cardService.getByResponsavel(String(user.id));
+        const [sprints, data] = await Promise.all([
+          sprintService.getAll().catch(() => []),
+          cardService.getByResponsavel(String(user.id)),
+        ]);
+        const allowedSprintIds = getSprintIdsEmAndamentoJanela(sprints);
+        setHasActiveSprintWindow(allowedSprintIds.size > 0);
+
         const list = Array.isArray(data) ? data : [];
-        const eligible = filterCardsEligibleForDueDateRequest(list, { sprintId }).sort((a, b) =>
-          (a.nome || '').localeCompare(b.nome || '', 'pt-BR'),
-        );
+        const eligible = filterCardsEligibleForDueDateRequest(list, {
+          allowedSprintIds,
+          requesterUserId: String(user.id),
+        }).sort((a, b) => (a.nome || '').localeCompare(b.nome || '', 'pt-BR'));
         setCards(eligible);
         const pre = preselectedCardId ? String(preselectedCardId) : '';
         if (pre && eligible.some((c) => String(c.id) === pre)) {
@@ -105,11 +120,12 @@ export function RequestDueDateChangeModal({
       } catch (e) {
         setCards([]);
         setSelectedCardId('');
+        setHasActiveSprintWindow(false);
       } finally {
         setLoadingCards(false);
       }
     })();
-  }, [open, user?.id, sprintId, preselectedCardId]);
+  }, [open, user?.id, preselectedCardId]);
 
   const selectedCard = useMemo(() => {
     return cards.find((c) => String(c.id) === String(selectedCardId)) || null;
@@ -220,8 +236,8 @@ export function RequestDueDateChangeModal({
         <DialogHeader>
           <DialogTitle>Solicitar reajuste de data</DialogTitle>
           <DialogDescription>
-            Escolha um dos seus cards não concluídos que tenham data de entrega (qualquer etapa)
-            {sprintId ? ', desta sprint' : ''}. Informe a nova data; o motivo é opcional.
+            Escolha um dos seus cards não concluídos com data de entrega, pertencentes à sprint atual em
+            andamento (janela entre início e fechamento). Informe a nova data; o motivo é opcional.
           </DialogDescription>
         </DialogHeader>
 
@@ -232,8 +248,9 @@ export function RequestDueDateChangeModal({
               <p className="text-sm text-[var(--color-muted-foreground)] py-3">Carregando cards...</p>
             ) : cards.length === 0 ? (
               <p className="text-sm text-[var(--color-muted-foreground)]">
-                Nenhum card não concluído com data de entrega
-                {sprintId ? ' nesta sprint' : ''}.
+                {!hasActiveSprintWindow
+                  ? 'Não há sprint em andamento no calendário neste momento (fora da janela entre início e fechamento ou sem sprint ativa).'
+                  : 'Nenhum dos seus cards nesta sprint em andamento está elegível: precisa ter data de entrega, estar atribuído a você e não estar finalizado ou inviabilizado.'}
               </p>
             ) : (
               <div
@@ -277,17 +294,11 @@ export function RequestDueDateChangeModal({
                                 </span>
                               </span>
                               {atrasado ? (
-                                <Badge
-                                  variant="secondary"
-                                  className="border border-rose-500/30 bg-rose-500/[0.12] text-[10px] px-1.5 py-0 font-medium text-rose-800 dark:border-rose-400/25 dark:bg-rose-500/15 dark:text-rose-200"
-                                >
+                                <Badge variant="outline" className={ATRASADO_STATUS_BADGE}>
                                   Atrasado
                                 </Badge>
                               ) : (
-                                <Badge
-                                  variant="secondary"
-                                  className="border border-emerald-600/25 bg-emerald-600/10 text-[10px] px-1.5 py-0 text-emerald-800 dark:text-emerald-200"
-                                >
+                                <Badge variant="outline" className={EM_DIA_STATUS_BADGE}>
                                   Em dia
                                 </Badge>
                               )}

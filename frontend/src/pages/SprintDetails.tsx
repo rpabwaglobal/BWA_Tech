@@ -75,6 +75,7 @@ import {
   Filter,
 } from 'lucide-react';
 import { calcularDiasTotais, calcularDiasUteis, formatDate, formatDateTime } from '@/lib/dateUtils';
+import { ATRASADO_STATUS_BADGE } from '@/lib/dueDateBadgeClasses';
 import {
   fechamentoIsoToDatetimeLocal,
   datetimeLocalToFechamentoIso,
@@ -2020,7 +2021,7 @@ export default function SprintDetails() {
             </div>
             <div className="flex items-center gap-[8px]">
               {isCardLateForSprintView(card) ? (
-                <Badge variant="destructive" className="text-[10px] px-[6px] py-0 shrink-0">
+                <Badge variant="outline" className={ATRASADO_STATUS_BADGE}>
                   Atrasado
                 </Badge>
               ) : card.status === 'parado_pendencias' ? (
@@ -3767,7 +3768,6 @@ export default function SprintDetails() {
               open={dueDateRequestOpen}
               onOpenChange={setDueDateRequestOpen}
               preselectedCardId={editingCard?.id || null}
-              sprintId={sprintId ?? null}
               onCreated={() => {
                 void loadData();
               }}

@@ -82,6 +82,7 @@ import {
   FolderInput,
 } from 'lucide-react';
 import { formatDate, formatDateTime, isCardAtrasado, calcularDiasTotais, calcularDiasUteis } from '@/lib/dateUtils';
+import { ATRASADO_STATUS_BADGE } from '@/lib/dueDateBadgeClasses';
 import { sprintFimDiaParaCalendario, sprintInicioDiaParaCalendario } from '@/lib/sprintFechamento';
 import { CardLogsModal, CARD_TIMELINE_LAYOUT_RESERVE_PX } from '@/components/CardLogsModal';
 import { PendenciaModal } from '@/components/PendenciaModal';
@@ -245,7 +246,7 @@ function DragOverlayCard({
           </div>
           <div className="flex items-center gap-[8px]">
             {isCardAtrasado(card) ? (
-              <Badge variant="destructive" className="text-[10px] px-[6px] py-0 shrink-0">
+              <Badge variant="outline" className={ATRASADO_STATUS_BADGE}>
                 Atrasado
               </Badge>
             ) : card.status === 'parado_pendencias' ? (
@@ -564,7 +565,7 @@ function KanbanCard({
           </div>
           <div className="flex items-center gap-[8px]">
             {isCardAtrasado(card) ? (
-              <Badge variant="destructive" className="text-[10px] px-[6px] py-0 shrink-0">
+              <Badge variant="outline" className={ATRASADO_STATUS_BADGE}>
                 Atrasado
               </Badge>
             ) : card.status === 'parado_pendencias' ? (
@@ -3244,7 +3245,6 @@ export default function ProjectDetails() {
               open={dueDateRequestOpen}
               onOpenChange={setDueDateRequestOpen}
               preselectedCardId={editingCard?.id || null}
-              sprintId={sprint?.id ?? null}
               onCreated={() => {
                 void loadData();
               }}

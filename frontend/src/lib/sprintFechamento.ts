@@ -1,3 +1,5 @@
+import type { Sprint } from '@/services/sprintService';
+
 /** ISO de fechamento (API) → valor para input `datetime-local` no fuso local */
 export function fechamentoIsoToDatetimeLocal(iso: string | undefined | null): string {
   if (!iso) return '';
@@ -45,4 +47,25 @@ export function sprintInicioDiaParaCalendario(s: { data_inicio?: string | null }
   if (Number.isNaN(d.getTime())) return '';
   const pad = (n: number) => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+/**
+ * Sprints com janela ativa (mesma regra do Dashboard): não finalizada,
+ * o dia de hoje já é em ou após o início (meia-noite local) e o instante atual ainda não passou de `fechamento_em`.
+ */
+export function getSprintsEmAndamentoJanela(sprints: Sprint[]): Sprint[] {
+  const now = new Date();
+  return sprints.filter((sprint) => {
+    if (sprint.finalizada) return false;
+    const start = new Date(sprint.data_inicio);
+    start.setHours(0, 0, 0, 0);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const fechamento = new Date(sprint.fechamento_em);
+    return today >= start && now <= fechamento;
+  });
+}
+
+export function getSprintIdsEmAndamentoJanela(sprints: Sprint[]): Set<string> {
+  return new Set(getSprintsEmAndamentoJanela(sprints).map((s) => String(s.id)));
 }
