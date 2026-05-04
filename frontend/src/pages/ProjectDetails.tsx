@@ -3,6 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { DateInput } from '@/components/ui/date-input';
@@ -57,6 +58,7 @@ import {
   ArrowUp,
   ArrowUpDown,
   FolderKanban,
+  Zap,
   User,
   Calendar,
   Loader2,
@@ -78,8 +80,8 @@ import {
   CheckSquare,
   FolderInput,
 } from 'lucide-react';
-import { formatDate, formatDateTime, isCardAtrasado } from '@/lib/dateUtils';
-import { sprintFimDiaParaCalendario } from '@/lib/sprintFechamento';
+import { formatDate, formatDateTime, isCardAtrasado, calcularDiasTotais, calcularDiasUteis } from '@/lib/dateUtils';
+import { sprintFimDiaParaCalendario, sprintInicioDiaParaCalendario } from '@/lib/sprintFechamento';
 import { CardLogsModal } from '@/components/CardLogsModal';
 import { PendenciaModal } from '@/components/PendenciaModal';
 import { ConclusaoModal } from '@/components/ConclusaoModal';
@@ -722,6 +724,8 @@ export default function ProjectDetails() {
   const [bulkMoveCardsSprints, setBulkMoveCardsSprints] = useState<Sprint[]>([]);
   const [bulkMoveCardsProjects, setBulkMoveCardsProjects] = useState<Project[]>([]);
   const [bulkMoveCardsCatalogLoading, setBulkMoveCardsCatalogLoading] = useState(false);
+  /** Modal mover: primeiro escolhe sprint, depois a lista de sprints é substituída pelos projetos */
+  const [bulkMoveWizardStep, setBulkMoveWizardStep] = useState<'sprint' | 'project'>('sprint');
 
   // Estimador de complexidade
   const [showTimeEstimator, setShowTimeEstimator] = useState(false);
@@ -2105,6 +2109,7 @@ export default function ProjectDetails() {
     if (movableIds.length < selectedKanbanCardIds.length) {
       setSelectedKanbanCardIds(movableIds);
     }
+    setBulkMoveWizardStep('sprint');
     setBulkMoveCardsForm({ sprint: '', projeto: '' });
     setBulkMoveCardsError('');
     setBulkMoveCardsDialogOpen(true);
@@ -3487,14 +3492,32 @@ export default function ProjectDetails() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={bulkMoveCardsDialogOpen} onOpenChange={setBulkMoveCardsDialogOpen}>
-        <DialogContent className="max-h-[90vh] max-w-[min(100vw-2rem,720px)] overflow-y-auto">
+      <Dialog
+        open={bulkMoveCardsDialogOpen}
+        onOpenChange={(open) => {
+          setBulkMoveCardsDialogOpen(open);
+          if (!open) {
+            setBulkMoveWizardStep('sprint');
+            setBulkMoveCardsForm({ sprint: '', projeto: '' });
+            setBulkMoveCardsError('');
+          }
+        }}
+        containerClassName="w-full max-w-3xl px-3 sm:px-4"
+      >
+        <DialogContent className="max-h-[85vh] w-full overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Mover {selectedKanbanCardIds.length} card(s)</DialogTitle>
             <DialogDescription>
-              Escolha a sprint e o projeto de destino. O status atual de cada card é mantido (o projeto de destino precisa
-              ter a mesma etapa no Kanban). Apenas cards fora das etapas <strong>Finalizado</strong> e{' '}
-              <strong>Inviabilizado</strong> entram neste movimento.
+              {bulkMoveWizardStep === 'sprint' ? (
+                <>
+                  Escolha a <strong>sprint</strong> de destino. Em seguida você escolhe o projeto na mesma janela.
+                </>
+              ) : (
+                <>
+                  Escolha o <strong>projeto</strong> de destino. O status de cada card é mantido (o projeto precisa ter a
+                  mesma etapa no Kanban). Apenas cards fora de <strong>Finalizado</strong> e <strong>Inviabilizado</strong>.
+                </>
+              )}
             </DialogDescription>
           </DialogHeader>
 
@@ -3504,71 +3527,142 @@ export default function ProjectDetails() {
               Carregando sprints e projetos…
             </div>
           ) : (
-            <div className="mt-4 space-y-6">
-              <div>
-                <h4 className="mb-2 text-sm font-semibold text-[var(--color-foreground)]">1. Sprint de destino</h4>
-                <div className="max-h-[280px] space-y-2 overflow-y-auto pr-1">
-                  {bulkMoveCardsSprints.map((sp) => {
-                    const selected = String(bulkMoveCardsForm.sprint) === String(sp.id);
-                    return (
-                      <button
-                        key={sp.id}
-                        type="button"
-                        onClick={() => setBulkMoveCardsForm({ sprint: sp.id, projeto: '' })}
-                        className={cn(
-                          'w-full rounded-lg border p-3 text-left text-sm transition-colors',
-                          selected
-                            ? 'border-[var(--color-primary)] bg-[var(--color-accent)] ring-2 ring-[var(--color-primary)]'
-                            : 'border-[var(--color-border)] hover:bg-[var(--color-accent)]',
-                        )}
-                      >
-                        <div className="font-medium text-[var(--color-foreground)]">{sp.nome}</div>
-                        <dl className="mt-2 grid gap-1 text-[var(--color-muted-foreground)] sm:grid-cols-2">
-                          <div>
-                            <dt className="text-xs uppercase tracking-wide">Início</dt>
-                            <dd>{formatDate(sp.data_inicio)}</dd>
-                          </div>
-                          <div>
-                            <dt className="text-xs uppercase tracking-wide">Fechamento</dt>
-                            <dd>{formatDate(sp.fechamento_em)}</dd>
-                          </div>
-                          <div>
-                            <dt className="text-xs uppercase tracking-wide">Fim (calendário)</dt>
-                            <dd>{formatDate(sprintFimDiaParaCalendario(sp))}</dd>
-                          </div>
-                          <div>
-                            <dt className="text-xs uppercase tracking-wide">Duração (dias)</dt>
-                            <dd>{sp.duracao_dias}</dd>
-                          </div>
-                          <div className="sm:col-span-2">
-                            <dt className="text-xs uppercase tracking-wide">Supervisor</dt>
-                            <dd>{sp.supervisor_name ?? getBulkMoveUserLabel(sp.supervisor)}</dd>
-                          </div>
-                          <div>
-                            <dt className="text-xs uppercase tracking-wide">Finalizada</dt>
-                            <dd>{sp.finalizada ? 'Sim' : 'Não'}</dd>
-                          </div>
-                        </dl>
-                      </button>
-                    );
-                  })}
+            <div className="mt-4 space-y-4">
+              {bulkMoveWizardStep === 'sprint' ? (
+                <div>
+                  <h4 className="mb-3 text-sm font-semibold text-[var(--color-foreground)]">Sprint de destino</h4>
+                  <div className="flex max-h-[min(70vh,640px)] flex-col gap-[16px] overflow-y-auto pr-1">
+                    {bulkMoveCardsSprints.map((sp) => {
+                      const status = bulkMoveSprintCardStatus(sp);
+                      const sprintProjectsCount = bulkMoveCardsProjects.filter(
+                        (p) => String(p.sprint || '') === String(sp.id),
+                      ).length;
+                      const inicioDia = sprintInicioDiaParaCalendario(sp);
+                      const fimDia = sprintFimDiaParaCalendario(sp);
+                      return (
+                        <Card
+                          key={sp.id}
+                          role="button"
+                          tabIndex={0}
+                          className="group relative w-full min-w-0 cursor-pointer transition-shadow hover:shadow-md"
+                          onClick={() => {
+                            setBulkMoveCardsForm({ sprint: sp.id, projeto: '' });
+                            setBulkMoveWizardStep('project');
+                          }}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' || e.key === ' ') {
+                              e.preventDefault();
+                              setBulkMoveCardsForm({ sprint: sp.id, projeto: '' });
+                              setBulkMoveWizardStep('project');
+                            }
+                          }}
+                        >
+                          <CardHeader className="overflow-visible p-[16px] pb-[8px]">
+                            <div className="flex min-w-0 items-start gap-[16px] overflow-visible">
+                              <div className="flex h-[40px] w-[40px] shrink-0 items-center justify-center rounded-[8px] bg-[var(--color-primary)]/10">
+                                <Zap className="h-[20px] w-[20px] text-[var(--color-primary)]" />
+                              </div>
+                              <div className="min-w-0 flex-1 overflow-visible">
+                                <CardTitle className="break-words text-lg leading-snug">{sp.nome}</CardTitle>
+                                <div className="mt-[8px] flex flex-wrap items-center gap-2">
+                                  {sp.finalizada ? (
+                                    <Badge variant="secondary" className="shrink-0">
+                                      Finalizada
+                                    </Badge>
+                                  ) : (
+                                    <Badge variant={status.variant} className="max-w-full whitespace-normal">
+                                      {status.label}
+                                    </Badge>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                          </CardHeader>
+                          <CardContent className="space-y-2 overflow-visible p-[16px] pt-0">
+                            <div className="flex min-w-0 items-start gap-2 text-sm text-[var(--color-muted-foreground)]">
+                              <User className="mt-0.5 h-4 w-4 shrink-0 text-[var(--color-muted-foreground)]" />
+                              <span className="min-w-0 flex-1 break-words leading-snug">
+                                Criado por: {sp.supervisor_name ?? getBulkMoveUserLabel(sp.supervisor)}
+                              </span>
+                            </div>
+                            <div className="flex min-w-0 items-start gap-2 text-sm text-[var(--color-muted-foreground)]">
+                              <Calendar className="mt-0.5 h-4 w-4 shrink-0 text-[var(--color-muted-foreground)]" />
+                              <span className="min-w-0 flex-1 break-words leading-snug">
+                                {formatDateTime(sp.data_inicio)} → {formatDateTime(sp.fechamento_em)}
+                              </span>
+                            </div>
+                            <div className="flex min-w-0 items-start gap-2 text-sm text-[var(--color-muted-foreground)]">
+                              <Clock className="mt-0.5 h-4 w-4 shrink-0 text-[var(--color-muted-foreground)]" />
+                              <span className="min-w-0 flex-1 break-words leading-snug">
+                                Criada em: {formatDateTime(sp.created_at ?? '')}
+                              </span>
+                            </div>
+                            <div className="flex min-w-0 items-start gap-2 text-sm text-[var(--color-muted-foreground)]">
+                              <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-[var(--color-muted-foreground)]" />
+                              <span className="min-w-0 flex-1 break-words leading-snug">
+                                Fechada em:{' '}
+                                {sp.finalizada && sp.updated_at
+                                  ? formatDateTime(sp.updated_at)
+                                  : 'Sprint aberta'}
+                              </span>
+                            </div>
+                            {inicioDia && fimDia && (
+                              <div className="flex min-w-0 items-start gap-2 text-sm text-[var(--color-muted-foreground)]">
+                                <Clock className="mt-0.5 h-4 w-4 shrink-0 text-[var(--color-muted-foreground)]" />
+                                <span className="min-w-0 flex-1 break-words leading-snug">
+                                  Duração: {calcularDiasTotais(inicioDia, fimDia)} dias (
+                                  {calcularDiasUteis(inicioDia, fimDia)} úteis)
+                                </span>
+                              </div>
+                            )}
+                            <div className="flex min-w-0 items-start gap-2 text-sm text-[var(--color-muted-foreground)]">
+                              <FolderKanban className="mt-0.5 h-4 w-4 shrink-0 text-[var(--color-muted-foreground)]" />
+                              <span className="min-w-0 flex-1 break-words leading-snug">
+                                {sprintProjectsCount} projetos
+                              </span>
+                            </div>
+                          </CardContent>
+                        </Card>
+                      );
+                    })}
+                  </div>
                 </div>
-              </div>
-
-              <div>
-                <h4 className="mb-2 text-sm font-semibold text-[var(--color-foreground)]">2. Projeto de destino</h4>
-                {!bulkMoveCardsForm.sprint ? (
-                  <p className="text-sm text-[var(--color-muted-foreground)]">Selecione uma sprint acima.</p>
-                ) : (
-                  <div className="max-h-[320px] space-y-2 overflow-y-auto pr-1">
+              ) : (
+                <div>
+                  <div className="mb-3 flex flex-wrap items-center gap-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="shrink-0"
+                      onClick={() => {
+                        setBulkMoveWizardStep('sprint');
+                        setBulkMoveCardsForm({ sprint: '', projeto: '' });
+                        setBulkMoveCardsError('');
+                      }}
+                    >
+                      <ArrowLeft className="h-4 w-4 mr-2" />
+                      Outra sprint
+                    </Button>
+                    <h4 className="text-sm font-semibold text-[var(--color-foreground)]">
+                      Projeto de destino
+                      {(() => {
+                        const sn = bulkMoveCardsSprints.find((s) => String(s.id) === String(bulkMoveCardsForm.sprint));
+                        return sn ? (
+                          <span className="ml-1 font-normal text-[var(--color-muted-foreground)]">
+                            — {sn.nome}
+                          </span>
+                        ) : null;
+                      })()}
+                    </h4>
+                  </div>
+                  <div className="max-h-[min(60vh,420px)] space-y-2 overflow-y-auto pr-1">
                     {bulkMoveCardsProjects
                       .filter((p) => String(p.sprint || '') === String(bulkMoveCardsForm.sprint))
-                      .filter((p) => p.nome !== 'Sugestões')
+                      .filter((p) => p.nome !== 'Sugestões' && p.nome !== 'Suporte')
                       .filter((p) => String(p.id) !== String(project?.id))
                       .map((p) => {
                         const selected = String(bulkMoveCardsForm.projeto) === String(p.id);
-                        const sprintNome =
-                          p.sprint_name ?? bulkMoveCardsSprints.find((s) => String(s.id) === String(p.sprint))?.nome;
                         return (
                           <button
                             key={p.id}
@@ -3581,48 +3675,15 @@ export default function ProjectDetails() {
                                 : 'border-[var(--color-border)] hover:bg-[var(--color-accent)]',
                             )}
                           >
-                            <div className="font-medium text-[var(--color-foreground)]">{p.nome}</div>
-                            <dl className="mt-2 grid gap-1 text-[var(--color-muted-foreground)] sm:grid-cols-2">
-                              <div className="sm:col-span-2">
-                                <dt className="text-xs uppercase tracking-wide">Descrição</dt>
-                                <dd className="whitespace-pre-wrap break-words">{p.descricao || '—'}</dd>
-                              </div>
-                              <div>
-                                <dt className="text-xs uppercase tracking-wide">Status</dt>
-                                <dd>{p.status_display || p.status}</dd>
-                              </div>
-                              <div>
-                                <dt className="text-xs uppercase tracking-wide">Sprint (nome)</dt>
-                                <dd>{sprintNome ?? '—'}</dd>
-                              </div>
-                              <div>
-                                <dt className="text-xs uppercase tracking-wide">Gerente</dt>
-                                <dd>{p.gerente_name ?? getBulkMoveUserLabel(p.gerente_atribuido)}</dd>
-                              </div>
-                              <div>
-                                <dt className="text-xs uppercase tracking-wide">Desenvolvedor</dt>
-                                <dd>{p.desenvolvedor_name ?? getBulkMoveUserLabel(p.desenvolvedor)}</dd>
-                              </div>
-                              <div>
-                                <dt className="text-xs uppercase tracking-wide">Criação</dt>
-                                <dd>
-                                  {p.data_criacao
-                                    ? formatDate(p.data_criacao)
-                                    : p.created_at
-                                      ? formatDate(p.created_at)
-                                      : '—'}
-                                </dd>
-                              </div>
-                              <div>
-                                <dt className="text-xs uppercase tracking-wide">Cards (totais)</dt>
-                                <dd>
-                                  {p.cards_count != null ? p.cards_count : '—'}
-                                  {p.cards_entregues_count != null && (
-                                    <span className="ml-1">({p.cards_entregues_count} entregues)</span>
-                                  )}
-                                </dd>
-                              </div>
-                            </dl>
+                            <div className="font-medium text-[var(--color-foreground)] break-words">
+                              {p.nome}
+                            </div>
+                            <p className="mt-1 text-xs text-[var(--color-muted-foreground)]">
+                              Cards:{' '}
+                              <span className="font-medium text-[var(--color-foreground)]">
+                                {p.cards_count != null ? p.cards_count : '—'}
+                              </span>
+                            </p>
                           </button>
                         );
                       })}
@@ -3630,6 +3691,7 @@ export default function ProjectDetails() {
                       (p) =>
                         String(p.sprint || '') === String(bulkMoveCardsForm.sprint) &&
                         p.nome !== 'Sugestões' &&
+                        p.nome !== 'Suporte' &&
                         String(p.id) !== String(project?.id),
                     ).length === 0 && (
                       <p className="text-sm text-[var(--color-muted-foreground)]">
@@ -3637,8 +3699,8 @@ export default function ProjectDetails() {
                       </p>
                     )}
                   </div>
-                )}
-              </div>
+                </div>
+              )}
 
               {bulkMoveCardsError && (
                 <div className="rounded-lg border border-red-200 bg-red-50 p-2 text-sm text-[var(--color-destructive)]">
@@ -3660,7 +3722,12 @@ export default function ProjectDetails() {
             <Button
               type="button"
               onClick={() => void handleBulkMoveKanbanCardsSubmit()}
-              disabled={bulkMoveCardsLoading || bulkMoveCardsCatalogLoading}
+              disabled={
+                bulkMoveCardsLoading ||
+                bulkMoveCardsCatalogLoading ||
+                bulkMoveWizardStep === 'sprint' ||
+                !bulkMoveCardsForm.projeto
+              }
             >
               {bulkMoveCardsLoading ? (
                 <>
@@ -3738,6 +3805,26 @@ export default function ProjectDetails() {
       />
     </div>
   );
+}
+
+/** Mesmo critério de badge da lista «Sprints finalizadas» em Sprints.tsx */
+function bulkMoveSprintCardStatus(sprint: Sprint): {
+  label: string;
+  variant: 'secondary' | 'outline' | 'default';
+} {
+  if (sprint.finalizada) {
+    return { label: 'Finalizada', variant: 'secondary' };
+  }
+  const startMs = new Date(sprint.data_inicio).getTime();
+  const endMs = new Date(sprint.fechamento_em).getTime();
+  const nowMs = Date.now();
+  if (nowMs < startMs) {
+    return { label: 'Planejada', variant: 'secondary' };
+  }
+  if (nowMs > endMs) {
+    return { label: 'Prazo encerrado', variant: 'outline' };
+  }
+  return { label: 'Em andamento', variant: 'default' };
 }
 
 function normalizeProjectName(value: string) {
