@@ -982,9 +982,11 @@ class CardDueDateChangeRequestViewSet(viewsets.ModelViewSet):
                 return Response({'detail': 'Card não possui data_fim atual.'}, status=status.HTTP_400_BAD_REQUEST)
 
             old_dt = card.data_fim
-            new_dt = datetime.combine(req.requested_date, old_dt.time())
-            if timezone.is_aware(old_dt):
-                new_dt = timezone.make_aware(new_dt, old_dt.tzinfo or timezone.get_current_timezone())
+            new_dt = req.requested_date
+            if timezone.is_naive(new_dt):
+                new_dt = timezone.make_aware(new_dt, timezone.get_current_timezone())
+            if old_dt and timezone.is_aware(old_dt) and timezone.is_aware(new_dt):
+                new_dt = new_dt.astimezone(old_dt.tzinfo)
 
             card.data_fim = new_dt
             card.save()

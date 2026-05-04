@@ -1,5 +1,5 @@
 import * as React from "react";
-import { Calendar, Clock, X } from "lucide-react";
+import { Calendar, Clock } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -14,6 +14,8 @@ export interface DateTimePickerProps
   value?: string; // YYYY-MM-DDTHH:mm format
   onChange?: (e: React.ChangeEvent<HTMLInputElement>) => void;
   suggestedDate?: string; // YYYY-MM-DDTHH:mm format - Data sugerida baseada em dias úteis
+  /** Título do diálogo (calendário + hora). */
+  pickerTitle?: string;
 }
 
 // Converte YYYY-MM-DDTHH:mm para DD/MM/YYYY HH:mm
@@ -62,7 +64,7 @@ const parseISO = (isoDateTime: string): Date | null => {
 };
 
 const DateTimePicker = React.forwardRef<HTMLInputElement, DateTimePickerProps>(
-  ({ className, value = '', onChange, disabled, suggestedDate, ...props }, ref) => {
+  ({ className, value = '', onChange, disabled, suggestedDate, pickerTitle = 'Selecionar data e hora', ...props }, ref) => {
     const [isOpen, setIsOpen] = React.useState(false);
     const [selectedDate, setSelectedDate] = React.useState<Date | null>(() => {
       const parsed = parseISO(value);
@@ -281,13 +283,14 @@ const DateTimePicker = React.forwardRef<HTMLInputElement, DateTimePickerProps>(
             readOnly
             placeholder="Clique para selecionar data e hora"
             className={cn(
-              "flex h-[40px] w-full rounded-[8px] border border-[var(--color-input)] bg-[var(--color-background)] px-[16px] pr-[80px] py-[8px] text-sm ring-offset-background",
-              "placeholder:text-[var(--color-muted-foreground)]",
-              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-ring)] focus-visible:ring-offset-2",
-              "disabled:cursor-not-allowed disabled:opacity-50",
-              "cursor-pointer",
-              !displayValue && "text-[var(--color-muted-foreground)]",
-              displayValue && "text-[var(--color-foreground)]",
+              'flex h-[42px] w-full rounded-[10px] border border-[var(--color-input)] bg-[var(--color-card)] px-[14px] pr-[80px] py-[8px] text-sm shadow-sm ring-offset-[var(--color-background)] transition-[box-shadow,border-color]',
+              'placeholder:text-[var(--color-muted-foreground)]',
+              'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-ring)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-background)]',
+              'hover:border-[var(--color-muted-foreground)]/35',
+              'disabled:cursor-not-allowed disabled:opacity-50',
+              'cursor-pointer',
+              !displayValue && 'text-[var(--color-muted-foreground)]',
+              displayValue && 'text-[var(--color-foreground)] font-medium',
               className
             )}
             value={displayValue || ''}
@@ -299,20 +302,23 @@ const DateTimePicker = React.forwardRef<HTMLInputElement, DateTimePickerProps>(
             type="button"
             onClick={() => !disabled && setIsOpen(true)}
             disabled={disabled}
-            className="absolute right-[12px] top-1/2 -translate-y-1/2 text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)] transition-colors disabled:opacity-50"
+            className="absolute right-[12px] top-1/2 -translate-y-1/2 text-[var(--color-muted-foreground)] transition-colors hover:text-[var(--color-foreground)] disabled:opacity-50"
             title="Escolher data e hora"
           >
-            <Calendar className="h-[20px] w-[20px]" />
+            <Calendar className="h-[20px] w-[20px] shrink-0" aria-hidden />
           </button>
         </div>
 
         <Dialog open={isOpen} onOpenChange={setIsOpen}>
-          <DialogContent className="max-w-[500px] p-0" onClose={() => setIsOpen(false)}>
-            <DialogHeader className="p-6 pb-4">
-              <DialogTitle>Selecionar Data e Hora</DialogTitle>
+          <DialogContent
+            className="max-w-[min(100vw-24px,520px)] gap-0 overflow-hidden rounded-[12px] border border-[var(--color-border)] bg-[var(--color-popover)] p-0 text-[var(--color-popover-foreground)] shadow-lg"
+            onClose={() => setIsOpen(false)}
+          >
+            <DialogHeader className="border-b border-[var(--color-border)] bg-[var(--color-muted)]/25 px-6 py-4">
+              <DialogTitle className="text-base font-semibold">{pickerTitle}</DialogTitle>
             </DialogHeader>
 
-            <div className="p-6 pt-0 space-y-6">
+            <div className="space-y-6 px-6 py-5">
               {/* Calendário */}
               <div className="space-y-4">
                 <div className="flex items-center justify-between">
@@ -363,19 +369,28 @@ const DateTimePicker = React.forwardRef<HTMLInputElement, DateTimePickerProps>(
                       onClick={() => day !== null && handleDayClick(day)}
                       disabled={day === null}
                       className={cn(
-                        "h-9 w-9 rounded-[8px] text-sm transition-colors",
-                        day === null && "cursor-default",
-                        day !== null && "hover:bg-[var(--color-accent)]",
-                        // Data de hoje (verde claro - início)
-                        isToday(day, currentMonth) && "bg-green-100 text-green-700 font-semibold",
-                        // Data selecionada (azul escuro)
-                        isSelected(day, currentMonth) && "bg-blue-600 text-white font-semibold hover:bg-blue-700",
-                        // Data sugerida (contorno azul com azul claro no meio)
-                        isSuggested(day, currentMonth) && !isSelected(day, currentMonth) && "border-2 border-blue-500 bg-blue-100 text-blue-700 font-semibold",
-                        // Datas no intervalo (azul claro)
-                        isInRange(day, currentMonth) && !isSelected(day, currentMonth) && !isSuggested(day, currentMonth) && !isToday(day, currentMonth) && "bg-blue-100 text-blue-800",
-                        // Outras datas
-                        !isSelected(day, currentMonth) && !isToday(day, currentMonth) && !isSuggested(day, currentMonth) && !isInRange(day, currentMonth) && "text-[var(--color-foreground)]"
+                        'h-9 w-9 rounded-[8px] text-sm transition-colors',
+                        day === null && 'cursor-default',
+                        day !== null && 'hover:bg-[var(--color-accent)]',
+                        isSelected(day, currentMonth) &&
+                          'bg-[var(--color-primary)] font-semibold text-[var(--color-primary-foreground)] shadow-sm hover:bg-[var(--color-primary)]/92',
+                        isToday(day, currentMonth) &&
+                          !isSelected(day, currentMonth) &&
+                          'border border-emerald-500/45 bg-emerald-500/12 font-semibold text-emerald-900 dark:border-emerald-400/40 dark:bg-emerald-500/18 dark:text-emerald-100',
+                        isSuggested(day, currentMonth) &&
+                          !isSelected(day, currentMonth) &&
+                          'border-2 border-[var(--color-primary)]/55 bg-[var(--color-primary)]/12 font-semibold text-[var(--color-foreground)]',
+                        isInRange(day, currentMonth) &&
+                          !isSelected(day, currentMonth) &&
+                          !isSuggested(day, currentMonth) &&
+                          !isToday(day, currentMonth) &&
+                          'bg-[var(--color-muted)]/90 text-[var(--color-foreground)] dark:bg-[var(--color-muted)]/50',
+                        !isSelected(day, currentMonth) &&
+                          !isToday(day, currentMonth) &&
+                          !isSuggested(day, currentMonth) &&
+                          !isInRange(day, currentMonth) &&
+                          day !== null &&
+                          'text-[var(--color-foreground)]',
                       )}
                     >
                       {day}
@@ -384,33 +399,33 @@ const DateTimePicker = React.forwardRef<HTMLInputElement, DateTimePickerProps>(
                 </div>
                 
                 {/* Legenda */}
-                <div className="flex flex-wrap items-center justify-center gap-3 pt-2 border-t border-[var(--color-border)]">
+                <div className="flex flex-wrap items-center justify-center gap-x-3 gap-y-2 border-t border-[var(--color-border)] pt-3">
                   <div className="flex items-center gap-2">
-                    <div className="h-4 w-4 rounded bg-green-100 border border-green-300"></div>
-                    <span className="text-xs text-[var(--color-muted-foreground)]">Inicio</span>
+                    <div className="h-3.5 w-3.5 shrink-0 rounded border border-emerald-500/50 bg-emerald-500/15 dark:bg-emerald-500/25" />
+                    <span className="text-xs text-[var(--color-muted-foreground)]">Hoje</span>
                   </div>
-                  <span className="text-xs text-gray-400">|</span>
+                  <span className="text-xs text-[var(--color-border)]">|</span>
                   <div className="flex items-center gap-2">
-                    <div className="h-4 w-4 rounded bg-blue-100"></div>
+                    <div className="h-3.5 w-3.5 shrink-0 rounded bg-[var(--color-muted)]/90 dark:bg-[var(--color-muted)]/50" />
                     <span className="text-xs text-[var(--color-muted-foreground)]">Intervalo</span>
                   </div>
-                  <span className="text-xs text-gray-400">|</span>
+                  <span className="text-xs text-[var(--color-border)]">|</span>
                   <div className="flex items-center gap-2">
-                    <div className="h-4 w-4 rounded bg-blue-100 border-2 border-blue-500"></div>
-                    <span className="text-xs text-[var(--color-muted-foreground)]">Entrega Sugerida</span>
+                    <div className="h-3.5 w-3.5 shrink-0 rounded border-2 border-[var(--color-primary)]/70 bg-[var(--color-primary)]/15" />
+                    <span className="text-xs text-[var(--color-muted-foreground)]">Sugerida</span>
                   </div>
-                  <span className="text-xs text-gray-400">|</span>
+                  <span className="text-xs text-[var(--color-border)]">|</span>
                   <div className="flex items-center gap-2">
-                    <div className="h-4 w-4 rounded bg-blue-600"></div>
-                    <span className="text-xs text-[var(--color-muted-foreground)]">Entrega Selecionada</span>
+                    <div className="h-3.5 w-3.5 shrink-0 rounded bg-[var(--color-primary)] shadow-sm" />
+                    <span className="text-xs text-[var(--color-muted-foreground)]">Selecionada</span>
                   </div>
                 </div>
               </div>
 
               {/* Seletor de Hora */}
-              <div className="space-y-3">
-                <div className="flex items-center gap-2 text-sm font-medium text-[var(--color-foreground)]">
-                  <Clock className="h-4 w-4" />
+              <div className="rounded-[10px] border border-[var(--color-border)] bg-[var(--color-muted)]/20 p-4 dark:bg-[var(--color-muted)]/15">
+                <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-[var(--color-foreground)]">
+                  <Clock className="h-4 w-4 text-[var(--color-primary)]" aria-hidden />
                   Hora
                 </div>
                 <div className="flex items-center gap-4">
@@ -439,7 +454,7 @@ const DateTimePicker = React.forwardRef<HTMLInputElement, DateTimePickerProps>(
                           const hours = Math.max(0, Math.min(23, parseInt(e.target.value) || 0));
                           setSelectedTime({ ...selectedTime, hours });
                         }}
-                        className="flex-1 h-8 rounded-[8px] border border-[var(--color-input)] bg-[var(--color-background)] px-3 text-center text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-ring)]"
+                        className="flex-1 h-9 rounded-[8px] border border-[var(--color-input)] bg-[var(--color-background)] px-2 text-center text-sm font-medium tabular-nums text-[var(--color-foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-ring)]"
                       />
                       <Button
                         variant="outline"
@@ -454,7 +469,7 @@ const DateTimePicker = React.forwardRef<HTMLInputElement, DateTimePickerProps>(
                       </Button>
                     </div>
                   </div>
-                  <div className="text-2xl font-semibold text-[var(--color-foreground)] py-6">
+                  <div className="py-6 text-2xl font-semibold tabular-nums text-[var(--color-muted-foreground)]">
                     :
                   </div>
                   <div className="flex-1">
@@ -482,7 +497,7 @@ const DateTimePicker = React.forwardRef<HTMLInputElement, DateTimePickerProps>(
                           const minutes = Math.max(0, Math.min(59, parseInt(e.target.value) || 0));
                           setSelectedTime({ ...selectedTime, minutes });
                         }}
-                        className="flex-1 h-8 rounded-[8px] border border-[var(--color-input)] bg-[var(--color-background)] px-3 text-center text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-ring)]"
+                        className="flex-1 h-9 rounded-[8px] border border-[var(--color-input)] bg-[var(--color-background)] px-2 text-center text-sm font-medium tabular-nums text-[var(--color-foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-ring)]"
                       />
                       <Button
                         variant="outline"
@@ -501,7 +516,7 @@ const DateTimePicker = React.forwardRef<HTMLInputElement, DateTimePickerProps>(
               </div>
 
               {/* Botões de ação */}
-              <div className="flex items-center justify-between gap-3 pt-4 border-t border-[var(--color-border)]">
+              <div className="flex items-center justify-between gap-3 border-t border-[var(--color-border)] pt-4">
                 <Button
                   variant="outline"
                   onClick={handleClear}

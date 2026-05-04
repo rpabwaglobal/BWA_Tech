@@ -574,7 +574,7 @@ class CardDueDateChangeRequest(models.Model):
     """
     Solicitação de alteração de data de entrega (data_fim) do card.
 
-    Avaliada por supervisor/admin. Em aprovação, a hora é preservada e somente o dia é alterado.
+    Avaliada por supervisor/admin. Em aprovação, a data e hora solicitadas passam a ser o novo data_fim.
     """
     card = models.ForeignKey(
         Card,
@@ -588,7 +588,7 @@ class CardDueDateChangeRequest(models.Model):
         related_name='due_date_change_requests_created',
         verbose_name='Solicitado Por'
     )
-    requested_date = models.DateField(verbose_name='Nova Data Solicitada')
+    requested_date = models.DateTimeField(verbose_name='Nova data e hora solicitada')
     reason = models.TextField(blank=True, null=True, verbose_name='Motivo')
     status = models.CharField(
         max_length=20,

@@ -5,13 +5,13 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { DatePicker } from '@/components/ui/date-picker';
+import { DateTimePicker } from '@/components/ui/datetime-picker';
 import { cardService, CARD_STATUSES, type Card as CardType } from '@/services/cardService';
 import { cardDateChangeRequestService } from '@/services/cardDateChangeRequestService';
 import { sprintService } from '@/services/sprintService';
 import { formatDateTime } from '@/lib/dateUtils';
 import { ATRASADO_STATUS_BADGE, EM_DIA_STATUS_BADGE } from '@/lib/dueDateBadgeClasses';
-import { getSprintIdsEmAndamentoJanela } from '@/lib/sprintFechamento';
+import { fechamentoIsoToDatetimeLocal, getSprintIdsEmAndamentoJanela } from '@/lib/sprintFechamento';
 import { cn } from '@/lib/utils';
 
 /** Compara só a data local (início do dia) para “em dia” / “atrasado” em qualquer etapa ativa. */
@@ -22,6 +22,14 @@ function isEntregaAtrasada(card: CardType): boolean {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   return end < today;
+}
+
+/** Formato aceito pelo backend (datetime ISO local com segundos). */
+function requestedDatetimeForApi(local: string): string {
+  const t = local.trim();
+  if (!t) return '';
+  if (/T\d{2}:\d{2}$/.test(t)) return `${t}:00`;
+  return t;
 }
 
 function cardStageLabel(card: CardType): string {
@@ -140,7 +148,7 @@ export function RequestDueDateChangeModal({
     try {
       await cardDateChangeRequestService.create({
         card: String(selectedCardId),
-        requested_date: requestedDate,
+        requested_date: requestedDatetimeForApi(requestedDate),
         reason: reason?.trim() ? reason.trim() : null,
       });
       onOpenChange(false);
@@ -237,7 +245,7 @@ export function RequestDueDateChangeModal({
           <DialogTitle>Solicitar reajuste de data</DialogTitle>
           <DialogDescription>
             Escolha um dos seus cards não concluídos com data de entrega, pertencentes à sprint atual em
-            andamento (janela entre início e fechamento). Informe a nova data; o motivo é opcional.
+            andamento (janela entre início e fechamento). Informe a nova data e hora; o motivo é opcional.
           </DialogDescription>
         </DialogHeader>
 
@@ -345,12 +353,17 @@ export function RequestDueDateChangeModal({
           </div>
 
           <div className="space-y-2">
-            <Label>Nova data de entrega</Label>
-            <DatePicker
+            <Label htmlFor="due-date-request-datetime">Nova data e hora de entrega</Label>
+            <DateTimePicker
+              id="due-date-request-datetime"
+              pickerTitle="Nova data e hora de entrega"
               value={requestedDate}
               onChange={(e) => setRequestedDate(e.target.value)}
-              title="Selecionar nova data de entrega"
-              placeholder="Clique para selecionar a data"
+              suggestedDate={
+                selectedCard?.data_fim ? fechamentoIsoToDatetimeLocal(selectedCard.data_fim) : undefined
+              }
+              disabled={saving}
+              className="border-[var(--color-border)]"
             />
           </div>
 

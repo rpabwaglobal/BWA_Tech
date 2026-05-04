@@ -20,7 +20,7 @@ import { cardService, CARD_AREAS, CARD_TYPES, CARD_PRIORITIES, CARD_STATUSES, ty
 import { sprintService, type Sprint } from '@/services/sprintService';
 import { userService, type User } from '@/services/userService';
 import { kanbanStageService, type KanbanStage } from '@/services/kanbanStageService';
-import { formatDate } from '@/lib/dateUtils';
+import { formatDate, formatDateTime } from '@/lib/dateUtils';
 import { sprintFimDiaParaCalendario } from '@/lib/sprintFechamento';
 import {
   Plus,
@@ -955,7 +955,7 @@ export default function Projects() {
                               </span>
                               <ArrowRight className="h-4 w-4 text-[var(--color-muted-foreground)]" />
                               <span className="whitespace-nowrap">
-                                Nova data: {formatDate(req.requested_date)}
+                                Nova data/hora: {formatDateTime(req.requested_date)}
                               </span>
                             </div>
                             {req.reason && (

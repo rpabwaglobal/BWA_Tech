@@ -7,7 +7,7 @@ export type CardDueDateChangeRequest = {
   card_detail?: Card;
   requested_by: string;
   requested_by_name?: string | null;
-  requested_date: string; // YYYY-MM-DD
+  requested_date: string; // ISO / datetime (nova data e hora de entrega)
   reason?: string | null;
   status: 'pending' | 'approved' | 'rejected';
   status_display?: string;
