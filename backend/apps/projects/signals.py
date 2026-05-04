@@ -2,7 +2,19 @@ from django.db.models.signals import pre_save, post_save, post_delete
 from django.dispatch import receiver
 from django.contrib.auth import get_user_model
 from django.db import transaction
-from .models import Card, Sprint, Project, CardLog, CardLogEventType, Notification, NotificationType, CardTodo
+from django.utils import timezone
+
+from .models import (
+    Card,
+    Sprint,
+    Project,
+    CardLog,
+    CardLogEventType,
+    Notification,
+    NotificationType,
+    CardTodo,
+    CardStatus,
+)
 from .notification_utils import send_notification, send_notification_to_multiple_users
 
 User = get_user_model()
@@ -53,6 +65,13 @@ def card_pre_save(sender, instance, **kwargs):
     else:
         instance._previous_status = None
         instance._previous_data = None
+
+    # Última vez que o card passou a finalizado (não confundir com updated_at).
+    if instance.status == CardStatus.FINALIZADO:
+        if instance._previous_status != CardStatus.FINALIZADO:
+            instance.finalizado_em = timezone.now()
+    elif instance._previous_status == CardStatus.FINALIZADO:
+        instance.finalizado_em = None
 
 
 @receiver(pre_save, sender=User)

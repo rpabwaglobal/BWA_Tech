@@ -311,6 +311,12 @@ class Card(models.Model):
     )
     data_inicio = models.DateTimeField(null=True, blank=True, verbose_name='Data de Início')
     data_fim = models.DateTimeField(null=True, blank=True, verbose_name='Data de Fim')
+    finalizado_em = models.DateTimeField(
+        null=True,
+        blank=True,
+        verbose_name='Finalizado em',
+        help_text='Instante em que o card passou a finalizado pela última vez (métricas de prazo).',
+    )
     # Campos para estimativa de complexidade
     complexidade_selected_items = models.JSONField(
         default=list,

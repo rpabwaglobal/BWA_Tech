@@ -48,6 +48,8 @@ export type Card = {
   prioridade_display?: string;
   data_inicio?: string | null;
   data_fim?: string | null;
+  /** Instant em que o card passou a finalizado pela última vez (API). */
+  finalizado_em?: string | null;
   complexidade_selected_items?: string[];
   complexidade_selected_development?: string | null;
   complexidade_custom_items?: Array<{ id: string; label: string; hours: number }>;

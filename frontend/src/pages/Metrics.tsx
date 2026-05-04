@@ -577,12 +577,15 @@ export default function Metrics() {
   const onTimeTable = useMemo(() => {
     const byUser = new Map<string, { total: number; onTime: number }>();
     for (const card of closedCardsForOnTime) {
-      const sprint = getSprintForCard(card);
-      if (!sprint || !card.data_fim || !card.responsavel) continue;
+      if (!getSprintForCard(card) || !card.data_fim || !card.responsavel) continue;
       const uid = String(card.responsavel);
-      const sprintEnd = new Date(sprint.fechamento_em).getTime();
-      const delivery = new Date(card.data_fim).getTime();
-      const onTime = delivery <= sprintEnd;
+      const scheduledEnd = new Date(card.data_fim).getTime();
+      const completedAt = card.finalizado_em
+        ? new Date(card.finalizado_em).getTime()
+        : card.updated_at
+          ? new Date(card.updated_at).getTime()
+          : scheduledEnd;
+      const onTime = completedAt <= scheduledEnd;
       const cur = byUser.get(uid) ?? { total: 0, onTime: 0 };
       cur.total += 1;
       if (onTime) cur.onTime += 1;
@@ -1426,7 +1429,7 @@ export default function Metrics() {
                 Consistência de entrega
               </CardTitle>
               <CardDescription>
-                Percentual de cards entregues dentro do prazo da sprint. Meta: 80% para permanecer na gincana.
+                Percentual de cards concluídos até a data e hora de entrega agendadas no card (campo de fim). A entrega real usa o instante em que o card passou a finalizado pela última vez. Meta: 80% para permanecer na gincana.
               </CardDescription>
             </div>
             <div className="flex flex-wrap gap-4 pt-2">

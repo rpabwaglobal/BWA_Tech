@@ -580,10 +580,10 @@ class CardSerializer(serializers.ModelSerializer):
                  'responsavel', 'responsavel_name', 'responsavel_profile_picture_url', 
                  'criado_por', 'criado_por_name', 'criado_por_profile_picture_url',
                  'status', 'status_display', 'prioridade', 'prioridade_display',
-                 'data_inicio', 'data_fim',
+                 'data_inicio', 'data_fim', 'finalizado_em',
                  'complexidade_selected_items', 'complexidade_selected_development', 'complexidade_custom_items',
                  'card_comment', 'todos', 'events_count', 'created_at', 'updated_at']
-        read_only_fields = ['created_at', 'updated_at', 'criado_por']
+        read_only_fields = ['created_at', 'updated_at', 'criado_por', 'finalizado_em']
 
 
 class EventSerializer(serializers.ModelSerializer):
