@@ -110,6 +110,14 @@ function isSpecialProjectName(value?: string | null): boolean {
   return n === 'suporte' || n === 'sugestoes' || n === 'projetos descartados';
 }
 
+/** Quando o card foi de fato entregue (finalizado): finalizado_em ou, em último caso, updated_at. */
+function getCardDeliveryDate(card: CardType): Date | null {
+  const raw = card.finalizado_em || card.updated_at;
+  if (!raw) return null;
+  const d = new Date(raw);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
 export default function Metrics() {
   const { user: authUser } = useAuth();
   const isSupervisor = authUser?.role === 'supervisor' || authUser?.role === 'admin';
@@ -539,20 +547,26 @@ export default function Metrics() {
       const sprintId = String(onTimeSprint);
       list = list.filter((c) => String(getSprintForCard(c)?.id) === sprintId);
     } else if (onTimeScope === 'year') {
-      list = list.filter((c) => c.data_fim && new Date(c.data_fim).getFullYear() === onTimeYear);
+      list = list.filter((c) => {
+        const d = getCardDeliveryDate(c);
+        return d != null && d.getFullYear() === onTimeYear;
+      });
     } else if (onTimeScope === 'month') {
-      list = list.filter(
-        (c) =>
-          c.data_fim &&
-          new Date(c.data_fim).getFullYear() === onTimeMonthYear &&
-          new Date(c.data_fim).getMonth() + 1 === onTimeMonth
-      );
+      list = list.filter((c) => {
+        const d = getCardDeliveryDate(c);
+        return (
+          d != null &&
+          d.getFullYear() === onTimeMonthYear &&
+          d.getMonth() + 1 === onTimeMonth
+        );
+      });
     } else if (onTimeScope === 'interval' && onTimeStartDate && onTimeEndDate) {
       const start = new Date(onTimeStartDate).setHours(0, 0, 0, 0);
       const end = new Date(onTimeEndDate).setHours(23, 59, 59, 999);
       list = list.filter((c) => {
-        if (!c.data_fim) return false;
-        const t = new Date(c.data_fim).getTime();
+        const d = getCardDeliveryDate(c);
+        if (!d) return false;
+        const t = d.getTime();
         return t >= start && t <= end;
       });
     } else if (onTimeScope === 'users' && onTimeScopeUserIds.length > 0) {
