@@ -133,6 +133,20 @@ function isSpecialProjectName(value?: string | null): boolean {
   return n === 'suporte' || n === 'sugestoes' || n === 'projetos descartados';
 }
 
+/** ID da sprint do card para filtros (string), mesmo se `sprints` no cliente não tiver essa entrada. */
+function resolveCardSprintId(card: CardType, projects: Project[]): string | null {
+  const fromNested =
+    card.projeto_detail?.sprint_detail?.id ?? card.projeto_detail?.sprint;
+  if (fromNested != null && String(fromNested).trim() !== '') {
+    return String(fromNested);
+  }
+  const p = projects.find((pr) => String(pr.id) === String(card.projeto));
+  if (p?.sprint != null && String(p.sprint).trim() !== '') {
+    return String(p.sprint);
+  }
+  return null;
+}
+
 /** Quando o card foi de fato entregue (finalizado): finalizado_em ou, em último caso, updated_at. */
 function getCardDeliveryDate(card: CardType): Date | null {
   const raw = card.finalizado_em || card.updated_at;
@@ -360,9 +374,26 @@ export default function Metrics() {
   }, [projects]);
 
   const getSprintForCard = (card: CardType): Sprint | null => {
-    const fromDetail = card.projeto_detail?.sprint_detail;
-    if (fromDetail) {
-      return sprints.find((s) => String(s.id) === String(fromDetail.id)) ?? null;
+    const nested = card.projeto_detail?.sprint_detail;
+    if (nested?.id != null && String(nested.id).trim() !== '') {
+      const match = sprints.find((s) => String(s.id) === String(nested.id));
+      if (match) return match;
+      return {
+        id: String(nested.id),
+        nome: nested.nome ?? '',
+        data_inicio: nested.data_inicio,
+        fechamento_em: nested.fechamento_em,
+        duracao_dias: nested.duracao_dias ?? 0,
+        supervisor: nested.supervisor ?? '',
+        finalizada: nested.finalizada,
+        data_fim: nested.data_fim,
+        supervisor_name: nested.supervisor_name,
+      };
+    }
+    const sprintFk = card.projeto_detail?.sprint;
+    if (sprintFk != null && String(sprintFk).trim() !== '') {
+      const match = sprints.find((s) => String(s.id) === String(sprintFk));
+      if (match) return match;
     }
     return projectToSprint.get(String(card.projeto)) ?? null;
   };
@@ -391,7 +422,8 @@ export default function Metrics() {
   const cardsPerUserData = useMemo(() => {
     let list = closedCards;
     if (cardsSprintFilter) {
-      list = list.filter((c) => getSprintForCard(c)?.id === cardsSprintFilter);
+      const want = String(cardsSprintFilter);
+      list = list.filter((c) => resolveCardSprintId(c, projects) === want);
     }
     if (cardsTypeFilter) {
       list = list.filter((c) => c.tipo === cardsTypeFilter);
@@ -426,7 +458,7 @@ export default function Metrics() {
     const result = [...withCount.sort((a, b) => b.count - a.count)];
     if (semResponsavel) result.push(semResponsavel);
     return result;
-  }, [closedCards, cardsSprintFilter, cardsTypeFilter, users]);
+  }, [closedCards, cardsSprintFilter, cardsTypeFilter, users, projects]);
 
   const heatmapData = useMemo(() => {
     const bySprintDay = new Map<string, Map<number, CardType[]>>();
@@ -584,7 +616,8 @@ export default function Metrics() {
   const leaderboardData = useMemo(() => {
     let list = closedCards.filter((c) => c.responsavel != null && c.responsavel !== '');
     if (leaderboardScope === 'sprint' && leaderboardSprint) {
-      list = list.filter((c) => getSprintForCard(c)?.id === leaderboardSprint);
+      const want = String(leaderboardSprint);
+      list = list.filter((c) => resolveCardSprintId(c, projects) === want);
     } else if (leaderboardScope === 'year') {
       list = list.filter((c) => c.data_fim && new Date(c.data_fim).getFullYear() === leaderboardYear);
     } else if (leaderboardScope === 'month') {
@@ -670,13 +703,14 @@ export default function Metrics() {
     leaderboardSelectedUserIds,
     leaderboardLimit,
     users,
+    projects,
   ]);
 
   const closedCardsForOnTime = useMemo(() => {
     let list = closedCards.filter((c) => c.responsavel != null && c.responsavel !== '');
     if (onTimeScope === 'sprint' && onTimeSprint) {
       const sprintId = String(onTimeSprint);
-      list = list.filter((c) => String(getSprintForCard(c)?.id) === sprintId);
+      list = list.filter((c) => resolveCardSprintId(c, projects) === sprintId);
     } else if (onTimeScope === 'year') {
       list = list.filter((c) => {
         const d = getCardDeliveryDate(c);
@@ -717,6 +751,7 @@ export default function Metrics() {
     onTimeStartDate,
     onTimeEndDate,
     onTimeScopeUserIds,
+    projects,
   ]);
 
   const onTimeTable = useMemo(() => {
