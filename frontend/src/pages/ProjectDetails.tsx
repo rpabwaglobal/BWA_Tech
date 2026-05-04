@@ -623,7 +623,7 @@ export default function ProjectDetails() {
   const [users, setUsers] = useState<UserType[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // Configuração de etapas (Kanban) do projeto - apenas supervisor
+  // Configuração de etapas (Kanban) do projeto - supervisor ou admin
   const [configProjectDialogOpen, setConfigProjectDialogOpen] = useState(false);
   const [configLoading, setConfigLoading] = useState(false);
   const [globalStages, setGlobalStages] = useState<KanbanStageType[]>([]);
@@ -1620,7 +1620,7 @@ export default function ProjectDetails() {
   };
 
   const openConfigProjectDialog = async () => {
-    if (user?.role !== 'supervisor') return;
+    if (user?.role !== 'supervisor' && user?.role !== 'admin') return;
     setConfigProjectDialogOpen(true);
     setConfigLoading(true);
     try {
@@ -2140,8 +2140,8 @@ export default function ProjectDetails() {
                     </label>
                   </DropdownMenuContent>
                 </DropdownMenu>
-                {/* Configurar Projeto (somente supervisor) */}
-                {user?.role === 'supervisor' && (
+                {/* Configurar Projeto (supervisor ou admin) */}
+                {(user?.role === 'supervisor' || user?.role === 'admin') && (
                   <Button
                     variant="outline"
                     size="icon"
@@ -2918,7 +2918,7 @@ export default function ProjectDetails() {
         </DialogContent>
       </Dialog>
 
-      {/* Configurar Projeto (supervisor) - Etapas do Kanban */}
+      {/* Configurar Projeto (supervisor/admin) - Etapas do Kanban */}
       <Dialog
         open={configProjectDialogOpen}
         onOpenChange={(open) => {

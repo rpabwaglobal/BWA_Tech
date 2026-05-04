@@ -111,7 +111,7 @@ export default function Projects() {
   const [projectFormLoading, setProjectFormLoading] = useState(false);
   const [projectFormError, setProjectFormError] = useState('');
 
-  // Seleção de etapas iniciais ao criar projeto (somente supervisor)
+  // Seleção de etapas iniciais ao criar projeto (supervisor ou admin)
   const DEFAULT_STAGE_KEYS_ORDER = ['a_desenvolver', 'em_desenvolvimento', 'parado_pendencias', 'em_homologacao', 'finalizado', 'inviabilizado'];
   const [projectStageSelectionLoading, setProjectStageSelectionLoading] = useState(false);
   const [projectGlobalStages, setProjectGlobalStages] = useState<KanbanStage[]>([]);
@@ -229,7 +229,7 @@ export default function Projects() {
     });
     setProjectFormError('');
 
-    if (user?.role === 'supervisor') {
+    if (user?.role === 'supervisor' || user?.role === 'admin') {
       setProjectStageSelectionLoading(true);
       try {
         const global = await kanbanStageService.getAll();
@@ -277,8 +277,8 @@ export default function Projects() {
       } else {
         const created = await projectService.create(projectFormData);
 
-        // Se for supervisor e ele escolheu etapas iniciais, aplicamos a configuração
-        if (user?.role === 'supervisor' && selectedStageKeys?.length && created?.id) {
+        // Se for supervisor/admin e escolheu etapas iniciais, aplicamos a configuração
+        if ((user?.role === 'supervisor' || user?.role === 'admin') && selectedStageKeys?.length && created?.id) {
           try {
             const selectedSet = new Set(selectedStageKeys);
             const defaultKeys = DEFAULT_STAGE_KEYS_ORDER;
@@ -1839,8 +1839,8 @@ export default function Projects() {
               </select>
             </div>
 
-            {/* Etapas iniciais (somente supervisor) */}
-            {user?.role === 'supervisor' && !editingProject && (
+            {/* Etapas iniciais (supervisor ou admin) */}
+            {(user?.role === 'supervisor' || user?.role === 'admin') && !editingProject && (
               <div className="space-y-[8px]">
                 <Label>Etapas iniciais do Kanban</Label>
                 {projectStageSelectionLoading ? (
