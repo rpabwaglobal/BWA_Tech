@@ -191,16 +191,18 @@ const UserNode = ({ data }: { data: { user: User; role: string } }) => {
           {user.profile_picture_url ? (
             <AvatarImage src={user.profile_picture_url} alt={getDisplayName(user)} />
           ) : null}
-          <AvatarFallback>
+          <AvatarFallback className="bg-white/80 font-semibold text-neutral-900">
             {getDisplayName(user).charAt(0) || 'U'}
           </AvatarFallback>
         </Avatar>
         <div className="text-center">
-          <div className={`${(isDev || isDados || isProcessos) ? 'font-medium text-sm' : 'font-semibold'} text-[var(--color-foreground)]`}>
+          <div
+            className={`${(isDev || isDados || isProcessos) ? 'font-medium text-sm' : 'font-semibold'} text-neutral-900`}
+          >
             {getDisplayName(user)}
           </div>
           {!(isDev || isDados || isProcessos) && (
-            <div className="text-xs text-[var(--color-muted-foreground)] mt-1">
+            <div className="mt-1 text-xs text-neutral-700">
               {user.email}
             </div>
           )}
