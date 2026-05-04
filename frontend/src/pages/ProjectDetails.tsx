@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
 import { Button } from '@/components/ui/button';
@@ -703,6 +703,10 @@ export default function ProjectDetails() {
   const [activeCard, setActiveCard] = useState<CardType | null>(null);
   
   // Card dialog state
+  /** Evita aplicar estado de aberturas concorrentes (clique + useEffect do deep link). */
+  const openCardGenerationRef = useRef(0);
+  /** Enquanto true, não abrir pelo deep link (ex.: após fechar, até a URL perder /card/:id). */
+  const suppressCardDeepLinkRef = useRef(false);
   const [cardDialogOpen, setCardDialogOpen] = useState(false);
 
   // Delete/Alert dialogs
@@ -908,9 +912,10 @@ export default function ProjectDetails() {
   const [cardSearchQuery, setCardSearchQuery] = useState<string>('');
 
   useEffect(() => {
-    if (id) {
-      loadData();
-    }
+    if (!id) return;
+    setLoading(true);
+    setCards([]);
+    void loadData();
   }, [id]);
 
   useEffect(() => {
@@ -1216,6 +1221,7 @@ export default function ProjectDetails() {
     setPendingStatusChange(null);
     const routeProjectId = id || editingCard?.projeto;
     if (routeProjectId && cardId) {
+      suppressCardDeepLinkRef.current = true;
       navigate(ROUTES.projeto(String(routeProjectId)), { replace: true });
     }
   };
@@ -1602,9 +1608,15 @@ export default function ProjectDetails() {
       return;
     }
 
+    if (!options?.skipUrlSync) {
+      suppressCardDeepLinkRef.current = false;
+    }
+
     if (!options?.skipUrlSync && projectKey) {
       navigate(ROUTES.projetoCard(projectKey, String(card.id)), { replace: true });
     }
+
+    const gen = ++openCardGenerationRef.current;
 
     // Buscar o card completo do servidor para garantir que temos todos os dados atualizados
     let fullCard = card;
@@ -1614,9 +1626,17 @@ export default function ProjectDetails() {
       console.error('Erro ao carregar card completo:', error);
       // Se falhar, usar o card do estado local
     }
+
+    if (gen !== openCardGenerationRef.current) return;
+
+    if (id && String(fullCard.projeto) !== String(id)) {
+      navigate(ROUTES.projetoCard(String(fullCard.projeto), String(fullCard.id)), { replace: true });
+      return;
+    }
     
     // Permitir abrir para visualização sempre
     setEditingCard(fullCard);
+    setCardDialogOpen(true);
     // Abrir modal de logs quando o card é aberto
     setLogsModalOpen(true);
     
@@ -1692,7 +1712,6 @@ export default function ProjectDetails() {
     }
     
     setCardFormError('');
-    setCardDialogOpen(true);
   };
 
   const openCreateCardDialog = () => {
@@ -1705,6 +1724,7 @@ export default function ProjectDetails() {
     setLogsModalOpen(false);
 
     if (id && cardId) {
+      suppressCardDeepLinkRef.current = true;
       navigate(ROUTES.projeto(id), { replace: true });
     }
 
@@ -1736,15 +1756,26 @@ export default function ProjectDetails() {
 
   // Link direto: /projeto/:id/card/:cardId abre o formulário do card
   useEffect(() => {
-    if (!id || !cardId || cards.length === 0) return;
+    if (!id || cards.length === 0 || loading) return;
+
+    if (!cardId) {
+      suppressCardDeepLinkRef.current = false;
+      return;
+    }
+
+    if (suppressCardDeepLinkRef.current) {
+      return;
+    }
+
     if (cardDialogOpen && editingCard && String(editingCard.id) === String(cardId)) return;
     const card = cards.find((c) => String(c.id) === String(cardId));
     if (!card) {
-      navigate(ROUTES.projeto(id), { replace: true });
+      suppressCardDeepLinkRef.current = true;
+      navigate(ROUTES.projeto(String(id)), { replace: true });
       return;
     }
     void openEditCardDialog(card, { skipUrlSync: true });
-  }, [id, cardId, cards, cardDialogOpen, editingCard]);
+  }, [id, cardId, cards, cardDialogOpen, editingCard, loading]);
 
   const normalizeStagesFromApi = (apiStages: any[] | undefined | null): ProjectStage[] => {
     if (!apiStages || !apiStages.length) return DEFAULT_PROJECT_STAGES;

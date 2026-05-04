@@ -207,6 +207,10 @@ export default function SprintDetails() {
   });
 
   // Card dialog state
+  /** Evita aplicar estado de aberturas concorrentes (clique + useEffect do deep link). */
+  const openCardGenerationRef = useRef(0);
+  /** Enquanto true, não abrir pelo deep link até a URL perder /card/:id. */
+  const suppressCardDeepLinkRef = useRef(false);
   const [cardDialogOpen, setCardDialogOpen] = useState(false);
   const [logsModalOpen, setLogsModalOpen] = useState(false);
   const [logsRefreshTrigger, setLogsRefreshTrigger] = useState(0);
@@ -415,7 +419,8 @@ export default function SprintDetails() {
       } catch {
         setSelectedColumnIds(SPRINT_CARDS_COLUMN_IDS);
       }
-      loadData();
+      setCards([]);
+      void loadData();
     }
   }, [sprintId]);
 
@@ -938,6 +943,7 @@ export default function SprintDetails() {
     setLogsModalOpen(false);
     const sid = sprintId?.trim();
     if (sid && cardId) {
+      suppressCardDeepLinkRef.current = true;
       navigate(ROUTES.sprintPorId(sid), { replace: true });
     }
   };
@@ -952,6 +958,7 @@ export default function SprintDetails() {
     setLogsModalOpen(false);
     const sid = sprintId?.trim();
     if (sid && cardId) {
+      suppressCardDeepLinkRef.current = true;
       navigate(ROUTES.sprintPorId(sid), { replace: true });
     }
     setEditingCard(null);
@@ -1012,9 +1019,15 @@ export default function SprintDetails() {
       return;
     }
 
+    if (!options?.skipUrlSync) {
+      suppressCardDeepLinkRef.current = false;
+    }
+
     if (!options?.skipUrlSync && sid) {
       navigate(ROUTES.sprintCard(sid, String(card.id)), { replace: true });
     }
+
+    const gen = ++openCardGenerationRef.current;
 
     // Buscar o card completo do servidor para garantir que temos todos os dados atualizados
     let fullCard = card;
@@ -1024,10 +1037,22 @@ export default function SprintDetails() {
       console.error('Erro ao carregar card completo:', error);
       // Se falhar, usar o card do estado local
     }
-    
+
+    if (gen !== openCardGenerationRef.current) return;
+
+    if (
+      sid &&
+      projects.length > 0 &&
+      !projects.some((p) => String(p.id) === String(fullCard.projeto))
+    ) {
+      navigate(ROUTES.projetoCard(String(fullCard.projeto), String(fullCard.id)), { replace: true });
+      return;
+    }
+
     // Permitir abrir para visualização sempre
     setEditingCard(fullCard);
     setSelectedProjectForCard(fullCard.projeto);
+    setCardDialogOpen(true);
     setLogsModalOpen(true); // Abrir modal de logs quando card for aberto
     
     // Se o card está em desenvolvimento e não tem data_inicio, preencher automaticamente
@@ -1104,21 +1129,31 @@ export default function SprintDetails() {
     }
     
     setCardFormError('');
-    setCardDialogOpen(true);
   };
 
   // Link direto: /sprint/:sprintId/card/:cardId
   useEffect(() => {
     const sid = sprintId?.trim();
-    if (!sid || !cardId || cards.length === 0) return;
+    if (!sid || cards.length === 0 || loading) return;
+
+    if (!cardId) {
+      suppressCardDeepLinkRef.current = false;
+      return;
+    }
+
+    if (suppressCardDeepLinkRef.current) {
+      return;
+    }
+
     if (cardDialogOpen && editingCard && String(editingCard.id) === String(cardId)) return;
     const card = cards.find((c) => String(c.id) === String(cardId));
     if (!card) {
+      suppressCardDeepLinkRef.current = true;
       navigate(ROUTES.sprintPorId(sid), { replace: true });
       return;
     }
     void openEditCardDialog(null, card, { skipUrlSync: true });
-  }, [sprintId, cardId, cards, cardDialogOpen, editingCard]);
+  }, [sprintId, cardId, cards, cardDialogOpen, editingCard, loading]);
 
   // Função auxiliar para obter label do status
   const getStageLabel = (status: string): string => {

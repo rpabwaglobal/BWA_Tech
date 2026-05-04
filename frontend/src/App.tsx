@@ -31,6 +31,16 @@ function LegacySprintPorIdRedirect() {
   return <Navigate to={ROUTES.sprintPorId(sprintId!)} replace />;
 }
 
+function LegacyProjectCardRedirect() {
+  const { id, cardId } = useParams();
+  return <Navigate to={ROUTES.projetoCard(id!, cardId!)} replace />;
+}
+
+function LegacySprintCardRedirect() {
+  const { sprintId, cardId } = useParams();
+  return <Navigate to={ROUTES.sprintCard(sprintId!, cardId!)} replace />;
+}
+
 function PrivateRoute({ children }: { children: React.ReactNode }) {
   const { isAuthenticated, loading } = useAuth();
 
@@ -103,6 +113,7 @@ function AppRoutes() {
         <Route path="iteracoes" element={<Navigate to={ROUTES.sprint} replace />} />
         <Route path="iteracao/:sprintId" element={<LegacySprintPorIdRedirect />} />
         <Route path="sprints" element={<Navigate to={ROUTES.sprint} replace />} />
+        <Route path="sprints/:sprintId/card/:cardId" element={<LegacySprintCardRedirect />} />
         <Route path="sprints/:sprintId" element={<LegacySprintPorIdRedirect />} />
         <Route path="projeto/:id/card/:cardId" element={<ProjectDetails />} />
         <Route path="projeto/:id" element={<ProjectDetails />} />
@@ -127,6 +138,7 @@ function AppRoutes() {
         <Route path="geekday" element={<Navigate to={ROUTES.diaGeek} replace />} />
         <Route path="settings" element={<Navigate to={ROUTES.configuracoes} replace />} />
         <Route path="projects" element={<Navigate to={ROUTES.projetos} replace />} />
+        <Route path="projects/:id/card/:cardId" element={<LegacyProjectCardRedirect />} />
         <Route path="projects/:id" element={<LegacyProjectToProjeto />} />
       </Route>
     </Routes>
