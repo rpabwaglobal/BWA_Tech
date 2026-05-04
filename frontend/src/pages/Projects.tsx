@@ -1378,7 +1378,7 @@ export default function Projects() {
                     <Label>Link do Script</Label>
                     <div className="p-[12px] bg-[var(--color-background)] border border-[var(--color-border)] rounded-[8px]">
                       <a 
-                        href={selectedDemand.script_url} 
+                        href={normalizeExternalUrl(selectedDemand.script_url)} 
                         target="_blank" 
                         rel="noopener noreferrer"
                         className="text-[var(--color-primary)] hover:underline"

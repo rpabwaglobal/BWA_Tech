@@ -25,11 +25,17 @@ export type ProjectDetail = {
   status_display?: string;
 };
 
+export type CardLink = {
+  url: string;
+  label: string;
+};
+
 export type Card = {
   id: string; // UUID
   nome: string;
   descricao: string;
   script_url?: string | null;
+  links?: CardLink[];
   projeto: string; // UUID
   projeto_detail?: ProjectDetail;
   area: string;
@@ -76,6 +82,7 @@ export type CardCreate = {
   complexidade_selected_development?: string | null;
   complexidade_custom_items?: Array<{ id: string; label: string; hours: number }>;
   card_comment?: string | null;
+  links?: CardLink[];
 };
 
 // Opções para os campos

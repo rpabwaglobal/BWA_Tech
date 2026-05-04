@@ -343,6 +343,12 @@ class Card(models.Model):
         verbose_name='Comentário do Card',
         help_text='Comentário geral do card'
     )
+    links = models.JSONField(
+        default=list,
+        blank=True,
+        verbose_name='Links adicionais',
+        help_text='Lista de links extras: [{"url": "...", "label": "..."}]'
+    )
     created_at = models.DateTimeField(auto_now_add=True, verbose_name='Data de Criação')
     updated_at = models.DateTimeField(auto_now=True, verbose_name='Data de Atualização')
 
@@ -449,6 +455,7 @@ class CardLogEventType(models.TextChoices):
     ATUALIZADO = 'atualizado', 'Atualizado'
     ALTERACAO = 'alteracao', 'Alteração no Card'
     RESPONSAVEL_ALTERADO = 'responsavel_alterado', 'Responsável Alterado'
+    COMENTARIO = 'comentario', 'Comentário'
 
 
 class CardLog(models.Model):

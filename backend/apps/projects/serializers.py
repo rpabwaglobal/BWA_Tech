@@ -582,7 +582,7 @@ class CardSerializer(serializers.ModelSerializer):
                  'status', 'status_display', 'prioridade', 'prioridade_display',
                  'data_inicio', 'data_fim', 'finalizado_em',
                  'complexidade_selected_items', 'complexidade_selected_development', 'complexidade_custom_items',
-                 'card_comment', 'todos', 'events_count', 'created_at', 'updated_at']
+                 'card_comment', 'links', 'todos', 'events_count', 'created_at', 'updated_at']
         read_only_fields = ['created_at', 'updated_at', 'criado_por', 'finalizado_em']
 
 

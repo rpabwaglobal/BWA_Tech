@@ -8,7 +8,7 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { DateTimePicker } from '@/components/ui/datetime-picker';
 import { UserSelect } from '@/components/ui/user-select';
-import { Loader2, Check, Settings, Plus, Pencil, Trash2, X, ChevronDown, ChevronUp, AlertTriangle, AlertCircle } from 'lucide-react';
+import { Loader2, Check, Settings, Plus, Pencil, Trash2, X, ChevronDown, ChevronUp, AlertTriangle, AlertCircle, ExternalLink } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -23,7 +23,7 @@ import api from '@/services/api';
 import { cardService, type Card as CardType, CARD_AREAS, CARD_TYPES, CARD_PRIORITIES, CARD_STATUSES } from '@/services/cardService';
 import { userService, type User as UserType } from '@/services/userService';
 import { weeklyPriorityService } from '@/services/weeklyPriorityService';
-import { cn } from '@/lib/utils';
+import { cn, normalizeExternalUrl } from '@/lib/utils';
 // Formatação de data sem dependência externa
 
 type CardData = {
@@ -1083,19 +1083,47 @@ export default function Priorities() {
                 />
               </div>
 
-              <div className="space-y-[8px]">
-                <Label htmlFor="card-script_url">Link do Script</Label>
-                <Input
-                  id="card-script_url"
-                  type="url"
-                  placeholder="https://exemplo.com/script..."
-                  value={cardFormData.script_url}
-                  onChange={() => {}}
-                  disabled={true}
-                />
-                <p className="text-xs text-[var(--color-muted-foreground)]">
-                  URL para o script de confecção do projeto
-                </p>
+              <div className="space-y-[8px] rounded-lg border border-[var(--color-border)] p-[12px]">
+                <div className="space-y-[6px]">
+                  <Label>Link do Script</Label>
+                  {cardFormData.script_url ? (
+                    <a
+                      href={normalizeExternalUrl(cardFormData.script_url)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center gap-[6px] rounded-md bg-[var(--color-accent)] px-[10px] py-[6px] text-sm text-[var(--color-primary)] underline underline-offset-2 hover:opacity-75 break-all"
+                    >
+                      <ExternalLink className="h-[13px] w-[13px] shrink-0" />
+                      {cardFormData.script_url}
+                    </a>
+                  ) : (
+                    <p className="text-xs text-[var(--color-muted-foreground)]">Sem script.</p>
+                  )}
+                </div>
+
+                {selectedCard?.links && selectedCard.links.length > 0 && (
+                  <>
+                    <div className="border-t border-[var(--color-border)]" />
+                    <div className="space-y-[6px]">
+                      <Label>Links adicionais</Label>
+                      <div className="space-y-[4px]">
+                        {selectedCard.links.map((link, idx) => (
+                          <a
+                            key={idx}
+                            href={normalizeExternalUrl(link.url)}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            title={link.url}
+                            className="flex items-center gap-[6px] rounded-md bg-[var(--color-accent)] px-[10px] py-[6px] text-sm text-[var(--color-primary)] underline underline-offset-2 hover:opacity-75"
+                          >
+                            <ExternalLink className="h-[13px] w-[13px] shrink-0" />
+                            <span className="flex-1 truncate">{link.label.trim() ? link.label : link.url}</span>
+                          </a>
+                        ))}
+                      </div>
+                    </div>
+                  </>
+                )}
               </div>
 
               <div className="grid grid-cols-2 gap-[16px]">

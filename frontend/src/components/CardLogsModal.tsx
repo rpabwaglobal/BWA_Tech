@@ -1,8 +1,10 @@
-import { useEffect, useState, useMemo } from 'react';
-import { X, Loader2, Clock, User, ArrowUpDown, Filter, ArrowUp, ArrowDown } from 'lucide-react';
+import { useEffect, useState, useMemo, useRef } from 'react';
+import { X, Loader2, Clock, User, Filter, ArrowUp, ArrowDown, SendHorizontal, MessageSquare } from 'lucide-react';
 import { cardLogService, type CardLog } from '@/services/cardLogService';
-import { formatDate, formatDateTime } from '@/lib/dateUtils';
+import { formatDateTime } from '@/lib/dateUtils';
 import { Button } from './ui/button';
+import { Textarea } from './ui/textarea';
+import { useAuth } from '@/context/AuthContext';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -26,6 +28,10 @@ export function CardLogsModal({ cardId, isOpen, onClose, refreshTrigger }: CardL
   const [loading, setLoading] = useState(false);
   const [filter, setFilter] = useState<FilterType>('tudo');
   const [sortOrder, setSortOrder] = useState<SortOrder>('desc');
+  const [commentText, setCommentText] = useState('');
+  const [submittingComment, setSubmittingComment] = useState(false);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const { user } = useAuth();
 
   useEffect(() => {
     if (isOpen && cardId) {
@@ -34,6 +40,26 @@ export function CardLogsModal({ cardId, isOpen, onClose, refreshTrigger }: CardL
       setLogs([]);
     }
   }, [isOpen, cardId, refreshTrigger]);
+
+  const handleAddComment = async () => {
+    if (!commentText.trim() || !cardId || submittingComment) return;
+    setSubmittingComment(true);
+    try {
+      await cardLogService.create({
+        card: cardId,
+        tipo_evento: 'comentario',
+        descricao: commentText.trim(),
+        usuario: user?.id ?? null,
+      });
+      setCommentText('');
+      await loadLogs();
+      textareaRef.current?.focus();
+    } catch (error) {
+      console.error('Erro ao adicionar comentário:', error);
+    } finally {
+      setSubmittingComment(false);
+    }
+  };
 
   const loadLogs = async () => {
     if (!cardId) return;
@@ -209,6 +235,48 @@ export function CardLogsModal({ cardId, isOpen, onClose, refreshTrigger }: CardL
           </div>
         </div>
 
+        {/* Campo de comentário */}
+        <div className="border-b border-[var(--color-border)] p-[16px] flex-shrink-0">
+          <div className="flex items-center gap-[6px] mb-[8px]">
+            <MessageSquare className="h-[14px] w-[14px] text-[var(--color-muted-foreground)]" />
+            <span className="text-xs font-semibold text-[var(--color-muted-foreground)] uppercase tracking-wide">
+              Observação / Comentário
+            </span>
+          </div>
+          <Textarea
+            ref={textareaRef}
+            value={commentText}
+            onChange={(e) => setCommentText(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+                e.preventDefault();
+                void handleAddComment();
+              }
+            }}
+            placeholder="Adicione um comentário..."
+            className="min-h-[72px] resize-none text-sm"
+            disabled={submittingComment}
+          />
+          <div className="flex items-center justify-between mt-[8px]">
+            <span className="text-xs text-[var(--color-muted-foreground)]">
+              Ctrl+Enter para enviar
+            </span>
+            <Button
+              size="sm"
+              className="gap-[6px]"
+              disabled={!commentText.trim() || submittingComment}
+              onClick={() => void handleAddComment()}
+            >
+              {submittingComment ? (
+                <Loader2 className="h-[14px] w-[14px] animate-spin" />
+              ) : (
+                <SendHorizontal className="h-[14px] w-[14px]" />
+              )}
+              Adicionar comentário
+            </Button>
+          </div>
+        </div>
+
         {/* Content - Timeline */}
         <div className="flex-1 overflow-y-auto p-[16px]">
           {loading ? (
@@ -244,8 +312,9 @@ export function CardLogsModal({ cardId, isOpen, onClose, refreshTrigger }: CardL
                         <div className="flex items-center gap-[8px]">
                           <span className={`text-xs font-semibold px-[8px] py-[4px] rounded-full ${getTagColor(log.tipo_evento)}`}>
                             {log.tipo_evento === 'criado' ? 'Card Criado' :
-                             log.tipo_evento === 'movimentado' ? 'Card Movimentado' : 
-                             log.tipo_evento === 'alteracao' || log.tipo_evento === 'atualizado' ? 'Alteração no Card' : 
+                             log.tipo_evento === 'movimentado' ? 'Card Movimentado' :
+                             log.tipo_evento === 'comentario' ? 'Comentário' :
+                             log.tipo_evento === 'alteracao' || log.tipo_evento === 'atualizado' ? 'Alteração no Card' :
                              (log.tipo_evento_display || log.tipo_evento)}
                           </span>
                         </div>

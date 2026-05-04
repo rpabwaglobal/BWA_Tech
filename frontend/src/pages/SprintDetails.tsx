@@ -37,7 +37,7 @@ import { getTodosByArea } from '@/constants/cardTodos';
 import { CardLogsModal } from '@/components/CardLogsModal';
 import type { Sprint } from '@/services/sprintService';
 import type { Project } from '@/services/projectService';
-import type { Card as CardType } from '@/services/cardService';
+import type { Card as CardType, CardLink } from '@/services/cardService';
 import type { User as UserType } from '@/services/userService';
 import {
   Plus,
@@ -97,7 +97,7 @@ import {
   kanbanMutedChipOnPastelClass,
   kanbanScriptLinkOnPastelClass,
 } from '@/lib/priorityColors';
-import { cn } from '@/lib/utils';
+import { cn, normalizeExternalUrl } from '@/lib/utils';
 import {
   readShowPriorityColorsOnKanbanCards,
   SHOW_PRIORITY_COLORS_ON_KANBAN_CARDS_KEY,
@@ -226,6 +226,19 @@ export default function SprintDetails() {
     data_inicio: '',
     data_fim: '',
   });
+  const [cardLinks, setCardLinks] = useState<CardLink[]>([]);
+  const [newLinkUrl, setNewLinkUrl] = useState('');
+  const [newLinkLabel, setNewLinkLabel] = useState('');
+
+  const handleAddCardLink = () => {
+    if (!newLinkUrl.trim()) return;
+    setCardLinks((prev) => [...prev, { url: newLinkUrl.trim(), label: newLinkLabel.trim() }]);
+    setNewLinkUrl('');
+    setNewLinkLabel('');
+  };
+  const handleRemoveCardLink = (idx: number) => {
+    setCardLinks((prev) => prev.filter((_, i) => i !== idx));
+  };
 
   // Estado para o calculador de tempo
   const [showTimeEstimator, setShowTimeEstimator] = useState(false);
@@ -942,6 +955,9 @@ export default function SprintDetails() {
       data_inicio: '',
       data_fim: '',
     });
+    setCardLinks([]);
+    setNewLinkUrl('');
+    setNewLinkLabel('');
     // Limpar estimativas ao abrir dialog de criação
     setSelectedTimeItems(new Set());
     setSelectedDevelopment(null);
@@ -1007,6 +1023,9 @@ export default function SprintDetails() {
       data_inicio: dataInicio,
       data_fim: fullCard.data_fim || '',
     });
+    setCardLinks(fullCard.links ?? []);
+    setNewLinkUrl('');
+    setNewLinkLabel('');
     
     // Debug: log dos dados carregados do servidor
     console.log('[SprintDetails] Carregando card, dados de complexidade:', {
@@ -1090,6 +1109,13 @@ export default function SprintDetails() {
     const newScriptUrl = newData.script_url || null;
     if (oldScriptUrl !== newScriptUrl) {
       changes.push(`Link do script: "${oldScriptUrl || 'Vazio'}" → "${newScriptUrl || 'Vazio'}"`);
+    }
+
+    // Links adicionais
+    const oldLinks = JSON.stringify(oldCard.links ?? []);
+    const newLinks = JSON.stringify((newData as { links?: CardLink[] }).links ?? []);
+    if (oldLinks !== newLinks) {
+      changes.push('Links adicionais alterados');
     }
     
     // Área
@@ -1327,6 +1353,7 @@ export default function SprintDetails() {
         complexidade_selected_items: Array.from(selectedTimeItems).length > 0 ? Array.from(selectedTimeItems) : [],
         complexidade_selected_development: selectedDevelopment || null,
         complexidade_custom_items: customTimeItems.length > 0 ? customTimeItems : [],
+        links: cardLinks,
       };
       
       // Debug: log dos dados sendo enviados
@@ -1945,7 +1972,7 @@ export default function SprintDetails() {
         )}
         {card.script_url && (
           <a
-            href={card.script_url}
+            href={normalizeExternalUrl(card.script_url)}
             target="_blank"
             rel="noopener noreferrer"
             onClick={(e) => e.stopPropagation()}
@@ -3107,19 +3134,110 @@ export default function SprintDetails() {
               />
             </div>
 
-            <div className="space-y-[8px]">
-              <Label htmlFor="card-script_url">Link do Script</Label>
-              <Input
-                id="card-script_url"
-                type="url"
-                placeholder="https://exemplo.com/script..."
-                value={cardFormData.script_url}
-                onChange={(e) => setCardFormData({ ...cardFormData, script_url: e.target.value })}
-                disabled={!!(editingCard && (editingCard.status === 'finalizado' || editingCard.status === 'inviabilizado'))}
-              />
-              <p className="text-xs text-[var(--color-muted-foreground)]">
-                URL para o script de confecção do projeto
-              </p>
+            {/* ── Links do Card ─────────────────────────────────── */}
+            <div className="space-y-[12px] rounded-lg border border-[var(--color-border)] p-[12px]">
+              <div className="space-y-[6px]">
+                <Label htmlFor="card-script_url">Link do Script</Label>
+                <div className="flex items-center gap-[6px]">
+                  <Input
+                    id="card-script_url"
+                    type="url"
+                    placeholder="https://exemplo.com/script..."
+                    value={cardFormData.script_url}
+                    onChange={(e) => setCardFormData({ ...cardFormData, script_url: e.target.value })}
+                    disabled={!!(editingCard && (editingCard.status === 'finalizado' || editingCard.status === 'inviabilizado'))}
+                    className="flex-1"
+                  />
+                  {cardFormData.script_url &&
+                    !(!!(editingCard && (editingCard.status === 'finalizado' || editingCard.status === 'inviabilizado'))) && (
+                      <button
+                        type="button"
+                        onClick={() => setCardFormData({ ...cardFormData, script_url: '' })}
+                        className="shrink-0 rounded p-[4px] text-[var(--color-muted-foreground)] hover:bg-[var(--color-destructive)]/10 hover:text-[var(--color-destructive)]"
+                        title="Remover link do script"
+                      >
+                        <XCircle className="h-[16px] w-[16px]" />
+                      </button>
+                    )}
+                </div>
+                {cardFormData.script_url && (
+                  <a
+                    href={normalizeExternalUrl(cardFormData.script_url)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-[4px] text-xs text-[var(--color-primary)] underline underline-offset-2 hover:opacity-75 break-all"
+                  >
+                    <ExternalLink className="h-[11px] w-[11px] shrink-0" />
+                    {cardFormData.script_url}
+                  </a>
+                )}
+              </div>
+
+              <div className="border-t border-[var(--color-border)]" />
+
+              <div className="space-y-[6px]">
+                <Label>Links adicionais</Label>
+
+                {cardLinks.length > 0 && (
+                  <div className="space-y-[4px]">
+                    {cardLinks.map((link, idx) => (
+                      <div key={idx} className="flex items-center gap-[6px] rounded-md bg-[var(--color-accent)] px-[10px] py-[6px]">
+                        <ExternalLink className="h-[13px] w-[13px] shrink-0 text-[var(--color-primary)]" />
+                        <a
+                          href={normalizeExternalUrl(link.url)}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          title={link.url}
+                          className="flex-1 truncate text-sm text-[var(--color-primary)] underline underline-offset-2 hover:opacity-75"
+                        >
+                          {link.label.trim() ? link.label : link.url}
+                        </a>
+                        {!(!!(editingCard && (editingCard.status === 'finalizado' || editingCard.status === 'inviabilizado'))) && (
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveCardLink(idx)}
+                            className="shrink-0 rounded p-[2px] text-[var(--color-muted-foreground)] hover:bg-[var(--color-destructive)]/10 hover:text-[var(--color-destructive)]"
+                            title="Remover"
+                          >
+                            <XCircle className="h-[14px] w-[14px]" />
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {!(!!(editingCard && (editingCard.status === 'finalizado' || editingCard.status === 'inviabilizado'))) && (
+                  <div className="space-y-[6px]">
+                    <Input
+                      type="url"
+                      placeholder="URL do link (obrigatório)"
+                      value={newLinkUrl}
+                      onChange={(e) => setNewLinkUrl(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleAddCardLink(); } }}
+                    />
+                    <div className="flex gap-[6px]">
+                      <Input
+                        placeholder="Apelido (opcional)"
+                        value={newLinkLabel}
+                        onChange={(e) => setNewLinkLabel(e.target.value)}
+                        onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleAddCardLink(); } }}
+                      />
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="shrink-0 gap-[4px]"
+                        disabled={!newLinkUrl.trim()}
+                        onClick={handleAddCardLink}
+                      >
+                        <Plus className="h-[13px] w-[13px]" />
+                        Adicionar link
+                      </Button>
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
 
             <div className="grid grid-cols-2 gap-[16px]">
