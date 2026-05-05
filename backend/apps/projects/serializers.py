@@ -215,7 +215,11 @@ class CardSerializer(serializers.ModelSerializer):
     prioridade_display = serializers.CharField(source='get_prioridade_display', read_only=True)
     area_display = serializers.CharField(source='get_area_display', read_only=True)
     tipo_display = serializers.CharField(source='get_tipo_display', read_only=True)
-    events_count = serializers.IntegerField(source='events.count', read_only=True)
+    # `source='events.count'` falha: .count no RelatedManager é método, não int.
+    events_count = serializers.SerializerMethodField()
+
+    def get_events_count(self, obj):
+        return obj.events.count()
 
     # Permite status que existam em `KanbanStage` (novo sistema), mantendo compatibilidade
     # com os status legados já persistidos.

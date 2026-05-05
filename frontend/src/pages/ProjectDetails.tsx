@@ -1936,6 +1936,7 @@ export default function ProjectDetails() {
     cardSubmitInFlightRef.current = true;
     setCardFormLoading(true);
     setCardFormError('');
+    const previousCardsCount = cards.length;
     
     // Validar se a área foi selecionada
     if (!cardFormData.area || cardFormData.area.trim() === '') {
@@ -2148,6 +2149,21 @@ export default function ProjectDetails() {
       }
       closeCardDialog();
     } catch (err: any) {
+      // Cenário de produção observado: backend pode persistir o card e ainda assim responder erro.
+      // Nessa situação, reconciliamos a lista para evitar duplicidade por novo clique.
+      if (!editingCard && id) {
+        try {
+          const refreshedCards = await cardService.getByProject(id);
+          if (refreshedCards.length > previousCardsCount) {
+            setCards(refreshedCards);
+            closeCardDialog();
+            return;
+          }
+        } catch {
+          // Se a reconciliação falhar, segue para tratamento padrão de erro.
+        }
+      }
+
       const errorData = err.response?.data;
       let errorMessage = 'Erro ao salvar card';
       if (errorData) {
