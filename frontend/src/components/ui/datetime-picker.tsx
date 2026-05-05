@@ -311,225 +311,230 @@ const DateTimePicker = React.forwardRef<HTMLInputElement, DateTimePickerProps>(
 
         <Dialog open={isOpen} onOpenChange={setIsOpen}>
           <DialogContent
-            className="max-w-[min(100vw-24px,520px)] gap-0 overflow-hidden rounded-[12px] border border-[var(--color-border)] bg-[var(--color-popover)] p-0 text-[var(--color-popover-foreground)] shadow-lg"
+            className="flex max-h-[min(90dvh,640px)] max-w-[min(100vw-24px,520px)] flex-col gap-0 overflow-hidden rounded-[12px] border border-[var(--color-border)] bg-[var(--color-popover)] p-0 text-[var(--color-popover-foreground)] shadow-lg"
             onClose={() => setIsOpen(false)}
           >
-            <DialogHeader className="border-b border-[var(--color-border)] bg-[var(--color-muted)]/25 px-6 py-4">
+            <DialogHeader className="shrink-0 border-b border-[var(--color-border)] bg-[var(--color-muted)]/25 px-5 py-3 sm:px-6 sm:py-4">
               <DialogTitle className="text-base font-semibold">{pickerTitle}</DialogTitle>
             </DialogHeader>
 
-            <div className="space-y-6 px-6 py-5">
-              {/* Calendário */}
-              <div className="space-y-4">
-                <div className="flex items-center justify-between">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => navigateMonth('prev')}
-                    className="h-8 w-8 p-0"
-                  >
-                    ←
-                  </Button>
-                  <div className="flex items-center gap-2">
-                    <span className="font-semibold text-[var(--color-foreground)]">
-                      {monthNames[currentMonth.getMonth()]} {currentMonth.getFullYear()}
-                    </span>
+            <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-5 py-4 [-webkit-overflow-scrolling:touch] sm:px-6">
+              <div className="space-y-4 pb-1">
+                {/* Calendário */}
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between gap-2">
                     <Button
-                      variant="ghost"
+                      variant="outline"
                       size="sm"
-                      onClick={goToToday}
-                      className="h-7 px-2 text-xs"
+                      onClick={() => navigateMonth('prev')}
+                      className="h-7 w-7 shrink-0 p-0"
                     >
-                      Hoje
+                      ←
+                    </Button>
+                    <div className="flex min-w-0 flex-wrap items-center justify-center gap-1.5">
+                      <span className="text-center text-sm font-semibold text-[var(--color-foreground)]">
+                        {monthNames[currentMonth.getMonth()]} {currentMonth.getFullYear()}
+                      </span>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={goToToday}
+                        className="h-6 px-2 text-xs"
+                      >
+                        Hoje
+                      </Button>
+                    </div>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => navigateMonth('next')}
+                      className="h-7 w-7 shrink-0 p-0"
+                    >
+                      →
                     </Button>
                   </div>
+
+                  <div className="grid grid-cols-7 gap-0.5 sm:gap-1">
+                    {weekDays.map((day) => (
+                      <div
+                        key={day}
+                        className="py-1 text-center text-[10px] font-medium text-[var(--color-muted-foreground)] sm:text-xs"
+                      >
+                        {day}
+                      </div>
+                    ))}
+                    {getDaysInMonth(currentMonth).map((day, index) => (
+                      <button
+                        key={index}
+                        type="button"
+                        onClick={() => day !== null && handleDayClick(day)}
+                        disabled={day === null}
+                        className={cn(
+                          'h-7 w-7 rounded-[6px] text-xs transition-colors sm:h-8 sm:w-8 sm:rounded-[8px] sm:text-sm',
+                          day === null && 'cursor-default',
+                          day !== null && 'hover:bg-[var(--color-accent)]',
+                          isSelected(day, currentMonth) &&
+                            'bg-[var(--color-primary)] font-semibold text-[var(--color-primary-foreground)] shadow-sm hover:bg-[var(--color-primary)]/92',
+                          isToday(day, currentMonth) &&
+                            !isSelected(day, currentMonth) &&
+                            'border border-emerald-500/45 bg-emerald-500/12 font-semibold text-emerald-900 dark:border-emerald-400/40 dark:bg-emerald-500/18 dark:text-emerald-100',
+                          isSuggested(day, currentMonth) &&
+                            !isSelected(day, currentMonth) &&
+                            'border-2 border-[var(--color-primary)]/55 bg-[var(--color-primary)]/12 font-semibold text-[var(--color-foreground)]',
+                          isInRange(day, currentMonth) &&
+                            !isSelected(day, currentMonth) &&
+                            !isSuggested(day, currentMonth) &&
+                            !isToday(day, currentMonth) &&
+                            'bg-[var(--color-muted)]/90 text-[var(--color-foreground)] dark:bg-[var(--color-muted)]/50',
+                          !isSelected(day, currentMonth) &&
+                            !isToday(day, currentMonth) &&
+                            !isSuggested(day, currentMonth) &&
+                            !isInRange(day, currentMonth) &&
+                            day !== null &&
+                            'text-[var(--color-foreground)]',
+                        )}
+                      >
+                        {day}
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* Legenda */}
+                  <div className="flex flex-wrap items-center justify-center gap-x-2 gap-y-1.5 border-t border-[var(--color-border)] pt-2">
+                    <div className="flex items-center gap-1.5">
+                      <div className="h-3 w-3 shrink-0 rounded border border-emerald-500/50 bg-emerald-500/15 dark:bg-emerald-500/25" />
+                      <span className="text-[11px] text-[var(--color-muted-foreground)] sm:text-xs">Hoje</span>
+                    </div>
+                    <span className="text-[11px] text-[var(--color-border)] sm:text-xs">|</span>
+                    <div className="flex items-center gap-1.5">
+                      <div className="h-3 w-3 shrink-0 rounded bg-[var(--color-muted)]/90 dark:bg-[var(--color-muted)]/50" />
+                      <span className="text-[11px] text-[var(--color-muted-foreground)] sm:text-xs">Intervalo</span>
+                    </div>
+                    <span className="text-[11px] text-[var(--color-border)] sm:text-xs">|</span>
+                    <div className="flex items-center gap-1.5">
+                      <div className="h-3 w-3 shrink-0 rounded border-2 border-[var(--color-primary)]/70 bg-[var(--color-primary)]/15" />
+                      <span className="text-[11px] text-[var(--color-muted-foreground)] sm:text-xs">Sugerida</span>
+                    </div>
+                    <span className="text-[11px] text-[var(--color-border)] sm:text-xs">|</span>
+                    <div className="flex items-center gap-1.5">
+                      <div className="h-3 w-3 shrink-0 rounded bg-[var(--color-primary)] shadow-sm" />
+                      <span className="text-[11px] text-[var(--color-muted-foreground)] sm:text-xs">Selecionada</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Seletor de Hora */}
+                <div className="rounded-[10px] border border-[var(--color-border)] bg-[var(--color-muted)]/20 p-3 dark:bg-[var(--color-muted)]/15 sm:p-4">
+                  <div className="mb-2 flex items-center gap-2 text-sm font-semibold text-[var(--color-foreground)]">
+                    <Clock className="h-3.5 w-3.5 shrink-0 text-[var(--color-primary)] sm:h-4 sm:w-4" aria-hidden />
+                    Hora
+                  </div>
+                  <div className="flex items-end gap-2 sm:gap-3">
+                    <div className="min-w-0 flex-1">
+                      <label className="mb-0.5 block text-[11px] text-[var(--color-muted-foreground)] sm:text-xs">
+                        Horas
+                      </label>
+                      <div className="flex items-center gap-1.5 sm:gap-2">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => {
+                            const newHours = selectedTime.hours > 0 ? selectedTime.hours - 1 : 23;
+                            setSelectedTime({ ...selectedTime, hours: newHours });
+                          }}
+                          className="h-7 w-7 shrink-0 p-0 sm:h-8 sm:w-8"
+                        >
+                          −
+                        </Button>
+                        <input
+                          type="number"
+                          min="0"
+                          max="23"
+                          value={selectedTime.hours}
+                          onChange={(e) => {
+                            const hours = Math.max(0, Math.min(23, parseInt(e.target.value) || 0));
+                            setSelectedTime({ ...selectedTime, hours });
+                          }}
+                          className="h-8 min-w-0 flex-1 rounded-[8px] border border-[var(--color-input)] bg-[var(--color-background)] px-1 text-center text-xs font-medium tabular-nums text-[var(--color-foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-ring)] sm:h-9 sm:px-2 sm:text-sm"
+                        />
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => {
+                            const newHours = selectedTime.hours < 23 ? selectedTime.hours + 1 : 0;
+                            setSelectedTime({ ...selectedTime, hours: newHours });
+                          }}
+                          className="h-7 w-7 shrink-0 p-0 sm:h-8 sm:w-8"
+                        >
+                          +
+                        </Button>
+                      </div>
+                    </div>
+                    <div
+                      className="shrink-0 pb-1 text-xl font-semibold tabular-nums text-[var(--color-muted-foreground)] sm:text-2xl"
+                      aria-hidden
+                    >
+                      :
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <label className="mb-0.5 block text-[11px] text-[var(--color-muted-foreground)] sm:text-xs">
+                        Minutos
+                      </label>
+                      <div className="flex items-center gap-1.5 sm:gap-2">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => {
+                            const newMinutes = selectedTime.minutes > 0 ? selectedTime.minutes - 1 : 59;
+                            setSelectedTime({ ...selectedTime, minutes: newMinutes });
+                          }}
+                          className="h-7 w-7 shrink-0 p-0 sm:h-8 sm:w-8"
+                        >
+                          −
+                        </Button>
+                        <input
+                          type="number"
+                          min="0"
+                          max="59"
+                          value={selectedTime.minutes}
+                          onChange={(e) => {
+                            const minutes = Math.max(0, Math.min(59, parseInt(e.target.value) || 0));
+                            setSelectedTime({ ...selectedTime, minutes });
+                          }}
+                          className="h-8 min-w-0 flex-1 rounded-[8px] border border-[var(--color-input)] bg-[var(--color-background)] px-1 text-center text-xs font-medium tabular-nums text-[var(--color-foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-ring)] sm:h-9 sm:px-2 sm:text-sm"
+                        />
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => {
+                            const newMinutes = selectedTime.minutes < 59 ? selectedTime.minutes + 1 : 0;
+                            setSelectedTime({ ...selectedTime, minutes: newMinutes });
+                          }}
+                          className="h-7 w-7 shrink-0 p-0 sm:h-8 sm:w-8"
+                        >
+                          +
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Botões de ação */}
+                <div className="flex items-center justify-between gap-2 border-t border-[var(--color-border)] pt-3 sm:gap-3 sm:pt-4">
                   <Button
                     variant="outline"
-                    size="sm"
-                    onClick={() => navigateMonth('next')}
-                    className="h-8 w-8 p-0"
+                    onClick={handleClear}
+                    className="h-9 flex-1 text-sm sm:h-10"
                   >
-                    →
+                    Limpar
+                  </Button>
+                  <Button
+                    onClick={handleConfirm}
+                    className="h-9 flex-1 text-sm sm:h-10"
+                  >
+                    Confirmar
                   </Button>
                 </div>
-
-                <div className="grid grid-cols-7 gap-1">
-                  {weekDays.map((day) => (
-                    <div
-                      key={day}
-                      className="text-center text-xs font-medium text-[var(--color-muted-foreground)] py-2"
-                    >
-                      {day}
-                    </div>
-                  ))}
-                  {getDaysInMonth(currentMonth).map((day, index) => (
-                    <button
-                      key={index}
-                      type="button"
-                      onClick={() => day !== null && handleDayClick(day)}
-                      disabled={day === null}
-                      className={cn(
-                        'h-9 w-9 rounded-[8px] text-sm transition-colors',
-                        day === null && 'cursor-default',
-                        day !== null && 'hover:bg-[var(--color-accent)]',
-                        isSelected(day, currentMonth) &&
-                          'bg-[var(--color-primary)] font-semibold text-[var(--color-primary-foreground)] shadow-sm hover:bg-[var(--color-primary)]/92',
-                        isToday(day, currentMonth) &&
-                          !isSelected(day, currentMonth) &&
-                          'border border-emerald-500/45 bg-emerald-500/12 font-semibold text-emerald-900 dark:border-emerald-400/40 dark:bg-emerald-500/18 dark:text-emerald-100',
-                        isSuggested(day, currentMonth) &&
-                          !isSelected(day, currentMonth) &&
-                          'border-2 border-[var(--color-primary)]/55 bg-[var(--color-primary)]/12 font-semibold text-[var(--color-foreground)]',
-                        isInRange(day, currentMonth) &&
-                          !isSelected(day, currentMonth) &&
-                          !isSuggested(day, currentMonth) &&
-                          !isToday(day, currentMonth) &&
-                          'bg-[var(--color-muted)]/90 text-[var(--color-foreground)] dark:bg-[var(--color-muted)]/50',
-                        !isSelected(day, currentMonth) &&
-                          !isToday(day, currentMonth) &&
-                          !isSuggested(day, currentMonth) &&
-                          !isInRange(day, currentMonth) &&
-                          day !== null &&
-                          'text-[var(--color-foreground)]',
-                      )}
-                    >
-                      {day}
-                    </button>
-                  ))}
-                </div>
-                
-                {/* Legenda */}
-                <div className="flex flex-wrap items-center justify-center gap-x-3 gap-y-2 border-t border-[var(--color-border)] pt-3">
-                  <div className="flex items-center gap-2">
-                    <div className="h-3.5 w-3.5 shrink-0 rounded border border-emerald-500/50 bg-emerald-500/15 dark:bg-emerald-500/25" />
-                    <span className="text-xs text-[var(--color-muted-foreground)]">Hoje</span>
-                  </div>
-                  <span className="text-xs text-[var(--color-border)]">|</span>
-                  <div className="flex items-center gap-2">
-                    <div className="h-3.5 w-3.5 shrink-0 rounded bg-[var(--color-muted)]/90 dark:bg-[var(--color-muted)]/50" />
-                    <span className="text-xs text-[var(--color-muted-foreground)]">Intervalo</span>
-                  </div>
-                  <span className="text-xs text-[var(--color-border)]">|</span>
-                  <div className="flex items-center gap-2">
-                    <div className="h-3.5 w-3.5 shrink-0 rounded border-2 border-[var(--color-primary)]/70 bg-[var(--color-primary)]/15" />
-                    <span className="text-xs text-[var(--color-muted-foreground)]">Sugerida</span>
-                  </div>
-                  <span className="text-xs text-[var(--color-border)]">|</span>
-                  <div className="flex items-center gap-2">
-                    <div className="h-3.5 w-3.5 shrink-0 rounded bg-[var(--color-primary)] shadow-sm" />
-                    <span className="text-xs text-[var(--color-muted-foreground)]">Selecionada</span>
-                  </div>
-                </div>
-              </div>
-
-              {/* Seletor de Hora */}
-              <div className="rounded-[10px] border border-[var(--color-border)] bg-[var(--color-muted)]/20 p-4 dark:bg-[var(--color-muted)]/15">
-                <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-[var(--color-foreground)]">
-                  <Clock className="h-4 w-4 text-[var(--color-primary)]" aria-hidden />
-                  Hora
-                </div>
-                <div className="flex items-center gap-4">
-                  <div className="flex-1">
-                    <label className="text-xs text-[var(--color-muted-foreground)] mb-1 block">
-                      Horas
-                    </label>
-                    <div className="flex items-center gap-2">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => {
-                          const newHours = selectedTime.hours > 0 ? selectedTime.hours - 1 : 23;
-                          setSelectedTime({ ...selectedTime, hours: newHours });
-                        }}
-                        className="h-8 w-8 p-0"
-                      >
-                        −
-                      </Button>
-                      <input
-                        type="number"
-                        min="0"
-                        max="23"
-                        value={selectedTime.hours}
-                        onChange={(e) => {
-                          const hours = Math.max(0, Math.min(23, parseInt(e.target.value) || 0));
-                          setSelectedTime({ ...selectedTime, hours });
-                        }}
-                        className="flex-1 h-9 rounded-[8px] border border-[var(--color-input)] bg-[var(--color-background)] px-2 text-center text-sm font-medium tabular-nums text-[var(--color-foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-ring)]"
-                      />
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => {
-                          const newHours = selectedTime.hours < 23 ? selectedTime.hours + 1 : 0;
-                          setSelectedTime({ ...selectedTime, hours: newHours });
-                        }}
-                        className="h-8 w-8 p-0"
-                      >
-                        +
-                      </Button>
-                    </div>
-                  </div>
-                  <div className="py-6 text-2xl font-semibold tabular-nums text-[var(--color-muted-foreground)]">
-                    :
-                  </div>
-                  <div className="flex-1">
-                    <label className="text-xs text-[var(--color-muted-foreground)] mb-1 block">
-                      Minutos
-                    </label>
-                    <div className="flex items-center gap-2">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => {
-                          const newMinutes = selectedTime.minutes > 0 ? selectedTime.minutes - 1 : 59;
-                          setSelectedTime({ ...selectedTime, minutes: newMinutes });
-                        }}
-                        className="h-8 w-8 p-0"
-                      >
-                        −
-                      </Button>
-                      <input
-                        type="number"
-                        min="0"
-                        max="59"
-                        value={selectedTime.minutes}
-                        onChange={(e) => {
-                          const minutes = Math.max(0, Math.min(59, parseInt(e.target.value) || 0));
-                          setSelectedTime({ ...selectedTime, minutes });
-                        }}
-                        className="flex-1 h-9 rounded-[8px] border border-[var(--color-input)] bg-[var(--color-background)] px-2 text-center text-sm font-medium tabular-nums text-[var(--color-foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-ring)]"
-                      />
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => {
-                          const newMinutes = selectedTime.minutes < 59 ? selectedTime.minutes + 1 : 0;
-                          setSelectedTime({ ...selectedTime, minutes: newMinutes });
-                        }}
-                        className="h-8 w-8 p-0"
-                      >
-                        +
-                      </Button>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* Botões de ação */}
-              <div className="flex items-center justify-between gap-3 border-t border-[var(--color-border)] pt-4">
-                <Button
-                  variant="outline"
-                  onClick={handleClear}
-                  className="flex-1"
-                >
-                  Limpar
-                </Button>
-                <Button
-                  onClick={handleConfirm}
-                  className="flex-1"
-                >
-                  Confirmar
-                </Button>
               </div>
             </div>
           </DialogContent>
