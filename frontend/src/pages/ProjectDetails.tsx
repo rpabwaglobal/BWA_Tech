@@ -708,6 +708,7 @@ export default function ProjectDetails() {
   const openCardGenerationRef = useRef(0);
   /** Enquanto true, não abrir pelo deep link (ex.: após fechar, até a URL perder /card/:id). */
   const suppressCardDeepLinkRef = useRef(false);
+  const cardSubmitInFlightRef = useRef(false);
   const [cardDialogOpen, setCardDialogOpen] = useState(false);
 
   // Delete/Alert dialogs
@@ -1931,26 +1932,37 @@ export default function ProjectDetails() {
 
   const handleCardSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (cardSubmitInFlightRef.current || cardFormLoading) return;
+    cardSubmitInFlightRef.current = true;
+    setCardFormLoading(true);
     setCardFormError('');
     
     // Validar se a área foi selecionada
     if (!cardFormData.area || cardFormData.area.trim() === '') {
       setCardFormError('Por favor, selecione uma área para o card.');
+      cardSubmitInFlightRef.current = false;
+      setCardFormLoading(false);
       return;
     }
     
     // Bloquear submit se sprint estiver finalizada ou card estiver finalizado/inviabilizado
     if (sprintIsFinished) {
       setCardFormError('Cards de sprints finalizadas não podem ser editados.');
+      cardSubmitInFlightRef.current = false;
+      setCardFormLoading(false);
       return;
     }
     if (editingCard && (editingCard.status === 'finalizado' || editingCard.status === 'inviabilizado')) {
       setCardFormError('Cards finalizados ou inviabilizados não podem ser editados.');
+      cardSubmitInFlightRef.current = false;
+      setCardFormLoading(false);
       return;
     }
 
     if (!editingCard && isSupportProject) {
       setCardFormError('A criação manual de cards está desabilitada no projeto de suporte.');
+      cardSubmitInFlightRef.current = false;
+      setCardFormLoading(false);
       return;
     }
     
@@ -1981,6 +1993,8 @@ export default function ProjectDetails() {
       }
       setConclusaoPendingData({ card: editingCard, updateData, dataToSend: cardFormData, oldStageId: editingCard.status });
       setConclusaoModalOpen(true);
+      cardSubmitInFlightRef.current = false;
+      setCardFormLoading(false);
       return;
     }
 
@@ -1991,6 +2005,8 @@ export default function ProjectDetails() {
         const missingList = validation.missing.map((item, index) => `${index + 1}. ${capitalizeFirst(item)}`).join('\n');
         const stageLabel = getStageLabel(cardFormData.status);
         setCardFormError(`Para o status "${stageLabel}", é necessário preencher:\n\n${missingList}.`);
+        cardSubmitInFlightRef.current = false;
+        setCardFormLoading(false);
         return;
       }
       
@@ -2006,8 +2022,6 @@ export default function ProjectDetails() {
       }
     }
     
-    setCardFormLoading(true);
-
     try {
       const dataToSend = {
         nome: cardFormData.nome,
@@ -2130,8 +2144,10 @@ export default function ProjectDetails() {
             // Não bloquear a criação do card se os TODOs falharem
           }
         }
+        setCards((prevCards) => [...prevCards, newCard]);
       }
       closeCardDialog();
+    } catch (err: any) {
       const errorData = err.response?.data;
       let errorMessage = 'Erro ao salvar card';
       if (errorData) {
@@ -2150,6 +2166,7 @@ export default function ProjectDetails() {
       }
       setCardFormError(errorMessage);
     } finally {
+      cardSubmitInFlightRef.current = false;
       setCardFormLoading(false);
     }
   };

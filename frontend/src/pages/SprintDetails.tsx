@@ -212,6 +212,7 @@ export default function SprintDetails() {
   const openCardGenerationRef = useRef(0);
   /** Enquanto true, não abrir pelo deep link até a URL perder /card/:id. */
   const suppressCardDeepLinkRef = useRef(false);
+  const cardSubmitInFlightRef = useRef(false);
   const [cardDialogOpen, setCardDialogOpen] = useState(false);
   const [logsModalOpen, setLogsModalOpen] = useState(false);
   const [logsRefreshTrigger, setLogsRefreshTrigger] = useState(0);
@@ -1342,6 +1343,7 @@ export default function SprintDetails() {
   const handleCardSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     e.stopPropagation();
+    if (cardSubmitInFlightRef.current) return;
     setCardFormError('');
     
     // Validar se a área foi selecionada
@@ -1406,6 +1408,7 @@ export default function SprintDetails() {
       }
     }
     
+    cardSubmitInFlightRef.current = true;
     setCardFormLoading(true);
 
     try {
@@ -1549,6 +1552,7 @@ export default function SprintDetails() {
       }
       setCardFormError(errorMessage);
     } finally {
+      cardSubmitInFlightRef.current = false;
       setCardFormLoading(false);
     }
   };
