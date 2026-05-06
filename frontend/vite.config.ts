@@ -64,7 +64,9 @@ export default defineConfig(({ mode }) => {
         target: formulariosProxyTarget,
         changeOrigin: true,
         secure: true,
-        ws: true,
+        // WS ao portal costuma gerar ECONNABORTED no terminal (rede/firewall/fecho do cliente).
+        // REST continua a funcionar; novidades em Suporte em dev → polling.
+        ws: false,
         rewrite: (p) => p.replace(/^\/__formularios/, ''),
       },
     },
