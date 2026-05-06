@@ -8,6 +8,8 @@ type ExportArgs = {
   rows: string[][];
   /** Separador de colunas. Padrão: vírgula (`,`). */
   delimiter?: CSVDelimiter;
+  /** Nome da planilha no XLSX (máx. 31 caracteres no Excel). */
+  sheetName?: string;
 };
 
 const escapeCSVCell = (cell: string, delimiter: CSVDelimiter): string => {
@@ -49,14 +51,15 @@ export const exportCardsToCSV = ({
   downloadBlob(blob, filename);
 };
 
-export const exportCardsToXLSX = async ({ filename, headers, rows }: ExportArgs) => {
+export const exportCardsToXLSX = async ({ filename, headers, rows, sheetName = 'Cards' }: ExportArgs) => {
   // import dinâmico para reduzir impacto no build caso o usuário não use XLSX
   const XLSX: any = await import('xlsx');
 
   const aoa = [headers, ...rows.map((r) => r.map((cell) => cell ?? ''))];
   const worksheet = XLSX.utils.aoa_to_sheet(aoa);
   const workbook = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(workbook, worksheet, 'Cards');
+  const safeSheet = sheetName.replace(/[:\\/?*\[\]]/g, '_').slice(0, 31) || 'Sheet';
+  XLSX.utils.book_append_sheet(workbook, worksheet, safeSheet);
 
   const wbout: ArrayBuffer = XLSX.write(workbook, { bookType: 'xlsx', type: 'array' });
   const blob = new Blob([wbout], {

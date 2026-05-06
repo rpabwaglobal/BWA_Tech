@@ -3,7 +3,7 @@ from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
-from .models import ChamadoSuporte, ChamadoSuporteTimeline, SuporteMotivo, SuporteTipo
+from .models import ChamadoSuporte, ChamadoSuporteStatus, ChamadoSuporteTimeline, SuporteMotivo, SuporteTipo
 from .realtime import broadcast_chamado
 from .serializers import (
     CatalogTipoComItensSerializer,
@@ -54,6 +54,20 @@ class ChamadoSuporteViewSet(viewsets.ModelViewSet):
         patch_sr = ChamadoSuportePatchSerializer(data=request.data, partial=True)
         patch_sr.is_valid(raise_exception=True)
         data = patch_sr.validated_data
+
+        if instance.status in (ChamadoSuporteStatus.RESOLVIDO, ChamadoSuporteStatus.CANCELADO):
+            locked_fields = {'status', 'responsavel_solucao', 'descricao_resolucao'} & data.keys()
+            if locked_fields:
+                return Response(
+                    {
+                        'detail': (
+                            'Chamados resolvidos ou cancelados não podem ser alterados '
+                            '(status, responsável ou notas de resolução).'
+                        ),
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
         for field in ('status', 'responsavel_solucao', 'descricao_resolucao'):
             if field in data:
                 setattr(instance, field, data[field])

@@ -1,7 +1,10 @@
 import formulariosApi from './formulariosApi';
 
-/** Prefixo interno em `descricao_resolucao` para coluna "Parado por pendências" (a API só tem status "Em andamento"). */
-export const SUPORTE_PENDENCIA_PREFIX = '__PENDENCIA_BWA__\n';
+/** Marcador no início de `descricao_resolucao` quando o ticket está «parado por pendências» (a API só tem «Em andamento»). */
+export const SUPORTE_PENDENCIA_MARKER = '__PENDENCIA_BWA__';
+
+/** Forma canónica gravada na API: marcador + nova linha. */
+export const SUPORTE_PENDENCIA_PREFIX = `${SUPORTE_PENDENCIA_MARKER}\n`;
 
 export type SuporteStatusApi = 'Aberto' | 'Em andamento' | 'Resolvido' | 'Cancelado';
 
@@ -57,9 +60,20 @@ export type CatalogoItemLista = { id: number; nome: string; ativo: boolean };
 export type CatalogoTipoLista = CatalogoItemLista & { itens: CatalogoItemLista[] };
 export type CatalogoSuporteResponse = { tipos: CatalogoTipoLista[]; motivos: CatalogoItemLista[] };
 
+/** Indica se o texto guardado na API começa pelo marcador interno de pendência (aceita `\n`, `\r\n` ou só o marcador). */
+export function hasPendenciaMarker(text: string | null | undefined): boolean {
+  const s = (text ?? '').replace(/^\uFEFF/, '').trimStart();
+  return s.startsWith(SUPORTE_PENDENCIA_MARKER);
+}
+
+/** Remove o marcador interno do início para exibição / edição — mostra só o que o utilizador escreveu. */
 export function stripPendenciaMarker(text: string | null | undefined): string {
-  const s = text ?? '';
-  return s.startsWith(SUPORTE_PENDENCIA_PREFIX) ? s.slice(SUPORTE_PENDENCIA_PREFIX.length) : s;
+  const raw = text ?? '';
+  if (!hasPendenciaMarker(raw)) return raw;
+  let s = raw.replace(/^\uFEFF/, '').trimStart();
+  s = s.slice(SUPORTE_PENDENCIA_MARKER.length);
+  s = s.replace(/^\r?\n/, '');
+  return s;
 }
 
 export function ensurePendenciaMarker(text: string | null | undefined): string {

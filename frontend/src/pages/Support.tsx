@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type MouseEvent,
+  type ReactNode,
+} from 'react';
 import {
   DndContext,
   DragOverlay,
@@ -12,7 +20,23 @@ import {
 } from '@dnd-kit/core';
 import { SortableContext, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { Loader2, RefreshCw, Plus, Bell, ExternalLink, Copy, Check, PanelRight, Search } from 'lucide-react';
+import {
+  Loader2,
+  Plus,
+  Bell,
+  ExternalLink,
+  Copy,
+  Check,
+  PanelRight,
+  Search,
+  Settings,
+  ChevronDown,
+  LayoutGrid,
+  List,
+  Columns3,
+  FileSpreadsheet,
+  Download,
+} from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -30,6 +54,13 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { CARD_TIMELINE_LAYOUT_RESERVE_PX } from '@/components/CardLogsModal';
 import { SuporteTicketTimelinePanel } from '@/components/SuporteTicketTimelinePanel';
 import { ConclusaoModal } from '@/components/ConclusaoModal';
@@ -47,16 +78,26 @@ import {
   stripPendenciaMarker,
   ensurePendenciaMarker,
   catalogNome,
+  hasPendenciaMarker,
   type ChamadoSuporte,
   type PatchChamadoSuportePayload,
   type CatalogoSuporteResponse,
-  SUPORTE_PENDENCIA_PREFIX,
 } from '@/services/suporteService';
 import { cn } from '@/lib/utils';
 import { formatDateTime } from '@/lib/dateUtils';
+import {
+  getSuporteColumnDefsByGroup,
+  SUPORTE_CHAMADOS_COLUMN_DEFS,
+  SUPORTE_CHAMADOS_COLUMN_IDS,
+  formatSuporteColumnValueForDisplay,
+  type SuporteColumnGroup,
+} from '@/lib/suporteChamadosColumns';
+import { exportCardsToCSV, exportCardsToXLSX } from '@/lib/exportCards';
 import { logSuporteChamadoChanges, logSuporteTicketCriado } from '@/lib/suporteTimelineLog';
 import { userService, type User } from '@/services/userService';
 import { suporteTimelineService } from '@/services/suporteTimelineService';
+
+const SUPORTE_LIST_COLUMNS_STORAGE_KEY = 'bwa_suporte_list_columns_v1';
 
 const STAGES = [
   { key: 'a_desenvolver' as const, label: 'A desenvolver', hint: 'Aguardando suporte' },
@@ -67,6 +108,20 @@ const STAGES = [
 ];
 
 type StageKey = (typeof STAGES)[number]['key'];
+
+function readStoredSuporteColumnIds(): string[] {
+  try {
+    const raw = window.localStorage.getItem(SUPORTE_LIST_COLUMNS_STORAGE_KEY);
+    if (!raw) return SUPORTE_CHAMADOS_COLUMN_IDS;
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return SUPORTE_CHAMADOS_COLUMN_IDS;
+    const allowed = new Set(SUPORTE_CHAMADOS_COLUMN_IDS);
+    const normalized = parsed.map(String).filter((id) => allowed.has(id));
+    return normalized.length ? normalized : SUPORTE_CHAMADOS_COLUMN_IDS;
+  } catch {
+    return SUPORTE_CHAMADOS_COLUMN_IDS;
+  }
+}
 
 function upsertChamadoLista(prev: ChamadoSuporte[], row: ChamadoSuporte): ChamadoSuporte[] {
   const i = prev.findIndex((x) => x.id === row.id);
@@ -158,7 +213,7 @@ function normalizeStatusEtapa(status: ChamadoSuporte['status'] | string | undefi
 /** Colunas do quadro a partir do status retornado pela API (aceita pequenas variações de texto). */
 function chamadoToStage(c: ChamadoSuporte): StageKey {
   const desc = c.descricao_resolucao ?? '';
-  const pendencia = desc.startsWith(SUPORTE_PENDENCIA_PREFIX);
+  const pendencia = hasPendenciaMarker(desc);
   const st = normalizeStatusEtapa(c.status);
 
   if (st === 'resolvido') return 'finalizado';
@@ -250,6 +305,40 @@ function resolveDropStage(
   return null;
 }
 
+function chamadoEncerradoNoQuadro(chamado: ChamadoSuporte): boolean {
+  const s = chamadoToStage(chamado);
+  return s === 'finalizado' || s === 'inviabilizado';
+}
+
+function useSuporteResolucaoDraft(
+  chamadoId: number | undefined,
+  descricaoResolucaoApi: string | null | undefined,
+  concludingTicketId: number | null,
+  enabled: boolean,
+) {
+  const [note, setNote] = useState('');
+  const [dirty, setDirty] = useState(false);
+  const busy = enabled && chamadoId != null && concludingTicketId === chamadoId;
+
+  useEffect(() => {
+    if (!enabled || chamadoId == null) return;
+    setDirty(false);
+  }, [chamadoId, enabled]);
+
+  useEffect(() => {
+    if (!enabled || dirty || chamadoId == null) return;
+    setNote(stripPendenciaMarker(descricaoResolucaoApi ?? ''));
+  }, [descricaoResolucaoApi, chamadoId, dirty, enabled]);
+
+  return {
+    note,
+    setNote,
+    markDirty: () => setDirty(true),
+    busy,
+    canConcluir: enabled && chamadoId != null && !!note.trim() && !busy,
+  };
+}
+
 export default function Support() {
   const { user, isAuthenticated } = useAuth();
   const assigneeName = user ? displayUserName(user) : '';
@@ -260,20 +349,19 @@ export default function Support() {
   const [createOpen, setCreateOpen] = useState(false);
   const [detailChamado, setDetailChamado] = useState<ChamadoSuporte | null>(null);
   const [activeDrag, setActiveDrag] = useState<ChamadoSuporte | null>(null);
-  const [pendingFinalize, setPendingFinalize] = useState<{
-    chamado: ChamadoSuporte;
-    stage: StageKey;
-    note: string;
-  } | null>(null);
-  const [pendingConfirmDestrutivo, setPendingConfirmDestrutivo] = useState<{
-    tipo: 'inviabilizado' | 'finalizado';
-    chamado: ChamadoSuporte;
-  } | null>(null);
+  const [concludingTicketId, setConcludingTicketId] = useState<number | null>(null);
+  const [pendingInviabilizarChamado, setPendingInviabilizarChamado] = useState<ChamadoSuporte | null>(null);
   const [pendingPendenciaChamado, setPendingPendenciaChamado] = useState<ChamadoSuporte | null>(null);
   const [assignUsers, setAssignUsers] = useState<User[]>([]);
   const [timelineRefreshNonce, setTimelineRefreshNonce] = useState(0);
   const [suporteSearchQuery, setSuporteSearchQuery] = useState('');
   const [filterResponsavelSolucao, setFilterResponsavelSolucao] = useState('');
+  const [viewMode, setViewMode] = useState<'kanban' | 'lista'>('kanban');
+  const [selectedColumnIds, setSelectedColumnIds] = useState<string[]>(() => readStoredSuporteColumnIds());
+  const [columnsDialogOpen, setColumnsDialogOpen] = useState(false);
+  const [listExpandedColumnIds, setListExpandedColumnIds] = useState<Set<string>>(() => new Set());
+  const [listExpandAllColumns, setListExpandAllColumns] = useState(false);
+  const listHeaderClickTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const bumpTimeline = useCallback(() => setTimelineRefreshNonce((n) => n + 1), []);
 
@@ -339,6 +427,35 @@ export default function Support() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(SUPORTE_LIST_COLUMNS_STORAGE_KEY, JSON.stringify(selectedColumnIds));
+    } catch {
+      /* ignore */
+    }
+  }, [selectedColumnIds]);
+
+  useEffect(() => {
+    if (viewMode !== 'lista') {
+      setListExpandedColumnIds(new Set());
+      setListExpandAllColumns(false);
+    }
+  }, [viewMode]);
+
+  useEffect(() => {
+    setListExpandedColumnIds(new Set());
+    setListExpandAllColumns(false);
+  }, [selectedColumnIds.join('|')]);
+
+  useEffect(() => {
+    return () => {
+      if (listHeaderClickTimerRef.current) {
+        clearTimeout(listHeaderClickTimerRef.current);
+        listHeaderClickTimerRef.current = null;
+      }
+    };
+  }, []);
 
   const mergeRemoteChamado = useCallback((row: ChamadoSuporte) => {
     setItems((prev) => upsertChamadoLista(prev, row));
@@ -477,10 +594,102 @@ export default function Support() {
     return map;
   }, [filteredItems]);
 
+  const visibleChamadosForList = filteredItems;
+  const selectedColumnDefsSafe = SUPORTE_CHAMADOS_COLUMN_DEFS.filter((c) =>
+    selectedColumnIds.includes(c.id),
+  );
+
+  const getExportFileBaseName = () => {
+    const d = new Date();
+    const p = (n: number) => String(n).padStart(2, '0');
+    const datahora = `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}-${p(d.getMinutes())}-${p(d.getSeconds())}`;
+    return `Suporte - ${datahora}`;
+  };
+
+  const exportValueToString = (value: unknown): string =>
+    typeof value === 'string' ? value : JSON.stringify(value ?? '');
+
+  const handleExportCSV = (delimiter: ',' | ';') => {
+    if (!selectedColumnDefsSafe.length) return;
+    const headers = selectedColumnDefsSafe.map((c) => c.label);
+    const rows = visibleChamadosForList.map((chamado) =>
+      selectedColumnDefsSafe.map((col) => exportValueToString(col.getValue({ chamado }))),
+    );
+    const suffix = delimiter === ';' ? ' - ponto-e-virgula' : ' - virgula';
+    exportCardsToCSV({ filename: `${getExportFileBaseName()}${suffix}.csv`, headers, rows, delimiter });
+  };
+
+  const handleExportXLSX = async () => {
+    if (!selectedColumnDefsSafe.length) return;
+    const headers = selectedColumnDefsSafe.map((c) => c.label);
+    const rows = visibleChamadosForList.map((chamado) =>
+      selectedColumnDefsSafe.map((col) => exportValueToString(col.getValue({ chamado }))),
+    );
+    await exportCardsToXLSX({
+      filename: `${getExportFileBaseName()}.xlsx`,
+      headers,
+      rows,
+      sheetName: 'Chamados',
+    });
+  };
+
+  const toggleColumnId = (columnId: string, checked: boolean) => {
+    setSelectedColumnIds((prev) => {
+      const allowed = new Set(SUPORTE_CHAMADOS_COLUMN_IDS);
+      if (!allowed.has(columnId)) return prev;
+      const nextSet = new Set(prev);
+      if (checked) nextSet.add(columnId);
+      else nextSet.delete(columnId);
+      return SUPORTE_CHAMADOS_COLUMN_DEFS.map((c) => c.id).filter((id) => nextSet.has(id));
+    });
+  };
+
+  const clearListHeaderClickTimer = () => {
+    if (listHeaderClickTimerRef.current) {
+      clearTimeout(listHeaderClickTimerRef.current);
+      listHeaderClickTimerRef.current = null;
+    }
+  };
+
+  const onListColumnHeaderClick = (colId: string) => {
+    clearListHeaderClickTimer();
+    listHeaderClickTimerRef.current = setTimeout(() => {
+      listHeaderClickTimerRef.current = null;
+      setListExpandAllColumns((expandAll) => {
+        if (expandAll) {
+          setListExpandedColumnIds(new Set([colId]));
+          return false;
+        }
+        setListExpandedColumnIds((prev) => {
+          const n = new Set(prev);
+          if (n.has(colId)) n.delete(colId);
+          else n.add(colId);
+          return n;
+        });
+        return expandAll;
+      });
+    }, 280);
+  };
+
+  const onListColumnHeaderDoubleClick = (e: MouseEvent<HTMLTableCellElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    clearListHeaderClickTimer();
+    setListExpandAllColumns((prev) => {
+      if (!prev) {
+        setListExpandedColumnIds(new Set());
+        return true;
+      }
+      setListExpandedColumnIds(new Set());
+      return false;
+    });
+  };
+
   const handleDragStart = (e: DragStartEvent) => {
     const id = parseDragId(String(e.active.id));
     if (id == null) return;
     const found = items.find((x) => x.id === id);
+    if (found && chamadoEncerradoNoQuadro(found)) return;
     setActiveDrag(found ?? null);
   };
 
@@ -488,6 +697,7 @@ export default function Support() {
     async (id: number, patch: PatchChamadoSuportePayload, before: ChamadoSuporte) => {
       const updated = await suporteService.patch(id, patch);
       setItems((prev) => prev.map((x) => (x.id === id ? updated : x)));
+      setDetailChamado((d) => (d?.id === id ? updated : d));
       await logSuporteChamadoChanges(before, updated, getKanbanStageLabel);
       bumpTimeline();
     },
@@ -521,40 +731,21 @@ export default function Support() {
     [pendingPendenciaChamado, assigneeName, applyPatchAndRefresh, load, bumpTimeline],
   );
 
-  const handleConfirmDestrutivo = useCallback(() => {
-    if (!pendingConfirmDestrutivo) return;
-    const { tipo, chamado } = pendingConfirmDestrutivo;
-    setPendingConfirmDestrutivo(null);
-
-    if (tipo === 'inviabilizado') {
-      void (async () => {
-        try {
-          const patch = patchForStage('inviabilizado', chamado, assigneeName);
-          await applyPatchAndRefresh(chamado.id, patch, chamado);
-        } catch (err) {
-          setError(err instanceof Error ? err.message : 'Erro ao atualizar chamado.');
-          void load();
-        }
-      })();
-      return;
-    }
-
-    const stripped = stripPendenciaMarker(chamado.descricao_resolucao ?? '').trim();
-    if (!stripped) {
-      setPendingFinalize({ chamado, stage: 'finalizado', note: '' });
-      return;
-    }
+  const handleConfirmInviabilizar = useCallback(() => {
+    if (!pendingInviabilizarChamado) return;
+    const chamado = pendingInviabilizarChamado;
+    setPendingInviabilizarChamado(null);
 
     void (async () => {
       try {
-        const patch = patchForStage('finalizado', chamado, assigneeName);
+        const patch = patchForStage('inviabilizado', chamado, assigneeName);
         await applyPatchAndRefresh(chamado.id, patch, chamado);
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Erro ao atualizar chamado.');
         void load();
       }
     })();
-  }, [pendingConfirmDestrutivo, assigneeName, applyPatchAndRefresh, load]);
+  }, [pendingInviabilizarChamado, assigneeName, applyPatchAndRefresh, load]);
 
   const handleDragEnd = async (e: DragEndEvent) => {
     setActiveDrag(null);
@@ -570,6 +761,8 @@ export default function Support() {
     const chamado = items.find((x) => x.id === chamadoId);
     if (!chamado) return;
 
+    if (chamadoEncerradoNoQuadro(chamado)) return;
+
     if (chamadoToStage(chamado) === targetStage) return;
 
     if (targetStage === 'parado_pendencias') {
@@ -577,11 +770,15 @@ export default function Support() {
       return;
     }
 
-    if (targetStage === 'inviabilizado' || targetStage === 'finalizado') {
-      setPendingConfirmDestrutivo({
-        tipo: targetStage === 'inviabilizado' ? 'inviabilizado' : 'finalizado',
-        chamado,
-      });
+    if (targetStage === 'finalizado') {
+      setError(
+        'Para concluir, abra o ticket e preencha «Descrição da resolução» em seguida clique em «Concluir card».',
+      );
+      return;
+    }
+
+    if (targetStage === 'inviabilizado') {
+      setPendingInviabilizarChamado(chamado);
       return;
     }
 
@@ -594,40 +791,29 @@ export default function Support() {
     }
   };
 
-  const confirmFinalize = async () => {
-    if (!pendingFinalize) return;
-    const { chamado, stage, note } = pendingFinalize;
-    const noteTrim = note.trim();
-    if (!noteTrim) {
-      setError('As notas de resolução são obrigatórias para concluir o ticket.');
-      return;
-    }
-    try {
-      const patch = patchForStage(stage, chamado, assigneeName, noteTrim);
-      await applyPatchAndRefresh(chamado.id, patch, chamado);
-      setPendingFinalize(null);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Erro ao concluir ticket.');
-      void load();
-    }
-  };
+  const handleConcluirTicketNoCard = useCallback(
+    async (chamado: ChamadoSuporte, notasResolucao: string) => {
+      const noteTrim = notasResolucao.trim();
+      if (!noteTrim) return;
+      setConcludingTicketId(chamado.id);
+      setError(null);
+      try {
+        const patch = patchForStage('finalizado', chamado, assigneeName, noteTrim);
+        await applyPatchAndRefresh(chamado.id, patch, chamado);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Erro ao concluir ticket.');
+        void load();
+      } finally {
+        setConcludingTicketId(null);
+      }
+    },
+    [assigneeName, applyPatchAndRefresh, load],
+  );
 
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-[16px] p-[16px] md:p-[24px]">
-      <header className="flex shrink-0 flex-col gap-[12px] md:flex-row md:items-center md:justify-between">
-        <div>
-          <h1 className="text-xl font-semibold text-[var(--color-foreground)]">Suporte</h1>
-        </div>
-        <div className="flex flex-wrap items-center gap-[10px]">
-          <Button type="button" variant="outline" size="sm" onClick={() => void load()} disabled={loading}>
-            <RefreshCw className={cn('h-4 w-4 mr-[8px]', loading && 'animate-spin')} />
-            Atualizar
-          </Button>
-          <Button type="button" size="sm" onClick={() => setCreateOpen(true)}>
-            <Plus className="h-4 w-4 mr-[8px]" />
-            Novo chamado
-          </Button>
-        </div>
+      <header className="flex shrink-0 flex-col gap-[12px]">
+        <h1 className="text-xl font-semibold text-[var(--color-foreground)]">Suporte</h1>
       </header>
 
       {error && (
@@ -655,6 +841,115 @@ export default function Support() {
               />
             </div>
           </div>
+          <div className="flex shrink-0 flex-col gap-[4px]">
+            <span className="mb-[4px] block text-xs text-[var(--color-muted-foreground)]">Opções</span>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="h-[40px] gap-[8px] border-[var(--color-border)] px-[14px] shadow-sm hover:bg-[var(--color-accent)]"
+                  title="Opções da página Suporte"
+                  disabled={loading}
+                >
+                  <Settings className="h-[18px] w-[18px] shrink-0 text-[var(--color-muted-foreground)]" />
+                  <span className="hidden text-sm font-medium sm:inline">Opções</span>
+                  <ChevronDown className="h-[16px] w-[16px] shrink-0 opacity-60" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-[min(100vw-24px,300px)] overflow-hidden p-0">
+                <div className="border-b border-[var(--color-border)] bg-[var(--color-muted)]/25 px-3 py-2.5">
+                  <p className="text-sm font-semibold text-[var(--color-foreground)]">Suporte</p>
+                  <p className="mt-0.5 text-[11px] leading-tight text-[var(--color-muted-foreground)]">
+                    Visualização da página e exportação dos tickets
+                  </p>
+                </div>
+                <div className="p-1.5">
+                  <DropdownMenuItem
+                    className="gap-2 rounded-md py-2.5"
+                    onClick={() => setCreateOpen(true)}
+                  >
+                    <Plus className="h-4 w-4 shrink-0 text-[var(--color-primary)]" />
+                    <span className="flex-1 text-left font-medium">Novo chamado</span>
+                  </DropdownMenuItem>
+
+                  <DropdownMenuSeparator className="my-2" />
+
+                  <p className="mb-1 px-2 pt-1 text-[10px] font-semibold uppercase tracking-wider text-[var(--color-muted-foreground)]">
+                    Modo de visualização
+                  </p>
+                  <DropdownMenuItem className="gap-2 rounded-md py-2.5" onClick={() => setViewMode('kanban')}>
+                    <LayoutGrid className="h-4 w-4 shrink-0 text-[var(--color-primary)]" />
+                    <span className="flex-1 text-left font-medium">Kanban</span>
+                    {viewMode === 'kanban' ? (
+                      <Check className="h-4 w-4 shrink-0 text-[var(--color-primary)]" />
+                    ) : (
+                      <span className="h-4 w-4 shrink-0" aria-hidden />
+                    )}
+                  </DropdownMenuItem>
+                  <DropdownMenuItem className="gap-2 rounded-md py-2.5" onClick={() => setViewMode('lista')}>
+                    <List className="h-4 w-4 shrink-0 text-[var(--color-primary)]" />
+                    <span className="flex-1 text-left font-medium">Lista</span>
+                    {viewMode === 'lista' ? (
+                      <Check className="h-4 w-4 shrink-0 text-[var(--color-primary)]" />
+                    ) : (
+                      <span className="h-4 w-4 shrink-0" aria-hidden />
+                    )}
+                  </DropdownMenuItem>
+
+                  {viewMode === 'lista' && (
+                    <>
+                      <DropdownMenuSeparator className="my-2" />
+                      <DropdownMenuItem
+                        className="gap-2 rounded-md py-2.5"
+                        onClick={() => setColumnsDialogOpen(true)}
+                      >
+                        <Columns3 className="h-4 w-4 shrink-0 text-[var(--color-muted-foreground)]" />
+                        <span className="flex-1 text-left">Selecionar colunas</span>
+                      </DropdownMenuItem>
+                    </>
+                  )}
+
+                  <DropdownMenuSeparator className="my-2" />
+                  <p className="mb-1 px-2 text-[10px] font-semibold uppercase tracking-wider text-[var(--color-muted-foreground)]">
+                    Exportar tickets
+                  </p>
+                  <p className="mb-2 px-2 text-[11px] leading-snug text-[var(--color-muted-foreground)]">
+                    Usa os filtros atuais e as colunas marcadas na lista.
+                  </p>
+                  <DropdownMenuItem
+                    className="gap-2 rounded-md py-2.5"
+                    onClick={() => handleExportCSV(',')}
+                    disabled={visibleChamadosForList.length === 0 || selectedColumnDefsSafe.length === 0}
+                  >
+                    <FileSpreadsheet className="h-4 w-4 shrink-0 text-green-600" />
+                    <span className="flex-1 text-left">{`CSV separado por ","`}</span>
+                    <Download className="h-3.5 w-3.5 shrink-0 opacity-50" />
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    className="gap-2 rounded-md py-2.5"
+                    onClick={() => handleExportCSV(';')}
+                    disabled={visibleChamadosForList.length === 0 || selectedColumnDefsSafe.length === 0}
+                  >
+                    <FileSpreadsheet className="h-4 w-4 shrink-0 text-green-600" />
+                    <span className="flex-1 text-left">{`CSV separado por ";"`}</span>
+                    <Download className="h-3.5 w-3.5 shrink-0 opacity-50" />
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    className="gap-2 rounded-md py-2.5"
+                    onClick={() => {
+                      void handleExportXLSX();
+                    }}
+                    disabled={visibleChamadosForList.length === 0 || selectedColumnDefsSafe.length === 0}
+                  >
+                    <FileSpreadsheet className="h-4 w-4 shrink-0 text-emerald-700" />
+                    <span className="flex-1 text-left">Planilha (.xlsx)</span>
+                    <Download className="h-3.5 w-3.5 shrink-0 opacity-50" />
+                  </DropdownMenuItem>
+                </div>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
           <div className="w-full min-w-0 shrink-0 lg:w-[220px]">
             <span className="mb-[4px] block text-xs text-[var(--color-muted-foreground)]">
               Responsáveis pelos tickets
@@ -675,6 +970,97 @@ export default function Support() {
           <div className="flex flex-1 items-center justify-center text-[var(--color-muted-foreground)]">
             <Loader2 className="mr-[10px] h-5 w-5 animate-spin" />
             Carregando chamados…
+          </div>
+        ) : viewMode === 'lista' ? (
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+            <div className="flex flex-col flex-1 min-h-0 min-w-0 mt-[16px] px-[8px] pb-[8px]">
+              {selectedColumnDefsSafe.length === 0 ? (
+                <div className="flex flex-1 min-h-0 items-center justify-center text-center px-[16px] text-sm text-[var(--color-muted-foreground)]">
+                  Selecione ao menos uma coluna em{' '}
+                  <span className="font-semibold">Selecionar colunas</span>.
+                </div>
+              ) : visibleChamadosForList.length === 0 ? (
+                <div className="flex flex-1 min-h-0 items-center justify-center text-center px-[16px] text-sm text-[var(--color-muted-foreground)]">
+                  Nenhum ticket na lista (com os filtros atuais).
+                </div>
+              ) : (
+                <div className="flex flex-col flex-1 min-h-0 min-w-0 gap-[8px]">
+                  <p className="flex-shrink-0 text-[11px] text-[var(--color-muted-foreground)] leading-snug px-[4px]">
+                    <span className="font-medium text-[var(--color-foreground)]">Tabela:</span>{' '}
+                    clique no <span className="font-medium">cabeçalho</span> da coluna para mostrar/ocultar o texto
+                    completo nela; <span className="font-medium">duplo clique</span> no cabeçalho expande ou recolhe{' '}
+                    <span className="font-medium">todas</span> as colunas (como ajustar largura no Excel).
+                    {listExpandAllColumns ? (
+                      <span className="ml-[6px] text-primary font-medium">(modo: todas expandidas)</span>
+                    ) : null}
+                  </p>
+                  <div className="min-h-0 min-w-0 flex-1 overflow-auto overscroll-contain rounded-[8px] border border-[var(--color-border)] bg-[var(--color-background)] [scrollbar-gutter:stable]">
+                    <table className="w-max min-w-full border-collapse text-xs">
+                      <thead className="sticky top-0 z-[10] bg-[var(--color-background)] shadow-[0_1px_0_var(--color-border)]">
+                        <tr>
+                          {selectedColumnDefsSafe.map((col) => {
+                            const colExpanded =
+                              listExpandAllColumns || listExpandedColumnIds.has(col.id);
+                            return (
+                              <th
+                                key={col.id}
+                                scope="col"
+                                className={cn(
+                                  'border-b border-r border-[var(--color-border)] px-2 py-2 text-left font-semibold text-[var(--color-foreground)] align-bottom',
+                                  'cursor-pointer select-none whitespace-nowrap w-auto max-w-[14rem]',
+                                  colExpanded
+                                    ? 'bg-[var(--color-primary)]/12'
+                                    : 'bg-[var(--color-muted)]/35',
+                                )}
+                                title="Clique: expandir/recolher esta coluna · Duplo clique: todas as colunas"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  onListColumnHeaderClick(col.id);
+                                }}
+                                onDoubleClick={(e) => onListColumnHeaderDoubleClick(e)}
+                              >
+                                {col.label}
+                              </th>
+                            );
+                          })}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {visibleChamadosForList.map((chamado) => (
+                          <tr
+                            key={chamado.id}
+                            className="border-b border-[var(--color-border)] hover:bg-[var(--color-muted)]/20 cursor-pointer"
+                            onClick={() => setDetailChamado(chamado)}
+                          >
+                            {selectedColumnDefsSafe.map((col) => {
+                              const text = formatSuporteColumnValueForDisplay(
+                                col.getValue({ chamado }),
+                              );
+                              const expanded =
+                                listExpandAllColumns || listExpandedColumnIds.has(col.id);
+                              return (
+                                <td
+                                  key={col.id}
+                                  className={cn(
+                                    'border-r border-[var(--color-border)] px-2 py-1.5 align-top text-[var(--color-foreground)]',
+                                    expanded
+                                      ? 'whitespace-pre-wrap break-words max-w-[min(42rem,92vw)]'
+                                      : 'max-w-[9rem] sm:max-w-[12rem] overflow-hidden text-ellipsis whitespace-nowrap',
+                                  )}
+                                  title={expanded || text.length <= 80 ? undefined : text}
+                                >
+                                  {text}
+                                </td>
+                              );
+                            })}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
         ) : (
           <DndContext
@@ -707,6 +1093,131 @@ export default function Support() {
         )}
       </div>
 
+      <Dialog
+        open={columnsDialogOpen}
+        onOpenChange={setColumnsDialogOpen}
+        containerClassName="max-w-[min(1420px,calc(100vw-1.5rem))]"
+      >
+        <DialogContent className="flex max-h-[min(90vh,900px)] w-full max-w-none flex-col gap-0 overflow-hidden p-0">
+          <div className="border-b border-[var(--color-border)] px-6 pb-4 pt-6">
+            <DialogHeader className="space-y-1 text-left">
+              <DialogTitle>Selecionar colunas</DialogTitle>
+              <DialogDescription>
+                Ticket e Solicitante — até 5 opções por linha em cada bloco. As marcas valem para a lista e para
+                CSV/XLSX.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="mt-4 flex flex-wrap gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setSelectedColumnIds(SUPORTE_CHAMADOS_COLUMN_IDS)}
+              >
+                Marcar todos
+              </Button>
+              <Button type="button" variant="outline" size="sm" onClick={() => setSelectedColumnIds([])}>
+                Desmarcar todos
+              </Button>
+            </div>
+          </div>
+
+          <div className="min-h-0 flex-1 overflow-y-auto px-6 py-4">
+            <div className="flex flex-col gap-6">
+              {(['ticket', 'solicitante'] as SuporteColumnGroup[]).map((group) => {
+                const groupColumns = getSuporteColumnDefsByGroup(group);
+                const title = group === 'ticket' ? 'Ticket' : 'Solicitante';
+                const groupIds = groupColumns.map((c) => c.id);
+                const toggleGroup = (checked: boolean) => {
+                  setSelectedColumnIds((prev) => {
+                    const set = new Set(prev);
+                    if (checked) {
+                      groupIds.forEach((id) => set.add(id));
+                    } else {
+                      groupIds.forEach((id) => set.delete(id));
+                    }
+                    return SUPORTE_CHAMADOS_COLUMN_DEFS.map((c) => c.id).filter((id) => set.has(id));
+                  });
+                };
+                return (
+                  <section
+                    key={group}
+                    className="rounded-xl border border-[var(--color-border)] bg-[var(--color-card)] shadow-sm"
+                  >
+                    <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--color-border)] bg-[var(--color-muted)]/30 px-4 py-3">
+                      <h3 className="text-sm font-semibold tracking-tight text-[var(--color-foreground)]">
+                        {title}
+                      </h3>
+                      <div className="flex items-center gap-2">
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          className="h-8 text-xs"
+                          onClick={() => toggleGroup(true)}
+                        >
+                          Marcar bloco
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          className="h-8 text-xs"
+                          onClick={() => toggleGroup(false)}
+                        >
+                          Limpar bloco
+                        </Button>
+                      </div>
+                    </div>
+                    <div className="px-4 py-3">
+                      <div className="grid w-full grid-cols-5 gap-x-3 gap-y-3">
+                        {groupColumns.map((col) => {
+                          const on = selectedColumnIds.includes(col.id);
+                          return (
+                            <label
+                              key={col.id}
+                              className="flex min-w-0 cursor-pointer items-start gap-2 py-0.5 hover:bg-[var(--color-muted)]/20"
+                            >
+                              <input
+                                type="checkbox"
+                                className="mt-0.5 h-4 w-4 shrink-0 rounded border-[var(--color-input)]"
+                                checked={on}
+                                onChange={(e) => toggleColumnId(col.id, e.target.checked)}
+                              />
+                              <span
+                                className={cn(
+                                  'text-xs leading-snug break-words [overflow-wrap:anywhere]',
+                                  on
+                                    ? 'font-medium text-[var(--color-primary)]'
+                                    : 'text-[var(--color-foreground)]',
+                                )}
+                              >
+                                {col.label}
+                              </span>
+                            </label>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </section>
+                );
+              })}
+            </div>
+          </div>
+
+          <div className="border-t border-[var(--color-border)] px-6 py-4">
+            <DialogFooter className="gap-2 sm:gap-0">
+              <Button type="button" variant="outline" onClick={() => setColumnsDialogOpen(false)}>
+                Cancelar
+              </Button>
+              <Button type="button" onClick={() => setColumnsDialogOpen(false)}>
+                Concluir
+              </Button>
+            </DialogFooter>
+          </div>
+        </DialogContent>
+      </Dialog>
+
       <CreateChamadoDialog
         open={createOpen}
         onOpenChange={setCreateOpen}
@@ -728,6 +1239,8 @@ export default function Support() {
         getKanbanStageLabel={getKanbanStageLabel}
         timelineRefreshNonce={timelineRefreshNonce}
         bumpTimeline={bumpTimeline}
+        concludingTicketId={concludingTicketId}
+        onConcluirTicket={handleConcluirTicketNoCard}
         onUpdated={(c) => {
           setItems((prev) => prev.map((x) => (x.id === c.id ? c : x)));
           setDetailChamado((d) => (d?.id === c.id ? c : d));
@@ -736,13 +1249,13 @@ export default function Support() {
       />
 
       <ConclusaoModal
-        isOpen={!!pendingConfirmDestrutivo}
-        onClose={() => setPendingConfirmDestrutivo(null)}
-        onConfirm={handleConfirmDestrutivo}
+        isOpen={!!pendingInviabilizarChamado}
+        onClose={() => setPendingInviabilizarChamado(null)}
+        onConfirm={handleConfirmInviabilizar}
         cardName={
-          pendingConfirmDestrutivo ? tituloItemMotivo(pendingConfirmDestrutivo.chamado) : undefined
+          pendingInviabilizarChamado ? tituloItemMotivo(pendingInviabilizarChamado) : undefined
         }
-        variant={pendingConfirmDestrutivo?.tipo === 'inviabilizado' ? 'inviabilizado' : 'conclusao'}
+        variant="inviabilizado"
         nameLabel="Ticket"
       />
 
@@ -752,38 +1265,6 @@ export default function Support() {
         onConfirm={handlePendenciaConfirm}
         cardName={pendingPendenciaChamado ? tituloItemMotivo(pendingPendenciaChamado) : ''}
       />
-
-      <Dialog open={!!pendingFinalize} onOpenChange={(o) => !o && setPendingFinalize(null)}>
-        <DialogContent className="sm:max-w-[440px]">
-          <DialogHeader>
-            <DialogTitle>Concluir ticket</DialogTitle>
-            <DialogDescription>
-              Para concluir o ticket nº {pendingFinalize?.chamado.id}, preencha as notas de resolução — são
-              obrigatórias; a API não aceita encerrar o chamado sem este texto.
-            </DialogDescription>
-          </DialogHeader>
-          <Textarea
-            value={pendingFinalize?.note ?? ''}
-            onChange={(ev) =>
-              setPendingFinalize((p) => (p ? { ...p, note: ev.target.value } : p))
-            }
-            placeholder="Descrição da resolução…"
-            rows={4}
-          />
-          <DialogFooter className="gap-[8px] sm:gap-0">
-            <Button type="button" variant="outline" onClick={() => setPendingFinalize(null)}>
-              Cancelar
-            </Button>
-            <Button
-              type="button"
-              disabled={!pendingFinalize?.note.trim()}
-              onClick={() => void confirmFinalize()}
-            >
-              Salvar e mover para Concluído
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }
@@ -888,8 +1369,10 @@ function SortableChamadoCard({
   users: User[];
   onOpen: () => void;
 }) {
+  const bloqueado = chamadoEncerradoNoQuadro(chamado);
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: dragId(chamado.id),
+    disabled: bloqueado,
   });
   const style = {
     transform: CSS.Transform.toString(transform),
@@ -898,91 +1381,97 @@ function SortableChamadoCard({
   };
 
   return (
-    <button
+    <div
       ref={setNodeRef}
-      type="button"
       style={style}
       className={cn(
-        'w-full cursor-grab touch-none rounded-[10px] border border-[var(--color-border)] bg-[var(--color-background)] p-[10px] text-left shadow-sm transition-colors hover:border-[var(--color-primary)]/40 active:cursor-grabbing',
+        'w-full space-y-[6px] rounded-[10px] border border-[var(--color-border)] bg-[var(--color-background)] p-[10px] text-left shadow-sm outline-none transition-colors focus-visible:ring-2 focus-visible:ring-[var(--color-ring)] focus-visible:ring-offset-2',
+        bloqueado
+          ? 'cursor-default'
+          : 'touch-none cursor-grab hover:border-[var(--color-primary)]/40 active:cursor-grabbing',
       )}
-      onClick={onOpen}
-      {...attributes}
-      {...listeners}
+      {...(!bloqueado ? { ...attributes, ...listeners } : { tabIndex: 0, role: 'button' as const })}
+      title={bloqueado ? 'Ticket concluído ou inviabilizado — não pode ser movido no quadro' : undefined}
+      onClick={() => onOpen()}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          onOpen();
+        }
+      }}
     >
-      <div className="min-w-0 space-y-[6px]">
-        <div className="flex items-start justify-between gap-[8px]">
-          <div className="min-w-0 flex-1 text-[13px] font-semibold leading-snug text-[var(--color-foreground)] line-clamp-2">
-            {tituloItemMotivo(chamado)}
-          </div>
-          <span className="shrink-0 pt-[1px] text-[11px] font-semibold tabular-nums text-[var(--color-muted-foreground)]">
-            #{chamado.id}
-          </span>
-        </div>
-        <p className="text-[12px] leading-snug whitespace-pre-wrap break-words text-[var(--color-foreground)] line-clamp-4">
-          {chamado.descricao?.trim() ? chamado.descricao : '—'}
-        </p>
-        <div className="text-[11px] text-[var(--color-muted-foreground)]">
-          {(chamado.usuario_setor ?? '').trim() || '—'} – {chamado.usuario_nome || '—'}
-        </div>
-        <div className="text-[11px] font-medium text-[var(--color-foreground)]">{catalogNome(chamado.tipo)}</div>
-
-        {(() => {
-          const sol = (chamado.responsavel_solucao ?? '').trim();
-          const ped = (chamado.responsavel ?? '').trim();
-          return (
-            <>
-              {sol ? (
-                <div className="space-y-[4px] pt-[2px]">
-                  <div className="text-[10px] font-medium uppercase tracking-wide text-[var(--color-muted-foreground)]">
-                    Responsável
-                  </div>
-                  <SuporteResponsavelFace
-                    users={users}
-                    nome={sol}
-                    avatarClassName="h-7 w-7"
-                    textClassName="text-[11px] font-medium text-[var(--color-foreground)]"
-                  />
-                </div>
-              ) : null}
-              {ped && ped !== sol ? (
-                <div className="space-y-[4px] pt-[2px]">
-                  <div className="text-[10px] font-medium uppercase tracking-wide text-[var(--color-muted-foreground)]">
-                    Responsável (pedido)
-                  </div>
-                  <SuporteResponsavelFace
-                    users={users}
-                    nome={ped}
-                    avatarClassName="h-7 w-7"
-                    textClassName="text-[11px] font-medium text-[var(--color-foreground)]"
-                  />
-                </div>
-              ) : null}
-            </>
-          );
-        })()}
-
-        {chamadoEstaAberto(chamado) ? (
-          <div className="space-y-[4px] border-t border-[var(--color-border)]/80 pt-[4px] text-[11px] text-[var(--color-muted-foreground)]">
-            <div className="truncate" title={chamado.usuario_email}>
-              E-mail: {chamado.usuario_email || '—'}
+          <div className="flex items-start justify-between gap-[8px]">
+            <div className="min-w-0 flex-1 text-[13px] font-semibold leading-snug text-[var(--color-foreground)] line-clamp-2">
+              {tituloItemMotivo(chamado)}
             </div>
-            <div className="truncate">{chamado.empresa?.trim() ? `Empresa: ${chamado.empresa}` : 'Empresa: —'}</div>
-            {chamado.anexo_url ? (
-              <div className="truncate text-[var(--color-primary)]">Anexo: link disponível</div>
-            ) : (
-              <div>Anexo: —</div>
-            )}
-            <div>Notificado: {chamado.usuario_notificado ? 'sim' : 'não'}</div>
+            <span className="shrink-0 pt-[1px] text-[11px] font-semibold tabular-nums text-[var(--color-muted-foreground)]">
+              #{chamado.id}
+            </span>
           </div>
-        ) : null}
+          <p className="text-[12px] leading-snug whitespace-pre-wrap break-words text-[var(--color-foreground)] line-clamp-4">
+            {chamado.descricao?.trim() ? chamado.descricao : '—'}
+          </p>
+          <div className="text-[11px] text-[var(--color-muted-foreground)]">
+            {(chamado.usuario_setor ?? '').trim() || '—'} – {chamado.usuario_nome || '—'}
+          </div>
+          <div className="text-[11px] font-medium text-[var(--color-foreground)]">{catalogNome(chamado.tipo)}</div>
 
-        <div className="flex flex-wrap gap-[4px] pt-[2px]">
-          <Badge variant="outline" className="text-[10px]">
-            {chamado.status}
-          </Badge>
-        </div>
-      </div>
-    </button>
+          {(() => {
+            const sol = (chamado.responsavel_solucao ?? '').trim();
+            const ped = (chamado.responsavel ?? '').trim();
+            return (
+              <>
+                {sol ? (
+                  <div className="space-y-[4px] pt-[2px]">
+                    <div className="text-[10px] font-medium uppercase tracking-wide text-[var(--color-muted-foreground)]">
+                      Responsável
+                    </div>
+                    <SuporteResponsavelFace
+                      users={users}
+                      nome={sol}
+                      avatarClassName="h-7 w-7"
+                      textClassName="text-[11px] font-medium text-[var(--color-foreground)]"
+                    />
+                  </div>
+                ) : null}
+                {ped && ped !== sol ? (
+                  <div className="space-y-[4px] pt-[2px]">
+                    <div className="text-[10px] font-medium uppercase tracking-wide text-[var(--color-muted-foreground)]">
+                      Responsável (pedido)
+                    </div>
+                    <SuporteResponsavelFace
+                      users={users}
+                      nome={ped}
+                      avatarClassName="h-7 w-7"
+                      textClassName="text-[11px] font-medium text-[var(--color-foreground)]"
+                    />
+                  </div>
+                ) : null}
+              </>
+            );
+          })()}
+
+          {chamadoEstaAberto(chamado) ? (
+            <div className="space-y-[4px] border-t border-[var(--color-border)]/80 pt-[4px] text-[11px] text-[var(--color-muted-foreground)]">
+              <div className="truncate" title={chamado.usuario_email}>
+                E-mail: {chamado.usuario_email || '—'}
+              </div>
+              <div className="truncate">{chamado.empresa?.trim() ? `Empresa: ${chamado.empresa}` : 'Empresa: —'}</div>
+              {chamado.anexo_url ? (
+                <div className="truncate text-[var(--color-primary)]">Anexo: link disponível</div>
+              ) : (
+                <div>Anexo: —</div>
+              )}
+              <div>Notificado: {chamado.usuario_notificado ? 'sim' : 'não'}</div>
+            </div>
+          ) : null}
+
+          <div className="flex flex-wrap gap-[4px] pt-[2px]">
+            <Badge variant="outline" className="text-[10px]">
+              {chamado.status}
+            </Badge>
+          </div>
+    </div>
   );
 }
 
@@ -1334,6 +1823,8 @@ function ChamadoDetailDialog({
   getKanbanStageLabel,
   timelineRefreshNonce,
   bumpTimeline,
+  concludingTicketId,
+  onConcluirTicket,
   onUpdated,
   onError,
 }: {
@@ -1345,60 +1836,79 @@ function ChamadoDetailDialog({
   getKanbanStageLabel: (c: ChamadoSuporte) => string;
   timelineRefreshNonce: number;
   bumpTimeline: () => void;
+  concludingTicketId: number | null;
+  onConcluirTicket: (c: ChamadoSuporte, note: string) => void | Promise<void>;
   onUpdated: (c: ChamadoSuporte) => void;
   onError: (m: string) => void;
 }) {
-  const [resolucao, setResolucao] = useState('');
   const [responsavelUserId, setResponsavelUserId] = useState('');
   const [saving, setSaving] = useState(false);
   const [notifying, setNotifying] = useState(false);
   const [empresaCopied, setEmpresaCopied] = useState(false);
   const [timelineOpen, setTimelineOpen] = useState(true);
+  const [pegarCardConfirmOpen, setPegarCardConfirmOpen] = useState(false);
 
   useEffect(() => {
     if (!chamado) return;
-    setResolucao(stripPendenciaMarker(chamado.descricao_resolucao ?? ''));
     setResponsavelUserId(userIdFromResponsavelNome(users, chamado.responsavel_solucao));
     setEmpresaCopied(false);
     setTimelineOpen(true);
+    setPegarCardConfirmOpen(false);
   }, [chamado, users]);
+
+  const resolucaoDraft = useSuporteResolucaoDraft(
+    chamado?.id,
+    chamado?.descricao_resolucao,
+    concludingTicketId,
+    chamado != null && !chamadoEncerradoNoQuadro(chamado),
+  );
 
   if (!chamado) return null;
 
-  const saveResolutionFields = async () => {
+  const encerradoNoQuadro = chamadoEncerradoNoQuadro(chamado);
+
+  const persistResponsavelSeAlterado = async (nextUserId: string) => {
+    if (encerradoNoQuadro) return;
+
+    setResponsavelUserId(nextUserId);
+    const nomeSolucao = responsavelNomeFromUserId(users, nextUserId).trim();
+    const atualNome = (chamado.responsavel_solucao ?? '').trim();
+    if (nomeSolucao === atualNome) return;
+
     const antes = chamado;
     try {
       setSaving(true);
-      const isParado = (chamado.descricao_resolucao ?? '').startsWith(SUPORTE_PENDENCIA_PREFIX);
-      const descPayload = isParado ? ensurePendenciaMarker(resolucao) : resolucao.trim() || null;
-      const nomeSolucao = responsavelNomeFromUserId(users, responsavelUserId).trim();
       const updated = await suporteService.patch(chamado.id, {
         responsavel_solucao: nomeSolucao || null,
-        descricao_resolucao: descPayload,
       });
       onUpdated(updated);
       await logSuporteChamadoChanges(antes, updated, getKanbanStageLabel);
       bumpTimeline();
     } catch (e: unknown) {
+      setResponsavelUserId(userIdFromResponsavelNome(users, chamado.responsavel_solucao));
       const data =
         e && typeof e === 'object' && 'response' in e
           ? (e as { response?: { data?: unknown } }).response?.data
           : null;
-      onError(data ? JSON.stringify(data) : 'Erro ao salvar.');
+      onError(data ? JSON.stringify(data) : 'Erro ao atualizar responsável.');
     } finally {
       setSaving(false);
     }
   };
 
-  const pegarChamado = async () => {
+  const executarPegarCard = async () => {
+    if (encerradoNoQuadro) return;
+
     const antes = chamado;
+    setPegarCardConfirmOpen(false);
     try {
       setSaving(true);
-      const nomeSolucao = responsavelNomeFromUserId(users, responsavelUserId).trim();
+      const nomeReserva = responsavelNomeFromUserId(users, responsavelUserId).trim();
+      const novoResponsavel = assigneeName.trim() || nomeReserva || null;
       const updated = await suporteService.patch(chamado.id, {
         status: 'Em andamento',
-        responsavel_solucao: assigneeName.trim() || nomeSolucao || null,
-        descricao_resolucao: stripPendenciaMarker(resolucao).trim() || null,
+        responsavel_solucao: novoResponsavel,
+        descricao_resolucao: stripPendenciaMarker(chamado.descricao_resolucao ?? '').trim() || null,
       });
       setResponsavelUserId(userIdFromResponsavelNome(users, updated.responsavel_solucao));
       onUpdated(updated);
@@ -1409,6 +1919,19 @@ function ChamadoDetailDialog({
     } finally {
       setSaving(false);
     }
+  };
+
+  const solicitarPegarCard = () => {
+    if (encerradoNoQuadro) return;
+
+    const atualResp = (chamado.responsavel_solucao ?? '').trim();
+    const eu = assigneeName.trim();
+    const mesmoEu = eu.length > 0 && atualResp.toLowerCase() === eu.toLowerCase();
+    if (atualResp && !mesmoEu) {
+      setPegarCardConfirmOpen(true);
+      return;
+    }
+    void executarPegarCard();
   };
 
   const notify = async () => {
@@ -1611,27 +2134,98 @@ function ChamadoDetailDialog({
             <UserSelect
               users={users}
               value={responsavelUserId}
-              onChange={setResponsavelUserId}
+              onChange={(id) => void persistResponsavelSeAlterado(id)}
               placeholder="Selecione o responsável pelo ticket"
+              disabled={saving || encerradoNoQuadro}
             />
+            {encerradoNoQuadro ? (
+              <p className="text-[11px] text-[var(--color-muted-foreground)] leading-snug">
+                Tickets concluídos ou inviabilizados não permitem alterar o responsável pelo ticket.
+              </p>
+            ) : null}
           </div>
 
-          <div className="grid gap-[6px]">
-            <Label htmlFor="notas-resolucao">Notas de resolução</Label>
-            <Textarea id="notas-resolucao" value={resolucao} onChange={(e) => setResolucao(e.target.value)} rows={5} />
-          </div>
+          {chamadoEncerradoNoQuadro(chamado) ? (
+            <div className="grid gap-[6px]">
+              <Label>Notas de resolução</Label>
+              <div className="rounded-[8px] border border-[var(--color-border)] bg-[var(--color-muted)]/20 p-[12px]">
+                <p className="text-sm whitespace-pre-wrap break-words text-[var(--color-foreground)]">
+                  {stripPendenciaMarker(chamado.descricao_resolucao ?? '').trim() || '—'}
+                </p>
+              </div>
+            </div>
+          ) : (
+            <div className="grid gap-[6px]" onPointerDown={(e) => e.stopPropagation()}>
+              <Label
+                htmlFor={`desc-resolucao-${chamado.id}`}
+                className="text-[10px] font-medium uppercase tracking-wide text-[var(--color-muted-foreground)]"
+              >
+                Descrição da resolução
+              </Label>
+              <Textarea
+                id={`desc-resolucao-${chamado.id}`}
+                value={resolucaoDraft.note}
+                onChange={(e) => {
+                  resolucaoDraft.markDirty();
+                  resolucaoDraft.setNote(e.target.value);
+                }}
+                placeholder="Obrigatório para concluir o ticket…"
+                rows={3}
+                disabled={resolucaoDraft.busy}
+                className="min-h-0 resize-none text-[12px]"
+              />
+            </div>
+          )}
 
-          <div className="flex flex-wrap gap-[8px] pt-[4px]">
-            <Button type="button" variant="secondary" size="sm" disabled={saving} onClick={() => void pegarChamado()}>
-              Pegar (Em andamento)
+          <div
+            className="flex w-full gap-[8px] border-t border-[var(--color-border)] pt-[10px]"
+            onPointerDown={(e) => e.stopPropagation()}
+          >
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              className="min-h-[36px] flex-1 basis-0 min-w-0 justify-center text-center whitespace-normal px-[8px] py-[8px]"
+              disabled={saving || chamadoEncerradoNoQuadro(chamado)}
+              onClick={() => void solicitarPegarCard()}
+            >
+              Pegar Card
             </Button>
-            <Button type="button" size="sm" disabled={saving} onClick={() => void saveResolutionFields()}>
-              {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Salvar notas'}
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="min-h-[36px] flex-1 basis-0 min-w-0 justify-center text-center whitespace-normal px-[8px] py-[8px]"
+              disabled={notifying}
+              onClick={() => void notify()}
+            >
+              <span className="inline-flex items-center justify-center gap-[6px]">
+                <Bell className="h-4 w-4 shrink-0" />
+                {notifying ? '…' : 'Notificar usuário'}
+              </span>
             </Button>
-            <Button type="button" variant="outline" size="sm" disabled={notifying} onClick={() => void notify()}>
-              <Bell className="h-4 w-4 mr-[6px]" />
-              {notifying ? '…' : 'Notificar usuário'}
-            </Button>
+            {!chamadoEncerradoNoQuadro(chamado) ? (
+              <Button
+                type="button"
+                size="sm"
+                className="min-h-[36px] flex-1 basis-0 min-w-0 justify-center text-center whitespace-normal px-[8px] py-[8px]"
+                disabled={!resolucaoDraft.canConcluir}
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  void onConcluirTicket(chamado, resolucaoDraft.note.trim());
+                }}
+              >
+                {resolucaoDraft.busy ? (
+                  <span className="inline-flex items-center justify-center gap-[8px]">
+                    <Loader2 className="h-[14px] w-[14px] shrink-0 animate-spin" />
+                    Concluindo…
+                  </span>
+                ) : (
+                  'Concluir card'
+                )}
+              </Button>
+            ) : null}
           </div>
         </div>
       </DialogContent>
@@ -1644,6 +2238,46 @@ function ChamadoDetailDialog({
         onError={onError}
       />
     ) : null}
+
+      <Dialog open={pegarCardConfirmOpen} onOpenChange={(v) => !v && !saving && setPegarCardConfirmOpen(false)}>
+        <DialogContent className="sm:max-w-[440px]" onClose={() => !saving && setPegarCardConfirmOpen(false)}>
+          <DialogHeader>
+            <DialogTitle>Pegar card</DialogTitle>
+            <DialogDescription>
+              Este ticket já tem um desenvolvedor responsável (abaixo). Deseja pegar o card mesmo assim? Ao confirmar,
+              você passará a ser o responsável pelo ticket.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="rounded-[10px] border border-[var(--color-border)] bg-[var(--color-muted)]/20 px-[14px] py-[12px]">
+            <SuporteResponsavelFace
+              users={users}
+              nome={chamado.responsavel_solucao}
+              avatarClassName="h-12 w-12"
+              textClassName="text-[15px] font-semibold text-[var(--color-foreground)]"
+            />
+          </div>
+          <DialogFooter className="gap-[8px] sm:gap-0">
+            <Button
+              type="button"
+              variant="outline"
+              disabled={saving}
+              onClick={() => setPegarCardConfirmOpen(false)}
+            >
+              Cancelar
+            </Button>
+            <Button type="button" disabled={saving} onClick={() => void executarPegarCard()}>
+              {saving ? (
+                <>
+                  <Loader2 className="mr-[8px] h-4 w-4 animate-spin" />
+                  Atribuindo…
+                </>
+              ) : (
+                'Confirmar'
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </>
   );
 }
