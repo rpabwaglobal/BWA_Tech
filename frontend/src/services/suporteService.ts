@@ -1,0 +1,121 @@
+import formulariosApi from './formulariosApi';
+
+/** Prefixo interno em `descricao_resolucao` para coluna "Parado por pendências" (a API só tem status "Em andamento"). */
+export const SUPORTE_PENDENCIA_PREFIX = '__PENDENCIA_BWA__\n';
+
+export type SuporteStatusApi = 'Aberto' | 'Em andamento' | 'Resolvido' | 'Cancelado';
+
+export type SuporteCatalogRef = {
+  id?: number;
+  nome?: string;
+  ativo?: boolean;
+};
+
+export type ChamadoSuporte = {
+  id: number;
+  usuario_nome: string;
+  usuario_email: string;
+  usuario_setor?: string | null;
+  empresa?: string | null;
+  descricao: string;
+  tipo: number | SuporteCatalogRef;
+  item: number | SuporteCatalogRef;
+  motivo: number | SuporteCatalogRef;
+  anexo_url?: string | null;
+  status: SuporteStatusApi;
+  usuario_notificado?: boolean;
+  responsavel?: string | null;
+  responsavel_solucao?: string | null;
+  descricao_resolucao?: string | null;
+  data_abertura?: string;
+  data_atualizacao?: string;
+};
+
+export type CreateChamadoSuportePayload = {
+  usuario_nome: string;
+  usuario_email: string;
+  usuario_setor?: string | null;
+  tipo: number;
+  item: number;
+  motivo: number;
+  empresa?: string | null;
+  descricao: string;
+  anexo_url?: string | null;
+  status?: SuporteStatusApi;
+  responsavel?: string | null;
+  responsavel_solucao?: string | null;
+  descricao_resolucao?: string | null;
+};
+
+export type PatchChamadoSuportePayload = {
+  status?: SuporteStatusApi;
+  responsavel_solucao?: string | null;
+  descricao_resolucao?: string | null;
+};
+
+export type CatalogoItemLista = { id: number; nome: string; ativo: boolean };
+export type CatalogoTipoLista = CatalogoItemLista & { itens: CatalogoItemLista[] };
+export type CatalogoSuporteResponse = { tipos: CatalogoTipoLista[]; motivos: CatalogoItemLista[] };
+
+export function stripPendenciaMarker(text: string | null | undefined): string {
+  const s = text ?? '';
+  return s.startsWith(SUPORTE_PENDENCIA_PREFIX) ? s.slice(SUPORTE_PENDENCIA_PREFIX.length) : s;
+}
+
+export function ensurePendenciaMarker(text: string | null | undefined): string {
+  const body = stripPendenciaMarker(text ?? '').trim();
+  if (!body) return SUPORTE_PENDENCIA_PREFIX;
+  return `${SUPORTE_PENDENCIA_PREFIX}${body}`;
+}
+
+export function catalogNome(ref: number | SuporteCatalogRef | undefined): string {
+  if (ref == null) return '—';
+  if (typeof ref === 'number') return String(ref);
+  return ref.nome ?? String(ref.id ?? '—');
+}
+
+export const suporteService = {
+  /**
+   * Catálogo tipo → itens e motivos para o formulário de novo chamado.
+   * Ajuste `VITE_FORMULARIOS_SUPORTE_CATALOGO_PATH` se a operação usar outra rota (padrão: `suporte/catalogo/`).
+   */
+  async fetchCatalog(): Promise<CatalogoSuporteResponse> {
+    const raw = (import.meta.env.VITE_FORMULARIOS_SUPORTE_CATALOGO_PATH as string | undefined)?.trim();
+    const path = (raw ? raw.replace(/^\//, '') : '') || 'suporte/catalogo/';
+    const { data } = await formulariosApi.get<CatalogoSuporteResponse>(path);
+    return data;
+  },
+
+  async listByUsuario(usuarioEmail?: string): Promise<ChamadoSuporte[]> {
+    const params =
+      usuarioEmail !== undefined && usuarioEmail !== ''
+        ? { usuario_email: usuarioEmail }
+        : undefined;
+    const { data } = await formulariosApi.get<
+      ChamadoSuporte[] | { results?: ChamadoSuporte[]; count?: number }
+    >('suporte/por-usuario/', {
+      params,
+    });
+    if (Array.isArray(data)) return data;
+    if (data && typeof data === 'object' && Array.isArray(data.results)) return data.results;
+    return [];
+  },
+
+  async create(payload: CreateChamadoSuportePayload): Promise<ChamadoSuporte> {
+    const { data } = await formulariosApi.post<ChamadoSuporte>('suporte/', payload);
+    return data;
+  },
+
+  async patch(id: number, payload: PatchChamadoSuportePayload): Promise<ChamadoSuporte> {
+    const { data } = await formulariosApi.patch<ChamadoSuporte>(`suporte/${id}/`, payload);
+    return data;
+  },
+
+  async notificarUsuario(id: number): Promise<ChamadoSuporte> {
+    const { data } = await formulariosApi.patch<ChamadoSuporte>(
+      `suporte/${id}/notificar-usuario/`,
+      { usuario_notificado: true },
+    );
+    return data;
+  },
+};

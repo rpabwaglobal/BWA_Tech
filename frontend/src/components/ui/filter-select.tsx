@@ -1,10 +1,14 @@
 import { useState, useRef, useEffect } from 'react';
 import { Input } from '@/components/ui/input';
+import { Badge } from '@/components/ui/badge';
 import { ChevronDown, Search, X } from 'lucide-react';
+import { getRoleColor, getRoleFullLabel, getRoleLabel } from '@/components/ui/user-select';
 
 export type FilterSelectOption = {
   value: string;
   label: string;
+  /** Quando definido, exibe badge de papel à esquerda do nome (como no UserSelect). */
+  role?: string;
 };
 
 type FilterSelectProps = {
@@ -32,7 +36,14 @@ export function FilterSelect({
   const filteredOptions = options.filter((opt) => {
     if (!searchQuery.trim()) return true;
     const query = searchQuery.toLowerCase();
-    return opt.label.toLowerCase().includes(query);
+    const blob = [
+      opt.label,
+      opt.role ?? '',
+      opt.role ? getRoleFullLabel(opt.role) : '',
+    ]
+      .join(' ')
+      .toLowerCase();
+    return blob.includes(query);
   });
 
   useEffect(() => {
@@ -76,11 +87,16 @@ export function FilterSelect({
         disabled={disabled}
         className="flex h-[40px] w-full items-center justify-between rounded-[8px] border border-[var(--color-input)] bg-[var(--color-background)] px-[12px] py-[8px] text-sm ring-offset-[var(--color-background)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-ring)] focus-visible:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed"
       >
-        <div className="flex items-center gap-2 flex-1 min-w-0">
+        <div className="flex min-w-0 flex-1 items-center gap-2">
           {selectedOption ? (
-            <span className="truncate">
-              {selectedOption.label}
-            </span>
+            <>
+              {selectedOption.role ? (
+                <Badge className={`${getRoleColor(selectedOption.role)} w-[64px] shrink-0 justify-center px-1 text-[10px]`}>
+                  {getRoleLabel(selectedOption.role)}
+                </Badge>
+              ) : null}
+              <span className="truncate">{selectedOption.label}</span>
+            </>
           ) : (
             <span className="text-[var(--color-muted-foreground)]">{placeholder}</span>
           )}
@@ -128,11 +144,18 @@ export function FilterSelect({
                     key={opt.value}
                     type="button"
                     onClick={() => handleSelect(opt.value)}
-                    className={`w-full px-3 py-2 text-left hover:bg-[var(--color-accent)] transition-colors text-sm ${
+                    className={`flex w-full items-center gap-2 px-3 py-2 text-left text-sm transition-colors hover:bg-[var(--color-accent)] ${
                       isSelected ? 'bg-[var(--color-accent)]' : ''
                     }`}
                   >
-                    <span>{opt.label}</span>
+                    {opt.role ? (
+                      <Badge className={`${getRoleColor(opt.role)} w-[64px] shrink-0 justify-center text-[10px]`}>
+                        {getRoleLabel(opt.role)}
+                      </Badge>
+                    ) : (
+                      <span className="w-[64px] shrink-0" aria-hidden />
+                    )}
+                    <span className="min-w-0 truncate">{opt.label}</span>
                   </button>
                 );
               })

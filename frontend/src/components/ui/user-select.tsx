@@ -12,7 +12,7 @@ type UserSelectProps = {
   placeholder?: string;
 };
 
-const getRoleColor = (role: string) => {
+export const getRoleColor = (role: string) => {
   switch (role) {
     case 'admin':
       return 'bg-purple-100 text-purple-800 border-purple-300';
@@ -31,7 +31,7 @@ const getRoleColor = (role: string) => {
   }
 };
 
-const getRoleLabel = (role: string) => {
+export const getRoleLabel = (role: string) => {
   switch (role) {
     case 'desenvolvedor':
       return 'Dev.';
@@ -50,7 +50,7 @@ const getRoleLabel = (role: string) => {
   }
 };
 
-const getRoleFullLabel = (role: string) => {
+export const getRoleFullLabel = (role: string) => {
   switch (role) {
     case 'desenvolvedor':
       return 'Desenvolvedor';

@@ -11,3 +11,4 @@ channels-redis==4.2.0
 celery==5.3.4
 redis==5.0.1
 daphne==4.1.0
+requests==2.32.3

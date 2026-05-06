@@ -21,18 +21,22 @@ from django.conf.urls.static import static
 from .views import api_root, serve_spa, serve_media
 from apps.accounts.views import RegisterView, LoginView
 
+from apps.formularios.portal_views import PortalFormulariosJWTView
+
 urlpatterns = [
     path('api/', api_root, name='api-root'),
     path('admin/', admin.site.urls),
     # Rotas públicas antes do include para não serem capturadas pelo router (users/<pk>/)
     path('api/users/register/', RegisterView.as_view(), name='register'),
     path('api/users/login/', LoginView.as_view(), name='login'),
+    path('api/portal/formularios-access/', PortalFormulariosJWTView.as_view(), name='portal-formularios-access'),
     path('api/', include('apps.accounts.urls')),
     path('api/', include('apps.projects.urls')),
     path('api/', include('apps.teams.urls')),
     path('api/', include('apps.timeline.urls')),
     path('api/', include('apps.suggestions.urls')),
     path('api/', include('apps.geekday.urls')),
+    path('api/formularios/', include('apps.formularios.urls')),
     path('media/<path:path>', serve_media),
     re_path(r'^(?P<path>.*)$', serve_spa),
 ]

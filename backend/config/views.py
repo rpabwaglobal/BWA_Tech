@@ -34,7 +34,8 @@ def api_root(request):
             'team-members': '/api/team-members/',
             'hierarchies': '/api/hierarchies/',
             'timeline': '/api/timeline/',
-            'suggestions': '/api/suggestions/',
+            'formularios': '/api/formularios/',
+            'portal_formularios_access': '/api/portal/formularios-access/',
             'admin': '/admin/',
         }
     })

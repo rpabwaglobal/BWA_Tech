@@ -56,6 +56,7 @@ INSTALLED_APPS = [
     'apps.timeline',
     'apps.suggestions',
     'apps.geekday',
+    'apps.formularios',
 ]
 
 MIDDLEWARE = [
@@ -231,6 +232,12 @@ CSRF_COOKIE_SECURE = False
 # Language and Timezone
 LANGUAGE_CODE = 'pt-br'
 TIME_ZONE = 'America/Sao_Paulo'
+
+# Portal externo — JWT (`access`) para consumir APIs do portal (ex.: formulários em produção).
+# Defina apenas em ambiente / backend/.env; não commitar credenciais.
+PORTAL_BASE_URL = os.getenv('PORTAL_BASE_URL', '').strip().rstrip('/')
+PORTAL_USERNAME = os.getenv('PORTAL_USERNAME', '').strip()
+PORTAL_PASSWORD = os.getenv('PORTAL_PASSWORD', '')
 
 # Channels configuration
 # Usar InMemoryChannelLayer para desenvolvimento (não requer Redis)

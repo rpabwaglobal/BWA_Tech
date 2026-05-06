@@ -1,10 +1,15 @@
-import { defineConfig } from 'vite'
+import { defineConfig, loadEnv } from 'vite'
 import react from '@vitejs/plugin-react'
 import path from 'path'
 import { VitePWA } from 'vite-plugin-pwa'
 
 // https://vite.dev/config/
-export default defineConfig({
+export default defineConfig(({ mode }) => {
+  const env = loadEnv(mode, path.resolve(__dirname), '')
+  const formulariosProxyTarget =
+    env.VITE_FORMULARIOS_PROXY_TARGET || 'https://api.bwa.global:3334'
+
+  return {
   plugins: [
     react(),
     VitePWA({
@@ -52,4 +57,16 @@ export default defineConfig({
       "@": path.resolve(__dirname, "./src"),
     },
   },
+  server: {
+    proxy: {
+      // Mesmo origin no dev → sem CORS ao chamar a API externa de formulários (Bearer via Django).
+      '/__formularios': {
+        target: formulariosProxyTarget,
+        changeOrigin: true,
+        secure: true,
+        rewrite: (p) => p.replace(/^\/__formularios/, ''),
+      },
+    },
+  },
+  }
 })
