@@ -1,7 +1,9 @@
 import axios from 'axios';
 
 /**
- * Cliente HTTP para a API **externa** `{HOST}/api/formularios/*` (suporte no portal).
+ * Cliente HTTP dos **chamados/catrão Kanban** (`suporte/*`, catálogo): deve apontar para a **API do portal**
+ * (mesmo host que o portal usa em produção). Não usar o Django apenas como substituto em produção —
+ * o modelo local serve outros fins; comentários/timeline usam `api.ts` → `/api/formularios/suporte-timeline/`.
  *
  * Modos:
  * - `VITE_FORMULARIOS_TOKEN_FROM_PORTAL=true`: Bearer JWT obtido via GET `/api/portal/formularios-access/` no backend (credenciais do portal só no servidor).
@@ -37,12 +39,20 @@ export function getFormulariosApiBase(): string {
   if (usesFormulariosDevProxy()) {
     return '/__formularios/api/formularios';
   }
-  const explicit = import.meta.env.VITE_FORMULARIOS_API_BASE as string | undefined;
-  if (explicit?.trim()) return explicit.replace(/\/$/, '');
-  const apiUrl =
-    import.meta.env.VITE_API_URL ??
-    (import.meta.env.DEV ? 'http://127.0.0.1:8000/api' : '/api');
-  return `${String(apiUrl).replace(/\/$/, '')}/formularios`;
+  const explicit = (import.meta.env.VITE_FORMULARIOS_API_BASE as string | undefined)?.trim();
+  if (explicit) return explicit.replace(/\/$/, '');
+
+  // Em desenvolvimento sem URL do portal: permite usar o Django local (`/api/formularios`) só para testes.
+  if (import.meta.env.DEV) {
+    const apiUrl =
+      import.meta.env.VITE_API_URL ?? 'http://127.0.0.1:8000/api';
+    return `${String(apiUrl).replace(/\/$/, '')}/formularios`;
+  }
+
+  // Produção: Kanban deve vir da API do portal, não do ORM Django na mesma origem.
+  throw new Error(
+    'VITE_FORMULARIOS_API_BASE é obrigatório na build de produção. Defina a URL da API de formulários do portal (ex.: https://api…/api/formularios). Timeline/comentários continuam no Django (VITE_API_URL).',
+  );
 }
 
 function authScheme(): 'token' | 'bearer' {

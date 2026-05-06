@@ -6,6 +6,17 @@ WORKDIR /app/frontend
 COPY frontend/package.json frontend/package-lock.json ./
 RUN npm ci --legacy-peer-deps
 COPY frontend/ ./
+# Kanban em prod exige VITE_FORMULARIOS_API_BASE (API portal); ver frontend/.env.production.example
+ARG VITE_API_URL=
+ARG VITE_WS_URL=
+ARG VITE_FORMULARIOS_API_BASE=
+ARG VITE_FORMULARIOS_TOKEN_FROM_PORTAL=true
+ARG VITE_FORMULARIOS_USE_PROXY=false
+ENV VITE_API_URL=$VITE_API_URL \
+    VITE_WS_URL=$VITE_WS_URL \
+    VITE_FORMULARIOS_API_BASE=$VITE_FORMULARIOS_API_BASE \
+    VITE_FORMULARIOS_TOKEN_FROM_PORTAL=$VITE_FORMULARIOS_TOKEN_FROM_PORTAL \
+    VITE_FORMULARIOS_USE_PROXY=$VITE_FORMULARIOS_USE_PROXY
 RUN npx vite build
 
 # Backend (Django + Daphne)

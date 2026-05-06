@@ -25,6 +25,7 @@ backend/staticfiles
 # Environment
 .env
 .env.local
+frontend/.env.production
 
 # IDE
 .vscode/
