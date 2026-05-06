@@ -1,13 +1,15 @@
 import axios from 'axios';
 
 /**
- * Cliente HTTP dos **chamados/catrão Kanban** (`suporte/*`, catálogo): deve apontar para a **API do portal**
- * (mesmo host que o portal usa em produção). Não usar o Django apenas como substituto em produção —
- * o modelo local serve outros fins; comentários/timeline usam `api.ts` → `/api/formularios/suporte-timeline/`.
+ * Cliente HTTP dos **chamados/Kanban** (`suporte/*`, catálogo).
  *
  * Modos:
- * - `VITE_FORMULARIOS_TOKEN_FROM_PORTAL=true`: Bearer JWT obtido via GET `/api/portal/formularios-access/` no backend (credenciais do portal só no servidor).
- * - Caso contrário: Token Django ou Bearer manual (`VITE_FORMULARIOS_AUTH_SCHEME`, `VITE_FORMULARIOS_AUTH_TOKEN_KEY`).
+ * - Dev + `VITE_FORMULARIOS_USE_PROXY`: `/__formularios` → portal (Vite).
+ * - `VITE_FORMULARIOS_PROXY_THROUGH_DJANGO=true`: `/api/portal-formularios/*` no mesmo host (sem CORS na LAN); Django repassa ao portal.
+ * - `VITE_FORMULARIOS_API_BASE`: URL direta do portal (HTTPS público).
+ * - `VITE_FORMULARIOS_TOKEN_FROM_PORTAL`: Bearer obtido em `/api/portal/formularios-access/` (pedidos diretos ao portal).
+ *
+ * Timeline/comentários: `api.ts` → `/api/formularios/suporte-timeline/` (Django).
  */
 /** Em dev com proxy Vite: chamadas passam por `/__formularios` → evita CORS no navegador. */
 export function usesFormulariosDevProxy(): boolean {
@@ -17,19 +19,33 @@ export function usesFormulariosDevProxy(): boolean {
   );
 }
 
+/** Kanban via Django que faz proxy ao portal (mesma origem / Token BWA). */
+export function proxyThroughDjango(): boolean {
+  return (
+    (import.meta.env.VITE_FORMULARIOS_PROXY_THROUGH_DJANGO as string | undefined)?.toLowerCase() ===
+    'true'
+  );
+}
+
 /**
- * Chamados são persistidos neste backend Django (`/api/formularios/...`) — permite WebSocket `/ws/suporte/`.
- * Quando o proxy ou API absoluta aponta para outro host (portal), as alterações não passam no Django e usamos polling + WS do portal.
+ * Chamados persistidos no modelo Django (`/api/formularios/suporte`) — WebSocket `/ws/suporte/` aplica-se aqui.
+ * Não é o caso quando se usa proxy `portal-formularios` ou API absoluta noutro host.
  */
 export function usesLocalFormulariosBackend(): boolean {
   if (usesFormulariosDevProxy()) return false;
+  if (proxyThroughDjango()) return false;
   const rawBase = (import.meta.env.VITE_FORMULARIOS_API_BASE as string | undefined)?.trim();
   const apiUrl = (import.meta.env.VITE_API_URL as string | undefined)?.trim();
   if (!rawBase) return true;
   if (!rawBase.startsWith('http')) return true;
   if (!apiUrl?.startsWith('http')) return false;
   try {
-    return new URL(rawBase).host === new URL(apiUrl).host;
+    const bu = new URL(rawBase);
+    const au = new URL(apiUrl);
+    if (bu.host !== au.host) return false;
+    const path = bu.pathname.replace(/\/$/, '');
+    if (path.endsWith('/portal-formularios')) return false;
+    return true;
   } catch {
     return false;
   }
@@ -39,6 +55,14 @@ export function getFormulariosApiBase(): string {
   if (usesFormulariosDevProxy()) {
     return '/__formularios/api/formularios';
   }
+
+  if (proxyThroughDjango()) {
+    const apiUrl =
+      import.meta.env.VITE_API_URL ??
+      (import.meta.env.DEV ? 'http://127.0.0.1:8000/api' : '/api');
+    return `${String(apiUrl).replace(/\/$/, '')}/portal-formularios`;
+  }
+
   const explicit = (import.meta.env.VITE_FORMULARIOS_API_BASE as string | undefined)?.trim();
   if (explicit) return explicit.replace(/\/$/, '');
 
@@ -49,9 +73,9 @@ export function getFormulariosApiBase(): string {
     return `${String(apiUrl).replace(/\/$/, '')}/formularios`;
   }
 
-  // Produção: Kanban deve vir da API do portal, não do ORM Django na mesma origem.
+  // Produção: URL explícita do portal ou proxy Django acima.
   throw new Error(
-    'VITE_FORMULARIOS_API_BASE é obrigatório na build de produção. Defina a URL da API de formulários do portal (ex.: https://api…/api/formularios). Timeline/comentários continuam no Django (VITE_API_URL).',
+    'Em produção defina VITE_FORMULARIOS_PROXY_THROUGH_DJANGO=true ou VITE_FORMULARIOS_API_BASE (URL da API do portal).',
   );
 }
 
@@ -86,7 +110,13 @@ const formulariosApi = axios.create({
 formulariosApi.interceptors.request.use(async (config) => {
   config.baseURL = getFormulariosApiBase();
 
-  if (tokenFromPortal()) {
+  if (proxyThroughDjango()) {
+    const token = legacyAuthToken();
+    if (token) {
+      config.headers.Authorization =
+        authScheme() === 'bearer' ? `Bearer ${token}` : `Token ${token}`;
+    }
+  } else if (tokenFromPortal()) {
     try {
       const { ensurePortalFormulariosJwt } = await import('./portalFormulariosTokenService');
       const jwt = await ensurePortalFormulariosJwt();
@@ -114,7 +144,11 @@ formulariosApi.interceptors.response.use(
   (response) => response,
   async (error) => {
     if (error.response?.status === 401) {
-      if (tokenFromPortal()) {
+      if (proxyThroughDjango()) {
+        localStorage.removeItem(getFormulariosAuthStorageKey());
+        localStorage.removeItem('auth_expires_at');
+        window.location.href = '/entrar';
+      } else if (tokenFromPortal()) {
         const { clearPortalFormulariosJwt } = await import('./portalFormulariosTokenService');
         clearPortalFormulariosJwt();
       } else {

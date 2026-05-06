@@ -7,6 +7,7 @@ Credenciais: apenas variáveis de ambiente / Django settings — nunca no códig
 from __future__ import annotations
 
 import logging
+import time
 
 import requests
 from django.conf import settings
@@ -55,4 +56,21 @@ def login_on_portal() -> str:
             'Resposta do portal sem campo "access"; verifique URL e credenciais.',
         )
 
+    return token
+
+
+_cached_access: tuple[str, float] | None = None
+_CACHED_ACCESS_TTL_SEC = 240.0
+
+
+def login_on_portal_cached() -> str:
+    """Reutiliza o JWT por alguns minutos para não autenticar a cada pedido do proxy."""
+    global _cached_access
+    now = time.monotonic()
+    if _cached_access is not None:
+        token, until = _cached_access
+        if now < until:
+            return token
+    token = login_on_portal()
+    _cached_access = (token, now + _CACHED_ACCESS_TTL_SEC)
     return token

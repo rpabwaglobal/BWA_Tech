@@ -40,6 +40,7 @@ import {
   getFormulariosAuthStorageKey,
   usesFormulariosDevProxy,
   usesLocalFormulariosBackend,
+  proxyThroughDjango,
 } from '@/services/formulariosApi';
 import {
   suporteService,
@@ -349,9 +350,9 @@ export default function Support() {
     onChamadoUpsert: mergeRemoteChamado,
   });
 
-  /** Portal externo: novos chamados por WS; arrastar/outras alterações via polling (dev: proxy Vite com ws:true). */
+  /** Portal externo: novos chamados por WS; arrastar/outras alterações via polling (dev: proxy Vite com ws:true). Com proxy Django não há WS mesmo host → só polling. */
   useEffect(() => {
-    if (!isAuthenticated || usesLocalFormulariosBackend()) return;
+    if (!isAuthenticated || usesLocalFormulariosBackend() || proxyThroughDjango()) return;
 
     let cancelled = false;
     let ws: WebSocket | null = null;

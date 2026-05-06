@@ -22,6 +22,7 @@ from .views import api_root, serve_spa, serve_media
 from apps.accounts.views import RegisterView, LoginView
 
 from apps.formularios.portal_views import PortalFormulariosJWTView
+from apps.formularios.portal_proxy_views import PortalFormulariosProxyView
 
 urlpatterns = [
     path('api/', api_root, name='api-root'),
@@ -30,6 +31,7 @@ urlpatterns = [
     path('api/users/register/', RegisterView.as_view(), name='register'),
     path('api/users/login/', LoginView.as_view(), name='login'),
     path('api/portal/formularios-access/', PortalFormulariosJWTView.as_view(), name='portal-formularios-access'),
+    path('api/portal-formularios/<path:path>', PortalFormulariosProxyView.as_view(), name='portal-formularios-proxy'),
     path('api/', include('apps.accounts.urls')),
     path('api/', include('apps.projects.urls')),
     path('api/', include('apps.teams.urls')),

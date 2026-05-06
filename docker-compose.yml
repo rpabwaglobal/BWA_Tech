@@ -3,8 +3,9 @@
 # Uso: docker compose up -d   → acesse http://localhost:${APP_PORT:-8000}
 #
 # O Docker não inclui frontend/.env* nem backend/.env na imagem (.dockerignore).
-# Na raiz do repo, ficheiro `.env` com: SECRET_KEY, PORTAL_* (JWT suporte),
-# VITE_API_URL, VITE_WS_URL, VITE_FORMULARIOS_API_BASE (build do Vite).
+# Na raiz do repo, ficheiro `.env` com: SECRET_KEY, PORTAL_*,
+# VITE_API_URL, VITE_WS_URL; formulários: `VITE_FORMULARIOS_API_BASE` (HTTPS público) ou
+# `VITE_FORMULARIOS_PROXY_THROUGH_DJANGO=true` na LAN (sem CORS — Django faz proxy ao portal).
 # deploy.sh define ALLOWED_HOSTS/CORS com o IP interno ao correr na LAN.
 
 services:
@@ -47,6 +48,7 @@ services:
         VITE_FORMULARIOS_API_BASE: ${VITE_FORMULARIOS_API_BASE:-}
         VITE_FORMULARIOS_TOKEN_FROM_PORTAL: ${VITE_FORMULARIOS_TOKEN_FROM_PORTAL:-true}
         VITE_FORMULARIOS_USE_PROXY: ${VITE_FORMULARIOS_USE_PROXY:-false}
+        VITE_FORMULARIOS_PROXY_THROUGH_DJANGO: ${VITE_FORMULARIOS_PROXY_THROUGH_DJANGO:-false}
     ports:
       - "${APP_PORT:-8000}:8000"
     environment:
@@ -84,6 +86,7 @@ services:
         VITE_FORMULARIOS_API_BASE: ${VITE_FORMULARIOS_API_BASE:-}
         VITE_FORMULARIOS_TOKEN_FROM_PORTAL: ${VITE_FORMULARIOS_TOKEN_FROM_PORTAL:-true}
         VITE_FORMULARIOS_USE_PROXY: ${VITE_FORMULARIOS_USE_PROXY:-false}
+        VITE_FORMULARIOS_PROXY_THROUGH_DJANGO: ${VITE_FORMULARIOS_PROXY_THROUGH_DJANGO:-false}
     environment:
       USE_POSTGRES: "true"
       DB_NAME: ${POSTGRES_DB:-bwaproj_db}
@@ -117,6 +120,7 @@ services:
         VITE_FORMULARIOS_API_BASE: ${VITE_FORMULARIOS_API_BASE:-}
         VITE_FORMULARIOS_TOKEN_FROM_PORTAL: ${VITE_FORMULARIOS_TOKEN_FROM_PORTAL:-true}
         VITE_FORMULARIOS_USE_PROXY: ${VITE_FORMULARIOS_USE_PROXY:-false}
+        VITE_FORMULARIOS_PROXY_THROUGH_DJANGO: ${VITE_FORMULARIOS_PROXY_THROUGH_DJANGO:-false}
     environment:
       USE_POSTGRES: "true"
       DB_NAME: ${POSTGRES_DB:-bwaproj_db}
