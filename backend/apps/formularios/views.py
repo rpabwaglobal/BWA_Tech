@@ -4,6 +4,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
 from .models import ChamadoSuporte, ChamadoSuporteTimeline, SuporteMotivo, SuporteTipo
+from .realtime import broadcast_chamado
 from .serializers import (
     CatalogTipoComItensSerializer,
     CatalogMotivoMiniSerializer,
@@ -45,6 +46,7 @@ class ChamadoSuporteViewSet(viewsets.ModelViewSet):
         serializer.is_valid(raise_exception=True)
         instance = serializer.save()
         read = ChamadoSuporteReadSerializer(instance)
+        broadcast_chamado('chamado_created', read.data)
         return Response(read.data, status=status.HTTP_201_CREATED)
 
     def partial_update(self, request, *args, **kwargs):
@@ -56,7 +58,9 @@ class ChamadoSuporteViewSet(viewsets.ModelViewSet):
             if field in data:
                 setattr(instance, field, data[field])
         instance.save()
-        return Response(ChamadoSuporteReadSerializer(instance).data)
+        body = ChamadoSuporteReadSerializer(instance).data
+        broadcast_chamado('chamado_updated', body)
+        return Response(body)
 
     @action(detail=False, methods=['get'], url_path='catalogo')
     def catalogo(self, request):
@@ -90,7 +94,9 @@ class ChamadoSuporteViewSet(viewsets.ModelViewSet):
         if request.data and request.data.get('usuario_notificado') is False:
             instance.usuario_notificado = False
         instance.save()
-        return Response(ChamadoSuporteReadSerializer(instance).data)
+        body = ChamadoSuporteReadSerializer(instance).data
+        broadcast_chamado('chamado_updated', body)
+        return Response(body)
 
 
 class ChamadoSuporteTimelineViewSet(mixins.ListModelMixin, mixins.CreateModelMixin, viewsets.GenericViewSet):

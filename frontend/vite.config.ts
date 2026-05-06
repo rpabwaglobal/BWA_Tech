@@ -64,6 +64,7 @@ export default defineConfig(({ mode }) => {
         target: formulariosProxyTarget,
         changeOrigin: true,
         secure: true,
+        ws: true,
         rewrite: (p) => p.replace(/^\/__formularios/, ''),
       },
     },

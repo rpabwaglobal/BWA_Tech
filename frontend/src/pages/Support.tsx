@@ -34,10 +34,12 @@ import { CARD_TIMELINE_LAYOUT_RESERVE_PX } from '@/components/CardLogsModal';
 import { SuporteTicketTimelinePanel } from '@/components/SuporteTicketTimelinePanel';
 import { ConclusaoModal } from '@/components/ConclusaoModal';
 import { PendenciaModal } from '@/components/PendenciaModal';
+import { useSuporteKanbanWebSocket } from '@/hooks/useSuporteKanbanWebSocket';
 import {
   getFormulariosApiBase,
   getFormulariosAuthStorageKey,
   usesFormulariosDevProxy,
+  usesLocalFormulariosBackend,
 } from '@/services/formulariosApi';
 import {
   suporteService,
@@ -64,6 +66,14 @@ const STAGES = [
 ];
 
 type StageKey = (typeof STAGES)[number]['key'];
+
+function upsertChamadoLista(prev: ChamadoSuporte[], row: ChamadoSuporte): ChamadoSuporte[] {
+  const i = prev.findIndex((x) => x.id === row.id);
+  if (i === -1) return [...prev, row];
+  const next = [...prev];
+  next[i] = row;
+  return next;
+}
 
 function displayUserName(u: { first_name?: string; last_name?: string; username: string }): string {
   const fn = (u.first_name ?? '').trim();
@@ -240,13 +250,12 @@ function resolveDropStage(
 }
 
 export default function Support() {
-  const { user } = useAuth();
+  const { user, isAuthenticated } = useAuth();
   const assigneeName = user ? displayUserName(user) : '';
 
   const [items, setItems] = useState<ChamadoSuporte[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [onlyMine, setOnlyMine] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
   const [detailChamado, setDetailChamado] = useState<ChamadoSuporte | null>(null);
   const [activeDrag, setActiveDrag] = useState<ChamadoSuporte | null>(null);
@@ -276,10 +285,13 @@ export default function Support() {
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
   );
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (opts?: { silent?: boolean }) => {
+    const silent = opts?.silent === true;
     try {
-      setLoading(true);
-      setError(null);
+      if (!silent) {
+        setLoading(true);
+        setError(null);
+      }
 
       if (
         (import.meta.env.VITE_FORMULARIOS_TOKEN_FROM_PORTAL as string | undefined)?.toLowerCase() ===
@@ -289,45 +301,57 @@ export default function Support() {
           const { ensurePortalFormulariosJwt } = await import('@/services/portalFormulariosTokenService');
           await ensurePortalFormulariosJwt();
         } catch (portalErr: unknown) {
-          const detail =
-            portalErr && typeof portalErr === 'object' && 'response' in portalErr
-              ? JSON.stringify((portalErr as { response?: { data?: unknown } }).response?.data ?? {})
-              : String(portalErr);
-          setError(
-            `Não foi possível obter o token do portal pelo backend (login PORTAL_* no backend/.env e Django rodando). ${detail}`,
-          );
-          setItems([]);
+          if (!silent) {
+            const detail =
+              portalErr && typeof portalErr === 'object' && 'response' in portalErr
+                ? JSON.stringify((portalErr as { response?: { data?: unknown } }).response?.data ?? {})
+                : String(portalErr);
+            setError(
+              `Não foi possível obter o token do portal pelo backend (login PORTAL_* no backend/.env e Django rodando). ${detail}`,
+            );
+            setItems([]);
+          }
           return;
         }
       }
 
-      const email =
-        onlyMine && user?.email ? user.email.trim() : undefined;
-      const data = await suporteService.listByUsuario(email);
+      const data = await suporteService.listByUsuario();
       setItems(data);
     } catch (e: unknown) {
-      const msg =
-        e && typeof e === 'object' && 'response' in e
-          ? String((e as { response?: { data?: unknown } }).response?.data ?? '')
-          : String(e);
-      setError(
-        msg?.length
-          ? `Não foi possível carregar os chamados: ${msg}`
-          : 'Não foi possível carregar os chamados. Confirme VITE_FORMULARIOS_API_BASE / autenticação e se a API expõe /formularios/suporte/.',
-      );
-      setItems([]);
+      if (!silent) {
+        const msg =
+          e && typeof e === 'object' && 'response' in e
+            ? String((e as { response?: { data?: unknown } }).response?.data ?? '')
+            : String(e);
+        setError(
+          msg?.length
+            ? `Não foi possível carregar os chamados: ${msg}`
+            : 'Não foi possível carregar os chamados. Confirme VITE_FORMULARIOS_API_BASE / autenticação e se a API expõe /formularios/suporte/.',
+        );
+        setItems([]);
+      }
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
-  }, [onlyMine, user?.email]);
+  }, []);
 
   useEffect(() => {
     void load();
   }, [load]);
 
-  /** WebSocket opcional (API externa): doc usa ?token= com o mesmo JWT Bearer do portal. Com proxy dev do Vite não encaminhamos WS — omitimos. */
+  const mergeRemoteChamado = useCallback((row: ChamadoSuporte) => {
+    setItems((prev) => upsertChamadoLista(prev, row));
+    setDetailChamado((cur) => (cur?.id === row.id ? row : cur));
+  }, []);
+
+  useSuporteKanbanWebSocket({
+    enabled: isAuthenticated && usesLocalFormulariosBackend(),
+    onChamadoUpsert: mergeRemoteChamado,
+  });
+
+  /** Portal externo: novos chamados por WS; arrastar/outras alterações via polling (dev: proxy Vite com ws:true). */
   useEffect(() => {
-    if (usesFormulariosDevProxy()) return;
+    if (!isAuthenticated || usesLocalFormulariosBackend()) return;
 
     let cancelled = false;
     let ws: WebSocket | null = null;
@@ -352,12 +376,18 @@ export default function Support() {
       if (!token || cancelled) return;
 
       try {
-        const base = getFormulariosApiBase();
-        const originUrl = base.startsWith('http')
-          ? new URL(base)
-          : new URL(base, window.location.origin);
-        const proto = originUrl.protocol === 'https:' ? 'wss:' : 'ws:';
-        const wsUrl = `${proto}//${originUrl.host}/ws/formularios-novos/?token=${encodeURIComponent(token)}`;
+        let wsUrl: string;
+        if (usesFormulariosDevProxy()) {
+          const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+          wsUrl = `${proto}//${window.location.host}/__formularios/ws/formularios-novos/?token=${encodeURIComponent(token)}`;
+        } else {
+          const base = getFormulariosApiBase();
+          const originUrl = base.startsWith('http')
+            ? new URL(base)
+            : new URL(base, window.location.origin);
+          const proto = originUrl.protocol === 'https:' ? 'wss:' : 'ws:';
+          wsUrl = `${proto}//${originUrl.host}/ws/formularios-novos/?token=${encodeURIComponent(token)}`;
+        }
         const socket = new WebSocket(wsUrl);
         ws = socket;
         socket.onmessage = (ev) => {
@@ -368,7 +398,7 @@ export default function Support() {
               data?: ChamadoSuporte;
             };
             if (msg.event === 'novo_formulario' && msg.kind === 'suporte' && msg.data?.id != null) {
-              void load();
+              void load({ silent: true });
             }
           } catch {
             /* ignorar */
@@ -383,7 +413,16 @@ export default function Support() {
       cancelled = true;
       ws?.close();
     };
-  }, [load]);
+  }, [isAuthenticated, load]);
+
+  useEffect(() => {
+    if (!isAuthenticated || usesLocalFormulariosBackend()) return;
+    const id = window.setInterval(() => {
+      if (document.visibilityState !== 'visible') return;
+      void load({ silent: true });
+    }, 4000);
+    return () => window.clearInterval(id);
+  }, [isAuthenticated, load]);
 
   useEffect(() => {
     let cancelled = false;
@@ -577,26 +616,8 @@ export default function Support() {
       <header className="flex shrink-0 flex-col gap-[12px] md:flex-row md:items-center md:justify-between">
         <div>
           <h1 className="text-xl font-semibold text-[var(--color-foreground)]">Suporte</h1>
-          <p className="text-sm text-[var(--color-muted-foreground)] mt-[4px]">
-            Chamados na API externa (Bearer via backend){' '}
-            <code className="text-xs bg-[var(--color-muted)]/40 px-[6px] py-[2px] rounded break-all">
-              {usesFormulariosDevProxy()
-                ? `${window.location.origin}${getFormulariosApiBase()} → proxy → portal`
-                : getFormulariosApiBase()}
-            </code>
-          </p>
         </div>
         <div className="flex flex-wrap items-center gap-[10px]">
-          <label className="flex items-center gap-[8px] text-sm text-[var(--color-muted-foreground)] cursor-pointer select-none">
-            <input
-              type="checkbox"
-              className="rounded border-[var(--color-border)]"
-              checked={onlyMine}
-              onChange={(e) => setOnlyMine(e.target.checked)}
-              disabled={loading || !user?.email}
-            />
-            Só os meus (e-mail)
-          </label>
           <Button type="button" variant="outline" size="sm" onClick={() => void load()} disabled={loading}>
             <RefreshCw className={cn('h-4 w-4 mr-[8px]', loading && 'animate-spin')} />
             Atualizar

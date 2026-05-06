@@ -15,6 +15,24 @@ export function usesFormulariosDevProxy(): boolean {
   );
 }
 
+/**
+ * Chamados são persistidos neste backend Django (`/api/formularios/...`) — permite WebSocket `/ws/suporte/`.
+ * Quando o proxy ou API absoluta aponta para outro host (portal), as alterações não passam no Django e usamos polling + WS do portal.
+ */
+export function usesLocalFormulariosBackend(): boolean {
+  if (usesFormulariosDevProxy()) return false;
+  const rawBase = (import.meta.env.VITE_FORMULARIOS_API_BASE as string | undefined)?.trim();
+  const apiUrl = (import.meta.env.VITE_API_URL as string | undefined)?.trim();
+  if (!rawBase) return true;
+  if (!rawBase.startsWith('http')) return true;
+  if (!apiUrl?.startsWith('http')) return false;
+  try {
+    return new URL(rawBase).host === new URL(apiUrl).host;
+  } catch {
+    return false;
+  }
+}
+
 export function getFormulariosApiBase(): string {
   if (usesFormulariosDevProxy()) {
     return '/__formularios/api/formularios';
