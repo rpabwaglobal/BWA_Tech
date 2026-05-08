@@ -66,6 +66,13 @@ fi
 echo " [OK] Docker disponível."
 echo ""
 
+# Rede externa do Traefik (também usada em dev/LAN: criada vazia se não existir)
+if ! docker network inspect web >/dev/null 2>&1; then
+    echo " [INFO] Criando rede Docker 'web' (Traefik / compose)..."
+    docker network create web
+fi
+echo ""
+
 # ─── 3. Parar containers ativos e subir serviços ──────────────────────
 echo " [3/7] Parando containers ativos do projeto..."
 docker compose down >/dev/null 2>&1 || true
@@ -89,6 +96,8 @@ if [ "$APP_PORT" != "8000" ]; then
     echo " [INFO] Porta 8000 em uso. Usando porta $APP_PORT."
 fi
 export APP_PORT
+# Expor :8000 em todas as interfaces na LAN (outros PCs). Em VPS só Traefik, use .env com HOST_BIND=127.0.0.1
+export HOST_BIND=0.0.0.0
 echo ""
 if ! docker compose up -d --build; then
     echo ""

@@ -1,6 +1,7 @@
 # Git e IDE
 .git
 .gitignore
+# .env na raiz entra na imagem (Vite + Django); ignora cópias locais do backend
 .cursor
 *.md
 !README.md

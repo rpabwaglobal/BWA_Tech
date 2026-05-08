@@ -1,24 +1,20 @@
-# BWAproj: banco + backend (Django + Daphne: API + WebSocket + SPA)
-# Porta da aplicação: APP_PORT (padrão 8000). Se 8000 estiver em uso, use APP_PORT=8001 etc.
-# Uso: docker compose up -d   → acesse http://localhost:${APP_PORT:-8000}
+# BWAproj: Postgres + Redis + backend (Django/Daphne) + Celery.
 #
-# O Docker não inclui frontend/.env* nem backend/.env na imagem (.dockerignore).
-# Na raiz do repo, ficheiro `.env` com: SECRET_KEY, PORTAL_*,
-# VITE_API_URL, VITE_WS_URL; formulários: `VITE_FORMULARIOS_API_BASE` (HTTPS público) ou
-# `VITE_FORMULARIOS_PROXY_THROUGH_DJANGO=true` na LAN (sem CORS — Django faz proxy ao portal).
-# deploy.sh define ALLOWED_HOSTS/CORS com o IP interno ao correr na LAN.
+# O `.env` na raiz é copiado para DENTRO da imagem no Dockerfile (Django + build Vite).
+# Precisa existir nessa pasta ao correr `docker compose build`. Mudou segredos/URLs → rebuild.
+#
+# O serviço `db` usa `env_file: .env` para POSTGRES_* coincidir com os valores do mesmo ficheiro.
+# Labels Traefik expandem ${PUBLIC_HOST} a partir do `.env` lido pelo Compose no host.
+#
+# Rede `web`: docker network create web (se ainda não existir). deploy.sh cria na LAN.
+# Portas: HOST_BIND (default 127.0.0.1); deploy.sh usa 0.0.0.0 para acesso na LAN.
 
 services:
   db:
     image: postgres:16-alpine
-    environment:
-      POSTGRES_DB: ${POSTGRES_DB:-bwaproj_db}
-      POSTGRES_USER: ${POSTGRES_USER:-bwaproj}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-bwaproj_secret}
+    env_file: .env
     ports:
-      # Host 5433 por padrão: no Windows costuma existir Postgres nativo em 5432; evita conflito.
-      # Override: POSTGRES_PORT=5432 docker compose up -d db
-      - "${POSTGRES_PORT:-5433}:5432"
+      - "127.0.0.1:${POSTGRES_PORT:-5433}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -41,73 +37,29 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-      args:
-        # Build Vite: definir VITE_FORMULARIOS_API_BASE no .env (API portal — Kanban não usa o BD Django).
-        VITE_API_URL: ${VITE_API_URL:-}
-        VITE_WS_URL: ${VITE_WS_URL:-}
-        VITE_FORMULARIOS_API_BASE: ${VITE_FORMULARIOS_API_BASE:-}
-        VITE_FORMULARIOS_TOKEN_FROM_PORTAL: ${VITE_FORMULARIOS_TOKEN_FROM_PORTAL:-true}
-        VITE_FORMULARIOS_USE_PROXY: ${VITE_FORMULARIOS_USE_PROXY:-false}
-        VITE_FORMULARIOS_PROXY_THROUGH_DJANGO: ${VITE_FORMULARIOS_PROXY_THROUGH_DJANGO:-false}
     ports:
-      - "${APP_PORT:-8000}:8000"
-    environment:
-      USE_POSTGRES: "true"
-      DB_NAME: ${POSTGRES_DB:-bwaproj_db}
-      DB_USER: ${POSTGRES_USER:-bwaproj}
-      DB_PASSWORD: ${POSTGRES_PASSWORD:-bwaproj_secret}
-      DB_HOST: db
-      DB_PORT: "5432"
-      SECRET_KEY: ${SECRET_KEY:-altere-em-producao-chave-longa-e-segura}
-      DEBUG: ${DEBUG:-False}
-      BEHIND_HTTPS_PROXY: ${BEHIND_HTTPS_PROXY:-false}
-      CHANNEL_LAYER_BACKEND: ${CHANNEL_LAYER_BACKEND:-redis}
-      REDIS_HOST: ${REDIS_HOST:-redis}
-      REDIS_PORT: ${REDIS_PORT:-6379}
-      ALLOWED_HOSTS: ${ALLOWED_HOSTS:-localhost,127.0.0.1}
-      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:8000,http://127.0.0.1:8000}
-      CSRF_TRUSTED_ORIGINS: ${CSRF_TRUSTED_ORIGINS:-http://localhost:8000,http://127.0.0.1:8000}
-      PORTAL_BASE_URL: ${PORTAL_BASE_URL:-}
-      PORTAL_USERNAME: ${PORTAL_USERNAME:-}
-      PORTAL_PASSWORD: ${PORTAL_PASSWORD:-}
-      # Broker/Backend do Celery (caso o backend dispare tasks)
-      CELERY_BROKER_URL: redis://redis:6379/0
-      CELERY_RESULT_BACKEND: redis://redis:6379/0
+      - "${HOST_BIND:-127.0.0.1}:${APP_PORT:-8000}:8000"
     depends_on:
       db:
         condition: service_healthy
       redis:
         condition: service_healthy
     volumes:
-      # Persistir uploads (fotos de perfil, etc.)
       - backend_media:/app/backend/media
+    networks:
+      - default
+      - web
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=${TRAEFIK_NETWORK:-web}
+      - "traefik.http.routers.bwaproj.rule=Host(`${PUBLIC_HOST:-tech.bwa.global}`)"
+      - traefik.http.routers.bwaproj.tls.certresolver=${TRAEFIK_CERT_RESOLVER:-letsencrypt}
+      - traefik.http.services.bwaproj.loadbalancer.server.port=8000
 
   celery-worker:
     build:
       context: .
       dockerfile: Dockerfile
-      args:
-        VITE_API_URL: ${VITE_API_URL:-}
-        VITE_WS_URL: ${VITE_WS_URL:-}
-        VITE_FORMULARIOS_API_BASE: ${VITE_FORMULARIOS_API_BASE:-}
-        VITE_FORMULARIOS_TOKEN_FROM_PORTAL: ${VITE_FORMULARIOS_TOKEN_FROM_PORTAL:-true}
-        VITE_FORMULARIOS_USE_PROXY: ${VITE_FORMULARIOS_USE_PROXY:-false}
-        VITE_FORMULARIOS_PROXY_THROUGH_DJANGO: ${VITE_FORMULARIOS_PROXY_THROUGH_DJANGO:-false}
-    environment:
-      USE_POSTGRES: "true"
-      DB_NAME: ${POSTGRES_DB:-bwaproj_db}
-      DB_USER: ${POSTGRES_USER:-bwaproj}
-      DB_PASSWORD: ${POSTGRES_PASSWORD:-bwaproj_secret}
-      DB_HOST: db
-      DB_PORT: "5432"
-      SECRET_KEY: ${SECRET_KEY:-altere-em-producao-chave-longa-e-segura}
-      DEBUG: ${DEBUG:-False}
-      ALLOWED_HOSTS: ${ALLOWED_HOSTS:-localhost,127.0.0.1}
-      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:8000,http://127.0.0.1:8000}
-      CSRF_TRUSTED_ORIGINS: ${CSRF_TRUSTED_ORIGINS:-http://localhost:8000,http://127.0.0.1:8000}
-      # Broker/Backend do Celery
-      CELERY_BROKER_URL: redis://redis:6379/0
-      CELERY_RESULT_BACKEND: redis://redis:6379/0
     depends_on:
       db:
         condition: service_healthy
@@ -120,28 +72,6 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-      args:
-        VITE_API_URL: ${VITE_API_URL:-}
-        VITE_WS_URL: ${VITE_WS_URL:-}
-        VITE_FORMULARIOS_API_BASE: ${VITE_FORMULARIOS_API_BASE:-}
-        VITE_FORMULARIOS_TOKEN_FROM_PORTAL: ${VITE_FORMULARIOS_TOKEN_FROM_PORTAL:-true}
-        VITE_FORMULARIOS_USE_PROXY: ${VITE_FORMULARIOS_USE_PROXY:-false}
-        VITE_FORMULARIOS_PROXY_THROUGH_DJANGO: ${VITE_FORMULARIOS_PROXY_THROUGH_DJANGO:-false}
-    environment:
-      USE_POSTGRES: "true"
-      DB_NAME: ${POSTGRES_DB:-bwaproj_db}
-      DB_USER: ${POSTGRES_USER:-bwaproj}
-      DB_PASSWORD: ${POSTGRES_PASSWORD:-bwaproj_secret}
-      DB_HOST: db
-      DB_PORT: "5432"
-      SECRET_KEY: ${SECRET_KEY:-altere-em-producao-chave-longa-e-segura}
-      DEBUG: ${DEBUG:-False}
-      ALLOWED_HOSTS: ${ALLOWED_HOSTS:-localhost,127.0.0.1}
-      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:8000,http://127.0.0.1:8000}
-      CSRF_TRUSTED_ORIGINS: ${CSRF_TRUSTED_ORIGINS:-http://localhost:8000,http://127.0.0.1:8000}
-      # Broker/Backend do Celery
-      CELERY_BROKER_URL: redis://redis:6379/0
-      CELERY_RESULT_BACKEND: redis://redis:6379/0
     depends_on:
       db:
         condition: service_healthy
@@ -149,6 +79,11 @@ services:
         condition: service_healthy
     command: ["celery", "-A", "config.celery", "beat", "--loglevel=INFO"]
     restart: unless-stopped
+
+networks:
+  web:
+    name: ${TRAEFIK_NETWORK:-web}
+    external: true
 
 volumes:
   postgres_data:

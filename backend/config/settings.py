@@ -33,7 +33,7 @@ DEBUG = os.getenv('DEBUG', 'True').lower() == 'true'
 # Em produção: ALLOWED_HOSTS=tech.bwa.global (separados por vírgula)
 ALLOWED_HOSTS = [h.strip() for h in os.getenv('ALLOWED_HOSTS', 'localhost,127.0.0.1').split(',') if h.strip()]
 
-# Atrás de Traefik/nginx com TLS — define BEHIND_HTTPS_PROXY=true (ver docker-compose.hostinger.yml)
+# Atrás de Traefik/nginx com TLS — define BEHIND_HTTPS_PROXY=true no .env (docker-compose)
 _BEHIND_HTTPS_PROXY = os.getenv('BEHIND_HTTPS_PROXY', '').strip().lower() in ('true', '1', 'yes')
 if _BEHIND_HTTPS_PROXY:
     SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
