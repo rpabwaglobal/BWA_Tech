@@ -1,0 +1,37 @@
+# Overlay para VPS Hostinger + Traefik (ex.: contentor traefik-z2mx-traefik-1).
+# Uso no servidor (na pasta do projeto, com .env preenchido):
+#   docker compose -f docker-compose.yml -f docker-compose.hostinger.yml up -d --build
+#
+# Antes de subir:
+# 1) Descobrir a rede Docker à qual o Traefik está ligado:
+#    docker inspect traefik-z2mx-traefik-1 --format '{{range $k,$v := .NetworkSettings.Networks}}{{$k}} {{end}}'
+#    Copie o nome (ex.: traefik_default ou z2mx_default) para TRAEFIK_NETWORK no .env.
+# 2) Ajuste no .env: TRAEFIK_ENTRYPOINT, TRAEFIK_CERT_RESOLVER (nomes do seu Traefik).
+#    Ex.: entrypoints=websecure e certresolver=letsencrypt são comuns; confira labels dos outros sites.
+# 3) DNS: registo A (ou CNAME) tech.bwa.global → IP da KVM2.
+# 4) No painel Hostinger → Docker → Compose: pode colar os DOIS ficheiros num stack único
+#    ou fazer upload/git clone e executar o comando acima por SSH.
+
+services:
+  db:
+    ports: !reset []
+  backend:
+    ports: !reset []
+    environment:
+      BEHIND_HTTPS_PROXY: "true"
+    networks:
+      - default
+      - traefik_edge
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=${TRAEFIK_NETWORK}
+      - "traefik.http.routers.bwaproj.rule=Host(`${PUBLIC_HOST:-tech.bwa.global}`)"
+      - traefik.http.routers.bwaproj.entrypoints=${TRAEFIK_ENTRYPOINT:-websecure}
+      - traefik.http.routers.bwaproj.tls.certresolver=${TRAEFIK_CERT_RESOLVER:-letsencrypt}
+      - traefik.http.routers.bwaproj.tls=true
+      - traefik.http.services.bwaproj.loadbalancer.server.port=8000
+
+networks:
+  traefik_edge:
+    name: ${TRAEFIK_NETWORK}
+    external: true

@@ -30,8 +30,14 @@ SECRET_KEY = os.getenv('SECRET_KEY', 'django-insecure-bt!9t-dt^4*(3i)1_)*o)@@)tv
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = os.getenv('DEBUG', 'True').lower() == 'true'
 
-# Em produção: ALLOWED_HOSTS=bwatech.com.br,www.bwatech.com.br (separados por vírgula)
+# Em produção: ALLOWED_HOSTS=tech.bwa.global (separados por vírgula)
 ALLOWED_HOSTS = [h.strip() for h in os.getenv('ALLOWED_HOSTS', 'localhost,127.0.0.1').split(',') if h.strip()]
+
+# Atrás de Traefik/nginx com TLS — define BEHIND_HTTPS_PROXY=true (ver docker-compose.hostinger.yml)
+_BEHIND_HTTPS_PROXY = os.getenv('BEHIND_HTTPS_PROXY', '').strip().lower() in ('true', '1', 'yes')
+if _BEHIND_HTTPS_PROXY:
+    SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+    USE_X_FORWARDED_HOST = True
 
 
 # Application definition
@@ -186,7 +192,7 @@ REST_FRAMEWORK = {
 }
 
 # CORS configuration
-# Em produção: CORS_ALLOWED_ORIGINS=https://bwatech.com.br,https://www.bwatech.com.br
+# Em produção: CORS_ALLOWED_ORIGINS=https://tech.bwa.global
 _dev_origins = [
     "http://localhost:8000",
     "http://127.0.0.1:8000",
@@ -226,8 +232,14 @@ SESSION_COOKIE_HTTPONLY = True
 SESSION_COOKIE_SAMESITE = 'Lax'
 CSRF_COOKIE_SAMESITE = 'Lax'
 CSRF_COOKIE_HTTPONLY = False  # Permitir que o front acesse se necessário
-SESSION_COOKIE_SECURE = False
-CSRF_COOKIE_SECURE = False
+SESSION_COOKIE_SECURE = os.getenv(
+    'SESSION_COOKIE_SECURE',
+    'true' if _BEHIND_HTTPS_PROXY else 'false',
+).lower() in ('true', '1', 'yes')
+CSRF_COOKIE_SECURE = os.getenv(
+    'CSRF_COOKIE_SECURE',
+    'true' if _BEHIND_HTTPS_PROXY else 'false',
+).lower() in ('true', '1', 'yes')
 
 # Language and Timezone
 LANGUAGE_CODE = 'pt-br'
@@ -239,14 +251,22 @@ PORTAL_BASE_URL = os.getenv('PORTAL_BASE_URL', '').strip().rstrip('/')
 PORTAL_USERNAME = os.getenv('PORTAL_USERNAME', '').strip()
 PORTAL_PASSWORD = os.getenv('PORTAL_PASSWORD', '')
 
-# Channels configuration
-# Usar InMemoryChannelLayer para desenvolvimento (não requer Redis)
-# Para produção, usar Redis: 'BACKEND': 'channels_redis.core.RedisChannelLayer'
-CHANNEL_LAYERS = {
-    'default': {
-        'BACKEND': 'channels.layers.InMemoryChannelLayer',
-    },
-}
+# Channels — em Docker com Redis use CHANNEL_LAYER_BACKEND=redis (ver docker-compose.yml)
+if os.getenv('CHANNEL_LAYER_BACKEND', '').strip().lower() == 'redis':
+    _rh = os.getenv('CHANNEL_REDIS_HOST', os.getenv('REDIS_HOST', '127.0.0.1')).strip()
+    _rp = int(os.getenv('CHANNEL_REDIS_PORT', os.getenv('REDIS_PORT', '6379')).strip() or '6379')
+    CHANNEL_LAYERS = {
+        'default': {
+            'BACKEND': 'channels_redis.core.RedisChannelLayer',
+            'CONFIG': {'hosts': [(_rh, _rp)]},
+        },
+    }
+else:
+    CHANNEL_LAYERS = {
+        'default': {
+            'BACKEND': 'channels.layers.InMemoryChannelLayer',
+        },
+    }
 
 # Celery configuration
 # Usar Redis se disponível, caso contrário usar broker em memória para desenvolvimento
