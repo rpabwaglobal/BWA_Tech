@@ -5,8 +5,7 @@ __pycache__/
 *.so
 .Python
 venv/
-env/
-ENV/
+
 .venv
 *.egg-info/
 dist/
@@ -23,11 +22,8 @@ backend/media
 backend/staticfiles
 
 # Environment (raiz: .env versionado a pedido para Compose na Hostinger; restantes ignorados)
-.env
-!/.env
-backend/.env
-.env.local
-frontend/.env.production
+
+
 
 # IDE
 .vscode/
