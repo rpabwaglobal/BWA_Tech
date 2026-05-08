@@ -22,8 +22,10 @@ db.sqlite3-journal
 backend/media
 backend/staticfiles
 
-# Environment
+# Environment (raiz: .env versionado a pedido para Compose na Hostinger; restantes ignorados)
 .env
+!/.env
+backend/.env
 .env.local
 frontend/.env.production
 
