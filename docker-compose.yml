@@ -8,7 +8,7 @@
 # Labels Traefik expandem ${PUBLIC_HOST} a partir do `.env` lido pelo Compose no host.
 #
 # Rede `web`: docker network create web (se ainda não existir). deploy.sh cria na LAN.
-# Portas: HOST_BIND (default 127.0.0.1); deploy.sh usa 0.0.0.0 para acesso na LAN.
+# Portas: HOST_BIND (default 127.0.0.1); deploy LAN: export DEPLOY_LAN_EXPOSE=1 antes de deploy.sh para 0.0.0.0.
 
 services:
   db:
@@ -40,6 +40,11 @@ services:
       dockerfile: Dockerfile
     env_file: .env
     restart: unless-stopped
+    environment:
+      # Valores vêm do `.env` na raiz; deploy.sh em LAN pode exportar e sobrepôr aqui.
+      ALLOWED_HOSTS: ${ALLOWED_HOSTS}
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS}
+      CSRF_TRUSTED_ORIGINS: ${CSRF_TRUSTED_ORIGINS}
     ports:
       - "${HOST_BIND:-127.0.0.1}:${APP_PORT:-8000}:8000"
     depends_on:
@@ -69,6 +74,10 @@ services:
       context: .
       dockerfile: Dockerfile
     env_file: .env
+    environment:
+      ALLOWED_HOSTS: ${ALLOWED_HOSTS}
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS}
+      CSRF_TRUSTED_ORIGINS: ${CSRF_TRUSTED_ORIGINS}
     depends_on:
       db:
         condition: service_healthy
@@ -82,6 +91,10 @@ services:
       context: .
       dockerfile: Dockerfile
     env_file: .env
+    environment:
+      ALLOWED_HOSTS: ${ALLOWED_HOSTS}
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS}
+      CSRF_TRUSTED_ORIGINS: ${CSRF_TRUSTED_ORIGINS}
     depends_on:
       db:
         condition: service_healthy

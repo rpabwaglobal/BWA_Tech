@@ -84,20 +84,26 @@ for p in 8000 8001 8002 8003 8004 8005 8006 8007 8008 8009 8010; do
         break
     fi
 done
-# IP da máquina na rede (para acesso de outros PCs)
+# IP da máquina na rede (só relevante em modo LAN)
 SERVER_IP=$(hostname -I 2>/dev/null | awk '{print $1}')
 [ -z "$SERVER_IP" ] && SERVER_IP=$(ip route get 1 2>/dev/null | awk '{print $7; exit}')
 [ -z "$SERVER_IP" ] && SERVER_IP="127.0.0.1"
-# Django: aceitar acesso por localhost e pelo IP da rede
-export ALLOWED_HOSTS="localhost,127.0.0.1,${SERVER_IP}"
-export CORS_ALLOWED_ORIGINS="http://localhost:${APP_PORT},http://127.0.0.1:${APP_PORT},http://${SERVER_IP}:${APP_PORT}"
-export CSRF_TRUSTED_ORIGINS="http://localhost:${APP_PORT},http://127.0.0.1:${APP_PORT},http://${SERVER_IP}:${APP_PORT}"
 if [ "$APP_PORT" != "8000" ]; then
     echo " [INFO] Porta 8000 em uso. Usando porta $APP_PORT."
 fi
 export APP_PORT
-# Expor :8000 em todas as interfaces na LAN (outros PCs). Em VPS só Traefik, use .env com HOST_BIND=127.0.0.1
-export HOST_BIND=0.0.0.0
+
+# VPS com Traefik: NÃO exportar HOST_BIND — o Compose usa o valor do `.env` (ex.: 127.0.0.1).
+# O export antigo HOST_BIND=0.0.0.0 publicava :8000 na internet e gerava DisallowedHost (Host=IP:8000).
+# Rede LAN / acesso por IP noutros PCs: export DEPLOY_LAN_EXPOSE=1 antes de executar este script.
+if [ "${DEPLOY_LAN_EXPOSE:-}" = "1" ]; then
+  export HOST_BIND=0.0.0.0
+  export ALLOWED_HOSTS="localhost,127.0.0.1,${SERVER_IP},${SERVER_IP}:${APP_PORT}"
+  export CORS_ALLOWED_ORIGINS="http://localhost:${APP_PORT},http://127.0.0.1:${APP_PORT},http://${SERVER_IP}:${APP_PORT}"
+  export CSRF_TRUSTED_ORIGINS="$CORS_ALLOWED_ORIGINS"
+else
+  unset HOST_BIND
+fi
 echo ""
 if ! docker compose up -d --build; then
     echo ""
