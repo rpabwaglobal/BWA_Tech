@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-# Gera dump do PostgreSQL no SERVIDOR (VPS).
+# Gera dump do PostgreSQL no SERVIDOR (VPS) — backup ou cópia para fora.
+# Para migrar DO localhost PARA a VPS: faça dump no PC (pg_dump ou docker compose exec db …),
+# envie o .dump.gz para a VPS e use scripts/restore-prod-docker.sh na pasta do projeto.
 # Uso (na pasta onde está o docker-compose.yml):
 #   chmod +x scripts/dump-prod-postgres.sh
 #   ./scripts/dump-prod-postgres.sh
@@ -111,4 +113,5 @@ docker compose exec -T "$DB_SVC" pg_dump \
 
 gzip -f "$OUT"
 echo "Pronto: ${OUT}.gz"
-echo "Copie esse arquivo para o PC de desenvolvimento e use scripts/restore-local-docker.ps1"
+echo "Para restaurar na VPS (Linux): scripts/restore-prod-docker.sh"
+echo "Para restaurar no Windows (dev): scripts/restore-local-docker.ps1"
