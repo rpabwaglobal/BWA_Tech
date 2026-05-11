@@ -16,9 +16,11 @@ from dotenv import load_dotenv
 
 # Sempre carregar .env da pasta backend (funciona com runserver a partir da raiz do repo ou de backend/)
 # encoding=utf-8-sig: remove BOM se o editor gravar "UTF-8 com BOM" (senão USE_POSTGRES não é lido).
-# override=True: valores do .env prevalecem sobre variáveis herdadas do sistema/IDE.
+# override: em dev (omissão) o .env prevalece sobre o ambiente (IDE).
+# Na imagem Docker: DOTENV_OVERRIDE=false para o `env_file` do Compose na VPS sobrepor o .env baked no build.
 BASE_DIR = Path(__file__).resolve().parent.parent
-load_dotenv(BASE_DIR / '.env', override=True, encoding="utf-8-sig")
+_dotenv_override = os.getenv('DOTENV_OVERRIDE', 'true').lower() not in ('0', 'false', 'no')
+load_dotenv(BASE_DIR / '.env', override=_dotenv_override, encoding="utf-8-sig")
 
 
 # Quick-start development settings - unsuitable for production
@@ -30,7 +32,8 @@ SECRET_KEY = os.getenv('SECRET_KEY', 'django-insecure-bt!9t-dt^4*(3i)1_)*o)@@)tv
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = os.getenv('DEBUG', 'True').lower() == 'true'
 
-# Em produção: ALLOWED_HOSTS=tech.bwa.global,IP_da_VPS (separados por vírgula)
+# ALLOWED_HOSTS: domínios e hosts permitidos (vírgula). Pelo Traefik o Host costuma ser só o domínio.
+# Se expuser a porta 8000 pelo IP público inclua também a forma com porta (ex.: 203.0.113.10:8000).
 ALLOWED_HOSTS = [h.strip() for h in os.getenv('ALLOWED_HOSTS', 'localhost,127.0.0.1').split(',') if h.strip()]
 
 # Atrás de Traefik/nginx com TLS — define BEHIND_HTTPS_PROXY=true no .env (docker-compose)

@@ -25,6 +25,9 @@ COPY backend/ ./
 COPY .env /app/backend/.env
 COPY --from=frontend-builder /app/frontend/dist /app/frontend/dist
 
+# Permite ao docker-compose env_file sobrescrever variáveis sem rebuild da imagem.
+ENV DOTENV_OVERRIDE=false
+
 ENV PYTHONUNBUFFERED=1
 EXPOSE 8000
 CMD ["sh", "-c", "mkdir -p media/profiles && python manage.py migrate --noinput && python manage.py collectstatic --noinput && daphne -b 0.0.0.0 -p 8000 config.asgi:application"]
