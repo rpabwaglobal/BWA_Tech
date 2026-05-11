@@ -37,6 +37,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+    restart: unless-stopped
     ports:
       - "${HOST_BIND:-127.0.0.1}:${APP_PORT:-8000}:8000"
     depends_on:
@@ -51,7 +52,12 @@ services:
       - web
     labels:
       - traefik.enable=true
+      # Obrigatório aqui (diferente do stack só-nginx): o backend está também na rede compose
+      # "default"; sem isto o Traefik pode tentar IP errado. O outro projeto só usa "web".
       - traefik.docker.network=${TRAEFIK_NETWORK:-web}
+      # Se o router não pegar HTTPS, compare com projetos sem esta linha: o teu Traefik pode não
+      # ter entrypoint "websecure"; nesse caso comenta esta label ou igual ao nome nos static config.
+      - traefik.http.routers.bwaproj.entrypoints=websecure
       - "traefik.http.routers.bwaproj.rule=Host(`${PUBLIC_HOST:-tech.bwa.global}`)"
       - traefik.http.routers.bwaproj.tls.certresolver=${TRAEFIK_CERT_RESOLVER:-letsencrypt}
       - traefik.http.services.bwaproj.loadbalancer.server.port=8000

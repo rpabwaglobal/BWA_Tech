@@ -30,7 +30,7 @@ export function useWebSocket({ onNotification, enabled = true }: UseWebSocketOpt
     
     console.log('[WebSocket] Tentando conectar...');
 
-    // Em produção: use VITE_WS_URL (ex: wss://bwatech.com.br) ou mesmo host da página
+    // Em produção: use VITE_WS_URL (ex: wss://tech.bwa.global) ou mesmo host da página
     const viteWs = import.meta.env.VITE_WS_URL as string | undefined;
     let wsUrl: string;
     if (viteWs) {

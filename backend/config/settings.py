@@ -30,7 +30,7 @@ SECRET_KEY = os.getenv('SECRET_KEY', 'django-insecure-bt!9t-dt^4*(3i)1_)*o)@@)tv
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = os.getenv('DEBUG', 'True').lower() == 'true'
 
-# Em produção: ALLOWED_HOSTS=tech.bwa.global (separados por vírgula)
+# Em produção: ALLOWED_HOSTS=tech.bwa.global,IP_da_VPS (separados por vírgula)
 ALLOWED_HOSTS = [h.strip() for h in os.getenv('ALLOWED_HOSTS', 'localhost,127.0.0.1').split(',') if h.strip()]
 
 # Atrás de Traefik/nginx com TLS — define BEHIND_HTTPS_PROXY=true no .env (docker-compose)

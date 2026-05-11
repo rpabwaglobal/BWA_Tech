@@ -1,7 +1,7 @@
 import axios from 'axios';
 import type { AxiosResponse } from 'axios';
 
-// Em produção: use VITE_API_URL (ex: https://bwatech.com.br/api) ou mesmo domínio (/api)
+// Em produção: use VITE_API_URL (ex: https://tech.bwa.global/api) ou mesmo domínio (/api)
 const baseURL =
   import.meta.env.VITE_API_URL ??
   (import.meta.env.DEV ? 'http://127.0.0.1:8000/api' : '/api');
