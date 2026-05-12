@@ -30,6 +30,25 @@ class ChamadoSuporteViewSet(viewsets.ModelViewSet):
     pagination_class = None
     http_method_names = ['get', 'post', 'patch', 'head', 'options']
 
+    # Roles privilegiados que podem ver/alterar chamados de QUALQUER usuário.
+    PRIVILEGED_ROLES = {'admin', 'supervisor', 'gerente'}
+
+    def get_queryset(self):
+        """Mitigação de IDOR: usuários comuns só veem chamados associados ao
+        próprio email (usuario_email). Roles privilegiados veem tudo."""
+        qs = ChamadoSuporte.objects.select_related('tipo', 'item', 'item__tipo', 'motivo')
+        user = self.request.user
+        if not user.is_authenticated:
+            return qs.none()
+        role = getattr(user, 'role', None)
+        if role in self.PRIVILEGED_ROLES or user.is_superuser:
+            return qs
+        # Filtragem por email do usuário autenticado (case-insensitive)
+        user_email = (user.email or '').strip().lower()
+        if not user_email:
+            return qs.none()
+        return qs.filter(usuario_email__iexact=user_email)
+
     def get_serializer_class(self):
         if self.action == 'create':
             return ChamadoSuporteWriteSerializer
@@ -94,10 +113,17 @@ class ChamadoSuporteViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=['get'], url_path='por-usuario')
     def por_usuario(self, request):
+        """Lista chamados do usuário. Roles privilegiados podem filtrar por email
+        arbitrário via `?usuario_email=`; usuários comuns ficam restritos ao
+        próprio email (get_queryset já aplica o filtro)."""
         qs = self.get_queryset()
-        email = request.query_params.get('usuario_email')
-        if email:
-            qs = qs.filter(usuario_email__iexact=email.strip())
+        user = request.user
+        role = getattr(user, 'role', None)
+        is_privileged = role in self.PRIVILEGED_ROLES or user.is_superuser
+        if is_privileged:
+            email = request.query_params.get('usuario_email')
+            if email:
+                qs = qs.filter(usuario_email__iexact=email.strip())
         serializer = ChamadoSuporteReadSerializer(qs, many=True)
         return Response(serializer.data)
 

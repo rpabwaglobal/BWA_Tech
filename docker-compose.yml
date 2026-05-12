@@ -12,9 +12,10 @@
 
 services:
   db:
-    image: postgres:16-alpine
+    image: postgres:16.6-alpine
     env_file: .env
     ports:
+      # Bind LOCALHOST sempre. Exposição externa só via Traefik (não pelo Postgres).
       - "127.0.0.1:${POSTGRES_PORT:-5433}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
@@ -23,16 +24,25 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+    security_opt:
+      - no-new-privileges:true
 
   redis:
-    image: redis:7-alpine
+    image: redis:7.4-alpine
+    # Exige senha (REDIS_PASSWORD do .env). Sem persistência em disco (broker apenas).
+    command: ["sh", "-c", "redis-server --requirepass \"$$REDIS_PASSWORD\" --save \"\" --appendonly no --protected-mode yes"]
+    env_file: .env
     volumes:
       - redis_data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "sh", "-c", "redis-cli -a \"$$REDIS_PASSWORD\" ping"]
       interval: 5s
       timeout: 5s
       retries: 5
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
 
   backend:
     build:
@@ -57,6 +67,12 @@ services:
     networks:
       - default
       - web
+    security_opt:
+      - no-new-privileges:true
+    # Hardening avançado (validar em staging antes de ativar em prod):
+    # cap_drop: ["ALL"]
+    # read_only: true
+    # tmpfs: ["/tmp:size=64m"]
     labels:
       - traefik.enable=true
       # Obrigatório aqui (diferente do stack só-nginx): o backend está também na rede compose
@@ -85,6 +101,10 @@ services:
         condition: service_healthy
     command: ["celery", "-A", "config.celery", "worker", "--loglevel=INFO", "--concurrency=1", "--prefetch-multiplier=1"]
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
 
   celery-beat:
     build:
@@ -102,6 +122,8 @@ services:
         condition: service_healthy
     command: ["celery", "-A", "config.celery", "beat", "--loglevel=INFO"]
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
 
 networks:
   web:

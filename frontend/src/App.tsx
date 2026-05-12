@@ -4,6 +4,7 @@ import { NotificationProvider } from './context/NotificationContext';
 import { SidebarProvider } from './context/SidebarContext';
 import Login from './pages/Login';
 import Register from './pages/Register';
+import RecoverAccount from './pages/RecoverAccount';
 import Dashboard from './pages/Dashboard';
 import Sprints from './pages/Sprints';
 import SprintDetails from './pages/SprintDetails';
@@ -86,6 +87,14 @@ function AppRoutes() {
         element={
           <PublicRoute>
             <Register />
+          </PublicRoute>
+        }
+      />
+      <Route
+        path={ROUTES.recuperarConta}
+        element={
+          <PublicRoute>
+            <RecoverAccount />
           </PublicRoute>
         }
       />

@@ -8,8 +8,11 @@ type AuthContextType = {
   loading: boolean;
   isAuthenticated: boolean;
   profilePictureUrl: string | null;
-  login: (username: string, password: string) => Promise<void>;
-  register: (data: RegisterData) => Promise<void>;
+  login: (email: string, password: string) => Promise<void>;
+  /** Registra o usuário e retorna user + recovery_code SEM autenticar. Chamar finalizeAuth(user) depois. */
+  register: (data: RegisterData) => Promise<{ recovery_code: string; user: User }>;
+  /** Conclui a autenticação após o usuário ter visto o código de recuperação. */
+  finalizeAuth: (user: User) => void;
   logout: () => Promise<void>;
   refreshUser: () => Promise<void>;
 };
@@ -79,15 +82,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => document.removeEventListener('visibilitychange', handleVisibility);
   }, [performLogout]);
 
-  const login = async (username: string, password: string) => {
-    const response = await authService.login({ username, password });
+  const login = async (email: string, password: string) => {
+    const response = await authService.login({ email, password });
     setUser(response.user);
     scheduleExpiryLogout(() => void performLogout());
   };
 
-  const register = async (data: RegisterData) => {
+  const register = async (data: RegisterData): Promise<{ recovery_code: string; user: User }> => {
     const response = await authService.register(data);
-    setUser(response.user);
+    // Não chama setUser aqui: o modal de código de recuperação precisa aparecer
+    // antes de PublicRoute redirecionar (isAuthenticated=true causa redirect imediato).
+    return { recovery_code: response.recovery_code, user: response.user };
+  };
+
+  const finalizeAuth = (newUser: User) => {
+    setUser(newUser);
     scheduleExpiryLogout(() => void performLogout());
   };
 
@@ -114,6 +123,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         profilePictureUrl,
         login,
         register,
+        finalizeAuth,
         logout,
         refreshUser,
       }}

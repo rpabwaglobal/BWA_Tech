@@ -12,6 +12,7 @@ https://docs.djangoproject.com/en/5.2/ref/settings/
 
 from pathlib import Path
 import os
+from django.core.exceptions import ImproperlyConfigured
 from dotenv import load_dotenv
 
 # Sempre carregar .env da pasta backend (funciona com runserver a partir da raiz do repo ou de backend/)
@@ -27,10 +28,20 @@ load_dotenv(BASE_DIR / '.env', override=_dotenv_override, encoding="utf-8-sig")
 # See https://docs.djangoproject.com/en/5.2/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = os.getenv('SECRET_KEY', 'django-insecure-bt!9t-dt^4*(3i)1_)*o)@@)tvv&p+3h55y6$d=&3(3#xpx%zb')
+# Fallback `django-insecure-*` REMOVIDO — produção exige SECRET_KEY no ambiente.
+SECRET_KEY = os.getenv('SECRET_KEY')
+if not SECRET_KEY:
+    raise ImproperlyConfigured(
+        'SECRET_KEY não definida. Configure no .env ou nas variáveis de ambiente. '
+        'Gere uma com: python -c "from django.core.management.utils import get_random_secret_key; print(get_random_secret_key())"'
+    )
+if SECRET_KEY.startswith('django-insecure-'):
+    # Em dev pode ser válido, mas avisamos para evitar uso acidental em prod.
+    import warnings
+    warnings.warn('SECRET_KEY com prefixo "django-insecure-" detectada. Nunca usar em produção.')
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = os.getenv('DEBUG', 'True').lower() == 'true'
+DEBUG = os.getenv('DEBUG', 'False').lower() == 'true'
 
 # ALLOWED_HOSTS: domínios e hosts permitidos (vírgula). Pelo Traefik o Host costuma ser só o domínio.
 # Se expuser a porta 8000 pelo IP público inclua também a forma com porta (ex.: 203.0.113.10:8000).
@@ -46,6 +57,9 @@ if _BEHIND_HTTPS_PROXY:
 # Application definition
 
 INSTALLED_APPS = [
+    # daphne PRECISA vir antes de django.contrib.staticfiles para que `runserver`
+    # use o ASGI handler (suporta WebSocket via Channels) em vez do WSGI puro.
+    'daphne',
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
@@ -74,8 +88,10 @@ MIDDLEWARE = [
     'django.contrib.sessions.middleware.SessionMiddleware',
     'corsheaders.middleware.CorsMiddleware',
     'django.middleware.common.CommonMiddleware',
-    # CSRF desabilitado temporariamente para desenvolvimento
-    # 'django.middleware.csrf.CsrfViewMiddleware',
+    # CSRF protege endpoints baseados em sessão. Endpoints DRF que usam
+    # ExpiringTokenAuthentication (header Authorization) ficam isentos de CSRF
+    # naturalmente; views públicas (register/login/recover) usam @csrf_exempt.
+    'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
@@ -192,6 +208,21 @@ REST_FRAMEWORK = {
     ],
     'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
     'PAGE_SIZE': 20,
+    # Rate limiting (proteção contra brute force / spam / enumeration).
+    # Escopos customizados ativados explicitamente em login/register/recover/recovery-attempt.
+    'DEFAULT_THROTTLE_CLASSES': [
+        'rest_framework.throttling.AnonRateThrottle',
+        'rest_framework.throttling.UserRateThrottle',
+    ],
+    'DEFAULT_THROTTLE_RATES': {
+        # Limites generosos para evitar bloquear o app legítimo. Endpoints sensíveis
+        # (login/register/recovery) têm escopos próprios mais restritos abaixo.
+        'anon': '120/min',
+        'user': '1200/min',
+        'login': '10/min',
+        'register': '5/min',
+        'recovery': '5/hour',
+    },
 }
 
 # CORS configuration
@@ -209,9 +240,17 @@ _dev_origins = [
     "http://127.0.0.1:5175",
 ]
 _env_origins = [o.strip() for o in os.getenv('CORS_ALLOWED_ORIGINS', '').split(',') if o.strip()]
-# Em DEBUG sempre incluir origens de dev para evitar CORS ao chamar de localhost:5173
-CORS_ALLOWED_ORIGINS = (_dev_origins + _env_origins) if DEBUG else (_env_origins or _dev_origins)
-CORS_ALLOWED_ORIGINS = list(dict.fromkeys(CORS_ALLOWED_ORIGINS))  # sem duplicatas
+# Em DEBUG inclui origens de dev. Produção HTTPS exige _env_origins.
+if DEBUG:
+    CORS_ALLOWED_ORIGINS = list(dict.fromkeys(_dev_origins + _env_origins))
+else:
+    if _BEHIND_HTTPS_PROXY and not _env_origins:
+        raise ImproperlyConfigured(
+            'CORS_ALLOWED_ORIGINS é obrigatório em produção (BEHIND_HTTPS_PROXY=true). '
+            'Defina no .env: CORS_ALLOWED_ORIGINS=https://tech.bwa.global'
+        )
+    # Fallback dev/staging sem TLS: usa env se presente, senão dev origins
+    CORS_ALLOWED_ORIGINS = list(dict.fromkeys(_env_origins or _dev_origins))
 
 CORS_ALLOW_CREDENTIALS = True
 CORS_EXPOSE_HEADERS = ['Content-Type', 'Authorization']
@@ -244,6 +283,17 @@ CSRF_COOKIE_SECURE = os.getenv(
     'true' if _BEHIND_HTTPS_PROXY else 'false',
 ).lower() in ('true', '1', 'yes')
 
+# Security headers (atrás de HTTPS) — Traefik faz o offload de TLS.
+if _BEHIND_HTTPS_PROXY and not DEBUG:
+    SECURE_SSL_REDIRECT = True
+    SECURE_HSTS_SECONDS = 31536000  # 1 ano
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+    SECURE_HSTS_PRELOAD = True
+    SECURE_CONTENT_TYPE_NOSNIFF = True
+    SECURE_BROWSER_XSS_FILTER = True
+    SECURE_REFERRER_POLICY = 'strict-origin-when-cross-origin'
+    X_FRAME_OPTIONS = 'DENY'
+
 # Language and Timezone
 LANGUAGE_CODE = 'pt-br'
 TIME_ZONE = 'America/Sao_Paulo'
@@ -258,10 +308,16 @@ PORTAL_PASSWORD = os.getenv('PORTAL_PASSWORD', '')
 if os.getenv('CHANNEL_LAYER_BACKEND', '').strip().lower() == 'redis':
     _rh = os.getenv('CHANNEL_REDIS_HOST', os.getenv('REDIS_HOST', '127.0.0.1')).strip()
     _rp = int(os.getenv('CHANNEL_REDIS_PORT', os.getenv('REDIS_PORT', '6379')).strip() or '6379')
+    _rpw = os.getenv('REDIS_PASSWORD', '').strip()
+    # channels_redis aceita URL como host. Se senha existe, embute-a; caso contrário tupla (host, port).
+    if _rpw:
+        _hosts = [f'redis://:{_rpw}@{_rh}:{_rp}/0']
+    else:
+        _hosts = [(_rh, _rp)]
     CHANNEL_LAYERS = {
         'default': {
             'BACKEND': 'channels_redis.core.RedisChannelLayer',
-            'CONFIG': {'hosts': [(_rh, _rp)]},
+            'CONFIG': {'hosts': _hosts},
         },
     }
 else:

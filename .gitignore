@@ -21,9 +21,16 @@ db.sqlite3-journal
 backend/media
 backend/staticfiles
 
-# Environment (raiz: .env versionado a pedido para Compose na Hostinger; restantes ignorados)
+# Environment — NÃO versionar .env (segredos!). Use .env.example como template.
+.env
+.env.*
+!.env.example
+!.env.docker.example
 
-
+# Celery beat schedule files
+celerybeat-schedule
+celerybeat-schedule.*
+celerybeat.pid
 
 # IDE
 .vscode/

@@ -16,7 +16,7 @@ const api = axios.create({
 });
 
 // Rotas que não devem enviar Authorization (evita 401 com token antigo)
-const publicPaths = ['/users/register/', '/users/login/'];
+const publicPaths = ['/users/register/', '/users/login/', '/users/recover-account/'];
 const isPublic = (url: string) => publicPaths.some((p) => url?.includes(p));
 
 // Interceptor para adicionar o token de autenticação
@@ -39,6 +39,12 @@ api.interceptors.request.use(
   }
 );
 
+// Rotas onde o redirect para /entrar deve ser suprimido (evita loop de reload
+// quando múltiplas requisições paralelas falham com 401 enquanto o usuário já
+// está numa página pública).
+const PUBLIC_ROUTES = ['/entrar', '/cadastro', '/recuperar-conta'];
+let redirectInFlight = false;
+
 // Interceptor para tratar erros de autenticação
 api.interceptors.response.use(
   (response) => response,
@@ -46,7 +52,15 @@ api.interceptors.response.use(
     if (error.response?.status === 401 && !isPublic(error.config?.url ?? '')) {
       localStorage.removeItem('auth_token');
       localStorage.removeItem('auth_expires_at');
-      window.location.href = '/entrar';
+
+      const isOnPublicRoute = PUBLIC_ROUTES.some((r) =>
+        window.location.pathname.startsWith(r)
+      );
+
+      if (!isOnPublicRoute && !redirectInFlight) {
+        redirectInFlight = true;
+        window.location.href = '/entrar';
+      }
     }
     return Promise.reject(error);
   }

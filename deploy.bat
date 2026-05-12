@@ -3,10 +3,26 @@ setlocal EnableDelayedExpansion
 chcp 65001 >nul 2>&1
 title BWAproj - Deploy
 
-:: Credenciais do superadmin do sistema. Altere via .env (ADMIN_USERNAME, ADMIN_PASSWORD, ADMIN_EMAIL) se precisar.
-if defined ADMIN_USERNAME (set "SU_USER=!ADMIN_USERNAME!") else (set "SU_USER=italoadmin")
-if defined ADMIN_PASSWORD (set "SU_PASS=!ADMIN_PASSWORD!") else (set "SU_PASS=Italommf@45")
-if defined ADMIN_EMAIL (set "SU_EMAIL=!ADMIN_EMAIL!") else (set "SU_EMAIL=italoadmin@bwatech.local")
+:: Credenciais do superadmin — OBRIGATÓRIAS via variáveis de ambiente.
+:: Exemplo: set ADMIN_PASSWORD=<senha-forte> && deploy.bat
+if not defined ADMIN_USERNAME goto missing_admin
+if not defined ADMIN_PASSWORD goto missing_admin
+if not defined ADMIN_EMAIL goto missing_admin
+set "SU_USER=!ADMIN_USERNAME!"
+set "SU_PASS=!ADMIN_PASSWORD!"
+set "SU_EMAIL=!ADMIN_EMAIL!"
+goto admin_ok
+
+:missing_admin
+echo  [ERRO] Defina ADMIN_USERNAME, ADMIN_PASSWORD e ADMIN_EMAIL antes de rodar.
+echo         Exemplo (PowerShell):
+echo           $env:ADMIN_USERNAME = "meuadmin"
+echo           $env:ADMIN_PASSWORD = "<senha-forte-aleatoria>"
+echo           $env:ADMIN_EMAIL    = "admin@bwa.global"
+echo           .\deploy.bat
+exit /b 1
+
+:admin_ok
 
 set "COMPOSE_PROJECT_NAME=bwaproj"
 set "SCRIPT_DIR=%~dp0"

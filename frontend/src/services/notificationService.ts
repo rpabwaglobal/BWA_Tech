@@ -50,20 +50,26 @@ export const notificationService = {
     }
     
     let nextUrl: string | null = `/notifications/${queryParams.toString() ? `?${queryParams.toString()}` : ''}`;
-    
-    // Fazer requisições paginadas até obter todas as notificações
-    while (nextUrl) {
+
+    // Cap de segurança: limita o fetch às N páginas mais recentes. Para usuários
+    // com milhares de notificações, evita esgotar a cota de rate-limit e travar
+    // outros endpoints da mesma sessão. UX de "load more" cobre o restante.
+    const MAX_PAGES = 5;
+    let pagesFetched = 0;
+
+    while (nextUrl && pagesFetched < MAX_PAGES) {
       const response = await api.get<PaginatedResponse<Notification> | Notification[]>(nextUrl);
-      
+      pagesFetched += 1;
+
       if (Array.isArray(response.data)) {
         // Se não for paginado, retornar diretamente
         return response.data;
       }
-      
+
       // Se for paginado, adicionar os resultados e verificar se há próxima página
       const paginatedData = response.data as PaginatedResponse<Notification>;
       allNotifications.push(...(paginatedData.results || []));
-      
+
       // Se houver próxima página, extrair o caminho da URL
       if (paginatedData.next) {
         const url = new URL(paginatedData.next);
@@ -77,7 +83,7 @@ export const notificationService = {
         nextUrl = null;
       }
     }
-    
+
     return allNotifications;
   },
 

@@ -17,6 +17,8 @@
 # (usa pg_dump do sistema; defina PGHOST, PGPORT, PGUSER, PGPASSWORD, PGDATABASE ou exporte do .env)
 
 set -euo pipefail
+# umask 0077: arquivos de dump criados com permissão 0600 (somente owner lê).
+umask 0077
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$ROOT"
@@ -27,6 +29,7 @@ cd "$ROOT"
 export COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-bwaproj}"
 
 mkdir -p backups
+chmod 0700 backups 2>/dev/null || true
 STAMP="$(date +%Y%m%d_%H%M%S)"
 OUT="backups/bwaproj_prod_${STAMP}.dump"
 

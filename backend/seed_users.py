@@ -1,51 +1,61 @@
+"""
+Seed inicial de usuários (apenas dev/staging).
+
+Senhas NÃO são hardcoded; geradas via `secrets.token_urlsafe` e impressas
+UMA VEZ no console para captura manual. Em produção, prefira criar usuários
+pelo admin Django (já protegido por autenticação + 2FA quando ativado).
+"""
+
+import secrets
+
 from apps.accounts.models import User, Role
 
+
+def _make_password() -> str:
+    """Senha forte aleatória (URL-safe, ~24 chars, ~144 bits de entropia)."""
+    return secrets.token_urlsafe(18)
+
+
 def seed_users():
-    # Usuários iniciais do sistema
     initial_users = [
-        ('admin', 'admin@example.com', 'admin123', Role.ADMIN),
-        ('supervisor', 'supervisor@example.com', 'supervisor123', Role.SUPERVISOR),
-        ('gerente', 'gerente@example.com', 'gerente123', Role.GERENTE),
-        ('dev', 'dev@example.com', 'dev123', Role.DESENVOLVEDOR),
+        ('admin', 'admin@example.com', Role.ADMIN),
+        ('supervisor', 'supervisor@example.com', Role.SUPERVISOR),
+        ('gerente', 'gerente@example.com', Role.GERENTE),
+        ('dev', 'dev@example.com', Role.DESENVOLVEDOR),
     ]
-
-    # Novos usuários - todos começam como desenvolvedor
-    # O admin pode alterar os cargos depois
     new_users = [
-        # Supervisores (serão definidos pelo admin)
-        ('gustavo', 'gustavo@gmail.com', 'gustavo123', Role.DESENVOLVEDOR),
-        ('elton', 'elton@gmail.com', 'elton123', Role.DESENVOLVEDOR),
-        # Gerentes de Projeto (serão definidos pelo supervisor)
-        ('jefferson', 'jefferson@gmail.com', 'jefferson123', Role.DESENVOLVEDOR),
-        ('thiago', 'thiago@gmail.com', 'thiago123', Role.DESENVOLVEDOR),
-        ('robert', 'robert@gmail.com', 'robert123', Role.DESENVOLVEDOR),
-        # Desenvolvedores
-        ('ilton', 'ilton@gmail.com', 'ilton123', Role.DESENVOLVEDOR),
-        ('lucas', 'lucas@gmail.com', 'lucas123', Role.DESENVOLVEDOR),
-        ('italo', 'italo@gmail.com', 'italo123', Role.DESENVOLVEDOR),
-        ('geymerson', 'geymerson@gmail.com', 'geymerson123', Role.DESENVOLVEDOR),
+        ('gustavo', 'gustavo@gmail.com', Role.DESENVOLVEDOR),
+        ('elton', 'elton@gmail.com', Role.DESENVOLVEDOR),
+        ('jefferson', 'jefferson@gmail.com', Role.DESENVOLVEDOR),
+        ('thiago', 'thiago@gmail.com', Role.DESENVOLVEDOR),
+        ('robert', 'robert@gmail.com', Role.DESENVOLVEDOR),
+        ('ilton', 'ilton@gmail.com', Role.DESENVOLVEDOR),
+        ('lucas', 'lucas@gmail.com', Role.DESENVOLVEDOR),
+        ('italo', 'italo@gmail.com', Role.DESENVOLVEDOR),
+        ('geymerson', 'geymerson@gmail.com', Role.DESENVOLVEDOR),
     ]
-
     all_users = initial_users + new_users
 
-    for username, email, password, role in all_users:
-        if not User.objects.filter(username=username).exists():
-            user = User.objects.create_user(
-                username=username,
-                email=email,
-                password=password,
-                role=role,
-                is_staff=True if role in [Role.ADMIN, Role.SUPERVISOR] else False,
-                is_superuser=True if role == Role.ADMIN else False
-            )
-            print(f"Usuário criado: {username} ({role}) - Email: {email} - Senha: {password}")
-        else:
-            print(f"Usuário já existe: {username}")
+    print("\n=== Senhas geradas (anote AGORA — não serão exibidas novamente) ===\n")
+    for username, email, role in all_users:
+        if User.objects.filter(username=username).exists():
+            print(f"  [skip] {username:12} (já existe)")
+            continue
+        password = _make_password()
+        User.objects.create_user(
+            username=username,
+            email=email,
+            password=password,
+            role=role,
+            is_staff=role in (Role.ADMIN, Role.SUPERVISOR),
+            is_superuser=role == Role.ADMIN,
+        )
+        print(f"  {username:12}  {email:32}  senha: {password}")
 
     print("\n=== Resumo ===")
-    print("Todos os novos usuários foram criados como DESENVOLVEDOR.")
-    print("O ADMIN deve alterar os cargos de Gustavo e Elton para SUPERVISOR.")
-    print("Os SUPERVISORES podem alterar os cargos dos outros usuários.")
+    print("Cada usuário foi criado com senha aleatória forte exibida acima.")
+    print("Guarde-as num gerenciador de senhas. Trocar via /api/users/change-password/.")
+
 
 if __name__ == '__main__':
     seed_users()

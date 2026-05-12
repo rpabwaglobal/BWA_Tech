@@ -140,6 +140,17 @@ formulariosApi.interceptors.request.use(async (config) => {
   return config;
 });
 
+const FORM_PUBLIC_ROUTES = ['/entrar', '/cadastro', '/recuperar-conta'];
+let formRedirectInFlight = false;
+
+const goToLoginOnce = () => {
+  const onPublic = FORM_PUBLIC_ROUTES.some((r) => window.location.pathname.startsWith(r));
+  if (!onPublic && !formRedirectInFlight) {
+    formRedirectInFlight = true;
+    window.location.href = '/entrar';
+  }
+};
+
 formulariosApi.interceptors.response.use(
   (response) => response,
   async (error) => {
@@ -147,14 +158,14 @@ formulariosApi.interceptors.response.use(
       if (proxyThroughDjango()) {
         localStorage.removeItem(getFormulariosAuthStorageKey());
         localStorage.removeItem('auth_expires_at');
-        window.location.href = '/entrar';
+        goToLoginOnce();
       } else if (tokenFromPortal()) {
         const { clearPortalFormulariosJwt } = await import('./portalFormulariosTokenService');
         clearPortalFormulariosJwt();
       } else {
         localStorage.removeItem(getFormulariosAuthStorageKey());
         localStorage.removeItem('auth_expires_at');
-        window.location.href = '/entrar';
+        goToLoginOnce();
       }
     }
     return Promise.reject(error);

@@ -7,23 +7,6 @@ const PRIORITY_BASE_COLORS: Record<string, string> = {
   absoluta: '#888888',
 };
 
-export function getPriorityGradientUrl(
-  _prioridade: string,
-  _variantIndex: number,
-  _extension?: string
-): string | null {
-  // Gradientes temporariamente desabilitados.
-  return null;
-}
-
-export async function preloadPriorityGradients(_options?: {
-  priorities?: string[];
-  variantsByPriority?: Partial<Record<string, number>>;
-}): Promise<void> {
-  // Sem preload enquanto gradientes estiverem desabilitados.
-  return Promise.resolve();
-}
-
 export function getPriorityColor(prioridade: string): string {
   switch (prioridade) {
     case 'baixa':
