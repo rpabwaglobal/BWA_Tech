@@ -16,7 +16,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { ImageCrop } from '@/components/ui/image-crop';
-import { Loader2, Camera, Eye, EyeOff, Copy, Check, RefreshCw, KeyRound } from 'lucide-react';
+import { Loader2, Camera, RefreshCw, KeyRound } from 'lucide-react';
 
 export default function Settings() {
   const { user, refreshUser, profilePictureUrl } = useAuth();
@@ -45,8 +45,6 @@ export default function Settings() {
   // ao gerar um novo ou ao usar no fluxo de recuperação.
   const [recoveryCode, setRecoveryCode] = useState<string | null>(null);
   const [recoveryLoading, setRecoveryLoading] = useState(true);
-  const [recoveryVisible, setRecoveryVisible] = useState(false);
-  const [recoveryCopied, setRecoveryCopied] = useState(false);
   const [recoveryError, setRecoveryError] = useState('');
   const [regenOpen, setRegenOpen] = useState(false);
   const [regenLoading, setRegenLoading] = useState(false);
@@ -69,24 +67,12 @@ export default function Settings() {
     };
   }, []);
 
-  const handleCopyRecovery = async () => {
-    if (!recoveryCode) return;
-    try {
-      await navigator.clipboard.writeText(recoveryCode);
-      setRecoveryCopied(true);
-      setTimeout(() => setRecoveryCopied(false), 2000);
-    } catch {
-      setRecoveryError('Não foi possível copiar.');
-    }
-  };
-
   const handleRegenerate = async () => {
     setRegenLoading(true);
     setRecoveryError('');
     try {
       const data = await authService.regenerateRecoveryCode();
       setRecoveryCode(data.recovery_code);
-      setRecoveryVisible(false); // mantém mascarado; user clica no olho pra ver
       setRegenOpen(false);
     } catch {
       setRecoveryError('Erro ao gerar novo código.');
@@ -377,41 +363,9 @@ export default function Settings() {
           ) : (
             <>
               <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-muted)]/50 px-4 py-4">
-                <div className="flex flex-col items-center gap-3">
-                  <span className="font-mono text-2xl font-bold tracking-widest text-[var(--color-foreground)] text-center select-all">
-                    {recoveryCode
-                      ? recoveryVisible
-                        ? recoveryCode
-                        : recoveryCode.replace(/[A-Z0-9]/gi, '•')
-                      : '—'}
-                  </span>
-                  {recoveryCode && (
-                    <div className="flex items-center gap-2">
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon"
-                        onClick={() => setRecoveryVisible((v) => !v)}
-                        title={recoveryVisible ? 'Ocultar código' : 'Mostrar código'}
-                        className="shrink-0"
-                      >
-                        {recoveryVisible ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon"
-                        onClick={handleCopyRecovery}
-                        title="Copiar código"
-                        className="shrink-0"
-                      >
-                        {recoveryCopied
-                          ? <Check className="h-4 w-4 text-green-500" />
-                          : <Copy className="h-4 w-4" />}
-                      </Button>
-                    </div>
-                  )}
-                </div>
+                <span className="block font-mono text-2xl font-bold tracking-widest text-[var(--color-foreground)] text-center select-all">
+                  {recoveryCode ?? '—'}
+                </span>
               </div>
 
               <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-[var(--color-muted-foreground)]">
