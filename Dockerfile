@@ -5,7 +5,8 @@
 # .env NÃO é copiado para a imagem — o Compose injeta variáveis via env_file em runtime.
 
 FROM node:20.18.1-alpine AS frontend-builder
-RUN addgroup -g 1000 builder && adduser -u 1000 -G builder -s /bin/sh -D builder
+# UID/GID 1001 (node:alpine já tem usuário `node` em 1000 — evita colisão).
+RUN addgroup -g 1001 builder && adduser -u 1001 -G builder -s /bin/sh -D builder
 WORKDIR /app/frontend
 
 COPY --chown=builder:builder frontend/package.json frontend/package-lock.json ./
