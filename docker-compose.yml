@@ -121,7 +121,9 @@ services:
       ALLOWED_HOSTS: ${ALLOWED_HOSTS}
       CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS}
       CSRF_TRUSTED_ORIGINS: ${CSRF_TRUSTED_ORIGINS}
-    command: ["celery", "-A", "config.celery", "beat", "--loglevel=INFO"]
+    # --schedule=/tmp/...: writable como USER appuser (em /app/backend o user
+    # ainda não tinha permissão consistente para apagar/rotacionar o .bak).
+    command: ["celery", "-A", "config.celery", "beat", "--loglevel=INFO", "--schedule=/tmp/celerybeat-schedule"]
     restart: unless-stopped
     security_opt:
       - no-new-privileges:true

@@ -27,10 +27,13 @@ backend/staticfiles
 !.env.example
 !.env.docker.example
 
-# Celery beat schedule files
+# Celery beat schedule files (criados em runtime — não versionar)
 celerybeat-schedule
 celerybeat-schedule.*
 celerybeat.pid
+backend/celerybeat-schedule
+backend/celerybeat-schedule.*
+backend/celerybeat.pid
 
 # IDE
 .vscode/
