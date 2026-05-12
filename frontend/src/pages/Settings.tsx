@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { useAuth } from '@/context/AuthContext';
 import { userService } from '@/services/userService';
 import { authService } from '@/services/authService';
@@ -10,11 +10,13 @@ import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
 import { ImageCrop } from '@/components/ui/image-crop';
-import { Loader2, Camera } from 'lucide-react';
+import { Loader2, Camera, Eye, EyeOff, Copy, Check, RefreshCw, KeyRound } from 'lucide-react';
 
 export default function Settings() {
   const { user, refreshUser, profilePictureUrl } = useAuth();
@@ -38,6 +40,79 @@ export default function Settings() {
   const [photoError, setPhotoError] = useState('');
   const [photoSuccess, setPhotoSuccess] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Recovery code (acesso/rotação)
+  const [recoveryCode, setRecoveryCode] = useState<string | null>(null);
+  const [recoveryExpiresAt, setRecoveryExpiresAt] = useState<string | null>(null);
+  const [recoveryLoading, setRecoveryLoading] = useState(true);
+  const [recoveryVisible, setRecoveryVisible] = useState(false);
+  const [recoveryCopied, setRecoveryCopied] = useState(false);
+  const [recoveryError, setRecoveryError] = useState('');
+  const [regenOpen, setRegenOpen] = useState(false);
+  const [regenLoading, setRegenLoading] = useState(false);
+
+  useEffect(() => {
+    let mounted = true;
+    authService
+      .getRecoveryCode()
+      .then((data) => {
+        if (!mounted) return;
+        setRecoveryCode(data.recovery_code);
+        setRecoveryExpiresAt(data.recovery_code_expires_at);
+      })
+      .catch(() => {
+        if (!mounted) return;
+        setRecoveryError('Não foi possível carregar o código.');
+      })
+      .finally(() => mounted && setRecoveryLoading(false));
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  const handleCopyRecovery = async () => {
+    if (!recoveryCode) return;
+    try {
+      await navigator.clipboard.writeText(recoveryCode);
+      setRecoveryCopied(true);
+      setTimeout(() => setRecoveryCopied(false), 2000);
+    } catch {
+      setRecoveryError('Não foi possível copiar.');
+    }
+  };
+
+  const handleRegenerate = async () => {
+    setRegenLoading(true);
+    setRecoveryError('');
+    try {
+      const data = await authService.regenerateRecoveryCode();
+      setRecoveryCode(data.recovery_code);
+      setRecoveryExpiresAt(data.recovery_code_expires_at);
+      setRecoveryVisible(true); // mostrar imediatamente após gerar
+      setRegenOpen(false);
+    } catch {
+      setRecoveryError('Erro ao gerar novo código.');
+    } finally {
+      setRegenLoading(false);
+    }
+  };
+
+  const formatExpiry = (iso: string | null): string => {
+    if (!iso) return 'sem expiração definida';
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return 'data inválida';
+    const now = Date.now();
+    const diffMs = d.getTime() - now;
+    if (diffMs <= 0) return 'expirado';
+    const days = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+    const hours = Math.floor((diffMs % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+    if (days > 0) return `expira em ${days}d ${hours}h (${d.toLocaleDateString('pt-BR')})`;
+    return `expira em ${hours}h (${d.toLocaleDateString('pt-BR')})`;
+  };
+
+  const isExpired = recoveryExpiresAt
+    ? new Date(recoveryExpiresAt).getTime() <= Date.now()
+    : false;
 
   const getInitials = () => {
     if (!user) return 'U';
@@ -138,7 +213,7 @@ export default function Settings() {
   };
 
   return (
-    <div className="space-y-8 max-w-2xl">
+    <div className="space-y-8 max-w-2xl mx-auto w-full px-4 py-6">
       <Card>
         <CardHeader>
           <CardTitle>Perfil</CardTitle>
@@ -301,6 +376,93 @@ export default function Settings() {
         </CardContent>
       </Card>
 
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <KeyRound className="h-5 w-5" />
+            Código de recuperação
+          </CardTitle>
+          <CardDescription>
+            Use este código para recuperar sua conta caso esqueça a senha. Guarde-o em
+            local seguro. Não compartilhe com ninguém.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {recoveryLoading ? (
+            <div className="flex items-center gap-2 text-sm text-[var(--color-muted-foreground)]">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              Carregando...
+            </div>
+          ) : (
+            <>
+              <div className="flex items-center justify-between gap-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-muted)]/50 px-4 py-3">
+                <span className="font-mono text-lg font-bold tracking-widest text-[var(--color-foreground)]">
+                  {recoveryCode
+                    ? recoveryVisible
+                      ? recoveryCode
+                      : recoveryCode.replace(/[A-Z0-9]/gi, '•')
+                    : '—'}
+                </span>
+                <div className="flex items-center gap-1">
+                  {recoveryCode && (
+                    <>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => setRecoveryVisible((v) => !v)}
+                        title={recoveryVisible ? 'Ocultar código' : 'Mostrar código'}
+                        className="shrink-0"
+                      >
+                        {recoveryVisible ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        onClick={handleCopyRecovery}
+                        title="Copiar código"
+                        className="shrink-0"
+                      >
+                        {recoveryCopied
+                          ? <Check className="h-4 w-4 text-green-500" />
+                          : <Copy className="h-4 w-4" />}
+                      </Button>
+                    </>
+                  )}
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-[var(--color-muted-foreground)]">
+                <span>
+                  {recoveryCode ? (
+                    <>Status: <span className={isExpired ? 'text-[var(--color-destructive)] font-medium' : ''}>
+                      {formatExpiry(recoveryExpiresAt)}
+                    </span></>
+                  ) : (
+                    'Você ainda não tem um código. Gere um agora para conseguir recuperar a conta.'
+                  )}
+                </span>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setRegenOpen(true)}
+                  className="gap-1.5"
+                >
+                  <RefreshCw className="h-3.5 w-3.5" />
+                  {recoveryCode ? 'Gerar novo código' : 'Gerar código'}
+                </Button>
+              </div>
+
+              {recoveryError && (
+                <p className="text-sm text-[var(--color-destructive)]">{recoveryError}</p>
+              )}
+            </>
+          )}
+        </CardContent>
+      </Card>
+
       <Dialog open={cropOpen} onOpenChange={setCropOpen}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
@@ -315,6 +477,42 @@ export default function Settings() {
               maxSize={256}
             />
           )}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={regenOpen} onOpenChange={(open) => !regenLoading && setRegenOpen(open)}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Gerar novo código de recuperação?</DialogTitle>
+            <DialogDescription>
+              O código atual será invalidado imediatamente. Apenas o novo código permitirá
+              recuperar sua conta. Tem certeza?
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2 sm:gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setRegenOpen(false)}
+              disabled={regenLoading}
+            >
+              Cancelar
+            </Button>
+            <Button
+              type="button"
+              onClick={handleRegenerate}
+              disabled={regenLoading}
+            >
+              {regenLoading ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Gerando...
+                </>
+              ) : (
+                'Sim, gerar novo'
+              )}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>

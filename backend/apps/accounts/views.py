@@ -131,6 +131,27 @@ class UserViewSet(viewsets.ModelViewSet):
             return Response({'message': 'Senha alterada com sucesso'})
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
+    @action(detail=False, methods=['get', 'post'], permission_classes=[IsAuthenticated], url_path='recovery-code')
+    def recovery_code(self, request):
+        """GET retorna o código atual + expiração do usuário autenticado.
+        POST rotaciona: gera código novo, invalida o anterior, retorna novo.
+
+        Se o código nunca foi gerado (NULL) ou expirou, GET ainda devolve o
+        valor atual (pode ser None) e o frontend deve oferecer "gerar novo".
+        """
+        user = request.user
+        if request.method == 'POST':
+            user.recovery_code = _generate_recovery_code()
+            user.recovery_code_expires_at = timezone.now() + RECOVERY_CODE_TTL
+            user.save(update_fields=['recovery_code', 'recovery_code_expires_at'])
+        return Response({
+            'recovery_code': user.recovery_code,
+            'recovery_code_expires_at': (
+                user.recovery_code_expires_at.isoformat()
+                if user.recovery_code_expires_at else None
+            ),
+        })
+
     @action(detail=False, methods=['post'], permission_classes=[IsAuthenticated], url_path='profile-picture')
     def profile_picture(self, request):
         """Atualiza a foto de perfil do usuário atual (validação robusta)."""

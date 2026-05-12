@@ -134,4 +134,14 @@ export const authService = {
       confirm_password: new_password,
     });
   },
+
+  async getRecoveryCode(): Promise<{ recovery_code: string | null; recovery_code_expires_at: string | null }> {
+    const response = await api.get('/users/recovery-code/');
+    return response.data;
+  },
+
+  async regenerateRecoveryCode(): Promise<{ recovery_code: string; recovery_code_expires_at: string }> {
+    const response = await api.post('/users/recovery-code/');
+    return response.data;
+  },
 };
