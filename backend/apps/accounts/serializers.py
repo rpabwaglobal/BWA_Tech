@@ -1,14 +1,9 @@
 import secrets
 import string
 import unicodedata
-from datetime import timedelta
 
-from django.utils import timezone
 from rest_framework import serializers
 from .models import User, Role
-
-# TTL do código de recuperação: válido por 7 dias após geração/rotação.
-RECOVERY_CODE_TTL = timedelta(days=7)
 
 
 class UserSerializer(serializers.ModelSerializer):
@@ -67,9 +62,22 @@ class UserSerializer(serializers.ModelSerializer):
 
 
 def _generate_recovery_code() -> str:
+    """Gera código `XXXX-XXXX-XXXX` único no DB.
+
+    Retenta caso ocorra colisão (estatisticamente improvável com 36^12 ≈ 4.7e18
+    combinações, mas a unicidade é garantida explicitamente). Limite de 20
+    tentativas: se chegasse lá teríamos um problema sistêmico, não aleatório.
+    """
     alphabet = string.ascii_uppercase + string.digits
-    raw = ''.join(secrets.choice(alphabet) for _ in range(12))
-    return f"{raw[0:4]}-{raw[4:8]}-{raw[8:12]}"
+    for _ in range(20):
+        raw = ''.join(secrets.choice(alphabet) for _ in range(12))
+        code = f"{raw[0:4]}-{raw[4:8]}-{raw[8:12]}"
+        if not User.objects.filter(recovery_code=code).exists():
+            return code
+    raise RuntimeError(
+        'Não foi possível gerar um recovery_code único após 20 tentativas. '
+        'Verifique pressão por colisão no DB.'
+    )
 
 
 def _validate_password_strength(value):
@@ -130,7 +138,6 @@ class RegisterSerializer(serializers.Serializer):
             first_name=validated_data.get('first_name', '').strip() or '',
             role=Role.DESENVOLVEDOR,
             recovery_code=recovery_code,
-            recovery_code_expires_at=timezone.now() + RECOVERY_CODE_TTL,
         )
         if profile_picture:
             user.profile_picture = profile_picture
@@ -184,12 +191,10 @@ class RecoverAccountSerializer(serializers.Serializer):
         code = attrs.get('recovery_code', '').strip().upper()
         user = User.objects.filter(recovery_code=code).first()
         # Mensagem unificada para evitar enumeration via timing/distinção
-        invalid_msg = 'Código de recuperação inválido ou expirado.'
+        invalid_msg = 'Código de recuperação inválido.'
         if not user:
             raise serializers.ValidationError(invalid_msg)
         if not user.is_active:
-            raise serializers.ValidationError(invalid_msg)
-        if user.recovery_code_expires_at and timezone.now() > user.recovery_code_expires_at:
             raise serializers.ValidationError(invalid_msg)
         attrs['user'] = user
         return attrs

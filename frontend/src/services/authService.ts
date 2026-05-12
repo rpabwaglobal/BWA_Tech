@@ -135,12 +135,12 @@ export const authService = {
     });
   },
 
-  async getRecoveryCode(): Promise<{ recovery_code: string | null; recovery_code_expires_at: string | null }> {
+  async getRecoveryCode(): Promise<{ recovery_code: string | null }> {
     const response = await api.get('/users/recovery-code/');
     return response.data;
   },
 
-  async regenerateRecoveryCode(): Promise<{ recovery_code: string; recovery_code_expires_at: string }> {
+  async regenerateRecoveryCode(): Promise<{ recovery_code: string }> {
     const response = await api.post('/users/recovery-code/');
     return response.data;
   },

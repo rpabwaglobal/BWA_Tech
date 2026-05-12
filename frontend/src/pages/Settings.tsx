@@ -41,9 +41,9 @@ export default function Settings() {
   const [photoSuccess, setPhotoSuccess] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Recovery code (acesso/rotação)
+  // Recovery code (acesso/rotação) — código não expira por tempo; só é invalidado
+  // ao gerar um novo ou ao usar no fluxo de recuperação.
   const [recoveryCode, setRecoveryCode] = useState<string | null>(null);
-  const [recoveryExpiresAt, setRecoveryExpiresAt] = useState<string | null>(null);
   const [recoveryLoading, setRecoveryLoading] = useState(true);
   const [recoveryVisible, setRecoveryVisible] = useState(false);
   const [recoveryCopied, setRecoveryCopied] = useState(false);
@@ -58,7 +58,6 @@ export default function Settings() {
       .then((data) => {
         if (!mounted) return;
         setRecoveryCode(data.recovery_code);
-        setRecoveryExpiresAt(data.recovery_code_expires_at);
       })
       .catch(() => {
         if (!mounted) return;
@@ -87,7 +86,6 @@ export default function Settings() {
     try {
       const data = await authService.regenerateRecoveryCode();
       setRecoveryCode(data.recovery_code);
-      setRecoveryExpiresAt(data.recovery_code_expires_at);
       setRecoveryVisible(true); // mostrar imediatamente após gerar
       setRegenOpen(false);
     } catch {
@@ -96,23 +94,6 @@ export default function Settings() {
       setRegenLoading(false);
     }
   };
-
-  const formatExpiry = (iso: string | null): string => {
-    if (!iso) return 'sem expiração definida';
-    const d = new Date(iso);
-    if (Number.isNaN(d.getTime())) return 'data inválida';
-    const now = Date.now();
-    const diffMs = d.getTime() - now;
-    if (diffMs <= 0) return 'expirado';
-    const days = Math.floor(diffMs / (1000 * 60 * 60 * 24));
-    const hours = Math.floor((diffMs % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
-    if (days > 0) return `expira em ${days}d ${hours}h (${d.toLocaleDateString('pt-BR')})`;
-    return `expira em ${hours}h (${d.toLocaleDateString('pt-BR')})`;
-  };
-
-  const isExpired = recoveryExpiresAt
-    ? new Date(recoveryExpiresAt).getTime() <= Date.now()
-    : false;
 
   const getInitials = () => {
     if (!user) return 'U';
@@ -435,13 +416,9 @@ export default function Settings() {
 
               <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-[var(--color-muted-foreground)]">
                 <span>
-                  {recoveryCode ? (
-                    <>Status: <span className={isExpired ? 'text-[var(--color-destructive)] font-medium' : ''}>
-                      {formatExpiry(recoveryExpiresAt)}
-                    </span></>
-                  ) : (
-                    'Você ainda não tem um código. Gere um agora para conseguir recuperar a conta.'
-                  )}
+                  {recoveryCode
+                    ? 'Este código não expira. Ao gerar um novo, o atual é invalidado.'
+                    : 'Você ainda não tem um código. Gere um agora para conseguir recuperar a conta.'}
                 </span>
                 <Button
                   type="button"

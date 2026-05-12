@@ -2,7 +2,6 @@ import imghdr
 import io
 
 from django.db.models import Q
-from django.utils import timezone
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.views import APIView
@@ -27,7 +26,6 @@ from .serializers import (
     RegisterSerializer,
     RecoverAccountSerializer,
     _generate_recovery_code,
-    RECOVERY_CODE_TTL,
 )
 from .authentication import TOKEN_TTL
 
@@ -133,24 +131,17 @@ class UserViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=['get', 'post'], permission_classes=[IsAuthenticated], url_path='recovery-code')
     def recovery_code(self, request):
-        """GET retorna o código atual + expiração do usuário autenticado.
-        POST rotaciona: gera código novo, invalida o anterior, retorna novo.
+        """GET retorna o código atual do usuário autenticado.
+        POST rotaciona: gera código novo (único no DB), invalida o anterior.
 
-        Se o código nunca foi gerado (NULL) ou expirou, GET ainda devolve o
-        valor atual (pode ser None) e o frontend deve oferecer "gerar novo".
+        O código não expira por tempo — fica válido até ser explicitamente
+        regenerado (aqui ou via fluxo de recover-account, que rotaciona ao usar).
         """
         user = request.user
         if request.method == 'POST':
             user.recovery_code = _generate_recovery_code()
-            user.recovery_code_expires_at = timezone.now() + RECOVERY_CODE_TTL
-            user.save(update_fields=['recovery_code', 'recovery_code_expires_at'])
-        return Response({
-            'recovery_code': user.recovery_code,
-            'recovery_code_expires_at': (
-                user.recovery_code_expires_at.isoformat()
-                if user.recovery_code_expires_at else None
-            ),
-        })
+            user.save(update_fields=['recovery_code'])
+        return Response({'recovery_code': user.recovery_code})
 
     @action(detail=False, methods=['post'], permission_classes=[IsAuthenticated], url_path='profile-picture')
     def profile_picture(self, request):
@@ -271,9 +262,10 @@ class RecoverAccountView(APIView):
         if serializer.is_valid():
             user = serializer.validated_data['user']
             user.set_password(serializer.validated_data['new_password'])
+            # Rotaciona o código após uso (o anterior deixa de funcionar
+            # imediatamente — atende a "ao gerar novo, o antigo é invalidado").
             user.recovery_code = _generate_recovery_code()
-            user.recovery_code_expires_at = timezone.now() + RECOVERY_CODE_TTL
-            user.save(update_fields=['password', 'recovery_code', 'recovery_code_expires_at'])
+            user.save(update_fields=['password', 'recovery_code'])
             # Logout-all após recovery (defesa contra atacante que já tinha token)
             Token.objects.filter(user=user).delete()
             return Response({'message': 'Senha redefinida com sucesso.'})
