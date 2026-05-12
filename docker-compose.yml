@@ -48,6 +48,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+    # Nome explícito da imagem para celery-worker/celery-beat reutilizarem (build 1x).
+    image: bwaproj-app:latest
     env_file: .env
     restart: unless-stopped
     environment:
@@ -86,40 +88,39 @@ services:
       - traefik.http.services.bwaproj.loadbalancer.server.port=8000
 
   celery-worker:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    # Reutiliza a imagem buildada pelo serviço `backend` (sem rebuild paralelo).
+    image: bwaproj-app:latest
+    depends_on:
+      backend:
+        condition: service_started
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     env_file: .env
     environment:
       ALLOWED_HOSTS: ${ALLOWED_HOSTS}
       CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS}
       CSRF_TRUSTED_ORIGINS: ${CSRF_TRUSTED_ORIGINS}
-    depends_on:
-      db:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
     command: ["celery", "-A", "config.celery", "worker", "--loglevel=INFO", "--concurrency=1", "--prefetch-multiplier=1"]
     restart: unless-stopped
     security_opt:
       - no-new-privileges:true
-    cap_drop:
-      - ALL
 
   celery-beat:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    image: bwaproj-app:latest
+    depends_on:
+      backend:
+        condition: service_started
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     env_file: .env
     environment:
       ALLOWED_HOSTS: ${ALLOWED_HOSTS}
       CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS}
       CSRF_TRUSTED_ORIGINS: ${CSRF_TRUSTED_ORIGINS}
-    depends_on:
-      db:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
     command: ["celery", "-A", "config.celery", "beat", "--loglevel=INFO"]
     restart: unless-stopped
     security_opt:
