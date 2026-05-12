@@ -57,6 +57,9 @@ if _BEHIND_HTTPS_PROXY:
 # Application definition
 
 INSTALLED_APPS = [
+    # daphne PRECISA vir antes de django.contrib.staticfiles para que `runserver`
+    # use o ASGI handler (suporta WebSocket via Channels) em vez do WSGI puro.
+    'daphne',
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
@@ -212,8 +215,10 @@ REST_FRAMEWORK = {
         'rest_framework.throttling.UserRateThrottle',
     ],
     'DEFAULT_THROTTLE_RATES': {
-        'anon': '60/min',
-        'user': '300/min',
+        # Limites generosos para evitar bloquear o app legítimo. Endpoints sensíveis
+        # (login/register/recovery) têm escopos próprios mais restritos abaixo.
+        'anon': '120/min',
+        'user': '1200/min',
         'login': '10/min',
         'register': '5/min',
         'recovery': '5/hour',
