@@ -5,14 +5,13 @@
 # .env NÃO é copiado para a imagem — o Compose injeta variáveis via env_file em runtime.
 
 FROM node:20.18.1-alpine AS frontend-builder
-# UID/GID 1001 (node:alpine já tem usuário `node` em 1000 — evita colisão).
-RUN addgroup -g 1001 builder && adduser -u 1001 -G builder -s /bin/sh -D builder
+# Build stage é descartado (só dist/ vai pra imagem final). USER não-root aqui
+# só introduzia bug de permissão de diretório sem ganho de segurança real.
 WORKDIR /app/frontend
 
-COPY --chown=builder:builder frontend/package.json frontend/package-lock.json ./
-USER builder
+COPY frontend/package.json frontend/package-lock.json ./
 RUN npm ci --legacy-peer-deps
-COPY --chown=builder:builder frontend/ ./
+COPY frontend/ ./
 # .env.production é opcional e deve ser fornecido como BuildKit secret:
 #   docker buildx build --secret id=frontend_env,src=.env.production ...
 # Aqui apenas fazemos o build; se VITE_* faltar, Vite usa fallback do código.
