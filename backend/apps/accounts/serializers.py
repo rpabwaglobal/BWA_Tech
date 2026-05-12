@@ -1,6 +1,14 @@
+import secrets
+import string
+import unicodedata
+from datetime import timedelta
+
+from django.utils import timezone
 from rest_framework import serializers
-from django.contrib.auth import authenticate
 from .models import User, Role
+
+# TTL do código de recuperação: válido por 7 dias após geração/rotação.
+RECOVERY_CODE_TTL = timedelta(days=7)
 
 
 class UserSerializer(serializers.ModelSerializer):
@@ -58,6 +66,12 @@ class UserSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'date_joined']
 
 
+def _generate_recovery_code() -> str:
+    alphabet = string.ascii_uppercase + string.digits
+    raw = ''.join(secrets.choice(alphabet) for _ in range(12))
+    return f"{raw[0:4]}-{raw[4:8]}-{raw[8:12]}"
+
+
 def _validate_password_strength(value):
     """Mínimo 8 caracteres, letra maiúscula, minúscula e pelo menos um caractere especial."""
     if len(value) < 8:
@@ -84,11 +98,22 @@ class RegisterSerializer(serializers.Serializer):
         return value
 
     def validate_email(self, value):
-        value = value.strip().lower()
-        if not value.endswith('@bwa.global'):
+        # NFKC normaliza variantes Unicode (ƅ → b, etc) e remove confusáveis. strip() remove espaços.
+        # Rejeita null-byte (alguns parsers C truncam aí, permitindo bypass).
+        if '\x00' in value:
+            raise serializers.ValidationError('E-mail inválido.')
+        value = unicodedata.normalize('NFKC', value).strip().lower()
+        try:
+            local, domain = value.rsplit('@', 1)
+        except ValueError:
+            raise serializers.ValidationError('E-mail inválido.')
+        if domain != 'bwa.global':
             raise serializers.ValidationError('O e-mail deve ser do domínio @bwa.global.')
-        if User.objects.filter(email=value).exists():
-            raise serializers.ValidationError('Este e-mail já está cadastrado.')
+        if not local:
+            raise serializers.ValidationError('E-mail inválido.')
+        # Enumeration mitigation: mensagem genérica (mesma string usada em outras falhas).
+        if User.objects.filter(email__iexact=value).exists():
+            raise serializers.ValidationError('Não foi possível concluir o cadastro.')
         return value
 
     def validate_password(self, value):
@@ -97,12 +122,15 @@ class RegisterSerializer(serializers.Serializer):
 
     def create(self, validated_data):
         profile_picture = validated_data.pop('profile_picture', None)
+        recovery_code = _generate_recovery_code()
         user = User.objects.create_user(
             username=validated_data['username'],
             email=validated_data['email'],
             password=validated_data['password'],
             first_name=validated_data.get('first_name', '').strip() or '',
             role=Role.DESENVOLVEDOR,
+            recovery_code=recovery_code,
+            recovery_code_expires_at=timezone.now() + RECOVERY_CODE_TTL,
         )
         if profile_picture:
             user.profile_picture = profile_picture
@@ -111,28 +139,22 @@ class RegisterSerializer(serializers.Serializer):
 
 
 class LoginSerializer(serializers.Serializer):
-    username = serializers.CharField()
+    email = serializers.EmailField()
     password = serializers.CharField(write_only=True)
 
     def validate(self, attrs):
-        username = (attrs.get('username') or '').strip()
+        email = (attrs.get('email') or '').strip().lower()
         password = attrs.get('password')
 
-        if username and password:
-            user = authenticate(username=username, password=password)
-            # Django autentica pelo username exatamente como está no banco; tentativa extra sem
-            # diferenciar maiúsculas (ex.: italo.martins vs Italo.Martins).
-            if not user:
-                cand = User.objects.filter(username__iexact=username).first()
-                if cand and cand.check_password(password):
-                    user = cand
-            if not user:
+        if email and password:
+            user = User.objects.filter(email__iexact=email).first()
+            if not (user and user.check_password(password)):
                 raise serializers.ValidationError('Credenciais inválidas.')
             if not user.is_active:
                 raise serializers.ValidationError('Usuário desativado.')
             attrs['user'] = user
         else:
-            raise serializers.ValidationError('Username e senha são obrigatórios.')
+            raise serializers.ValidationError('E-mail e senha são obrigatórios.')
         return attrs
 
 
@@ -145,3 +167,29 @@ class ChangePasswordSerializer(serializers.Serializer):
         if not request or not request.user.check_password(value):
             raise serializers.ValidationError('Senha atual incorreta.')
         return value
+
+
+class RecoverAccountSerializer(serializers.Serializer):
+    recovery_code = serializers.CharField(max_length=14)
+    new_password = serializers.CharField(write_only=True)
+    confirm_password = serializers.CharField(write_only=True)
+
+    def validate_new_password(self, value):
+        _validate_password_strength(value)
+        return value
+
+    def validate(self, attrs):
+        if attrs.get('new_password') != attrs.get('confirm_password'):
+            raise serializers.ValidationError('As senhas não coincidem.')
+        code = attrs.get('recovery_code', '').strip().upper()
+        user = User.objects.filter(recovery_code=code).first()
+        # Mensagem unificada para evitar enumeration via timing/distinção
+        invalid_msg = 'Código de recuperação inválido ou expirado.'
+        if not user:
+            raise serializers.ValidationError(invalid_msg)
+        if not user.is_active:
+            raise serializers.ValidationError(invalid_msg)
+        if user.recovery_code_expires_at and timezone.now() > user.recovery_code_expires_at:
+            raise serializers.ValidationError(invalid_msg)
+        attrs['user'] = user
+        return attrs

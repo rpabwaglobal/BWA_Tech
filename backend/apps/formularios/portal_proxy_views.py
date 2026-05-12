@@ -6,7 +6,11 @@ O SPA autentica no BWA (Token); este view reenvia ao portal com Bearer JWT obtid
 
 from __future__ import annotations
 
+import ipaddress
 import logging
+import re
+import socket
+from urllib.parse import urlparse
 
 import requests
 from django.conf import settings
@@ -18,6 +22,39 @@ from rest_framework.views import APIView
 from .portal_auth import PortalLoginError, login_on_portal_cached
 
 logger = logging.getLogger(__name__)
+
+# Path seguro: letras, dígitos, hífen, underline, ponto, barra. Sem `..`, `\`,
+# `:`, espaços ou caracteres de controle. Evita path traversal e injeção.
+_SAFE_PATH_RE = re.compile(r'^[A-Za-z0-9_\-./]*$')
+
+
+def _is_internal_host(hostname: str) -> bool:
+    """True se o hostname/IP aponta para loopback, link-local, metadata cloud
+    ou rede privada RFC1918. Defesa contra SSRF interno."""
+    if not hostname:
+        return True
+    # Bloqueio explícito de metadados de nuvem
+    BLOCKED_HOSTS = {
+        '169.254.169.254',          # AWS/GCP/Azure IMDS
+        'metadata.google.internal',
+        'metadata',
+        '100.100.100.200',          # Alibaba
+    }
+    if hostname.lower() in BLOCKED_HOSTS:
+        return True
+    # Tentar resolver para todos os IPs (defesa contra DNS rebinding)
+    try:
+        infos = socket.getaddrinfo(hostname, None)
+    except socket.gaierror:
+        return True  # DNS quebrado → bloqueia por segurança
+    for info in infos:
+        try:
+            ip = ipaddress.ip_address(info[4][0])
+        except ValueError:
+            continue
+        if ip.is_loopback or ip.is_link_local or ip.is_private or ip.is_multicast:
+            return True
+    return False
 
 
 class PortalFormulariosProxyView(APIView):
@@ -33,7 +70,21 @@ class PortalFormulariosProxyView(APIView):
                 status=503,
             )
 
+        # Validar PORTAL_BASE_URL (defesa contra config maliciosa)
+        try:
+            parsed_base = urlparse(base)
+        except ValueError:
+            return Response({'detail': 'PORTAL_BASE_URL inválida.'}, status=503)
+        if parsed_base.scheme not in ('http', 'https'):
+            return Response({'detail': 'PORTAL_BASE_URL deve usar http(s).'}, status=503)
+        if _is_internal_host(parsed_base.hostname or ''):
+            logger.error('PORTAL_BASE_URL aponta para host interno: %s', parsed_base.hostname)
+            return Response({'detail': 'Configuração inválida.'}, status=503)
+
         sub = (path or '').lstrip('/')
+        # Bloqueio de path traversal e caracteres perigosos
+        if '..' in sub.split('/') or not _SAFE_PATH_RE.match(sub):
+            return Response({'detail': 'Path inválido.'}, status=400)
         url = f'{base}/api/formularios/{sub}'
         if request.GET:
             from urllib.parse import urlencode

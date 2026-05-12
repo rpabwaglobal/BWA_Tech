@@ -1,15 +1,97 @@
+import imghdr
+import io
+
 from django.db.models import Q
+from django.utils import timezone
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.authtoken.models import Token
+from rest_framework.throttling import AnonRateThrottle
 from django.contrib.auth import login, logout
 from django.utils.decorators import method_decorator
 from django.views.decorators.csrf import csrf_exempt
+
+try:
+    from PIL import Image  # Pillow já é dependência (ImageField)
+except ImportError:  # pragma: no cover
+    Image = None  # type: ignore[assignment]
+
 from .models import User
-from .serializers import UserSerializer, LoginSerializer, ChangePasswordSerializer, RegisterSerializer
+from .serializers import (
+    UserSerializer,
+    LoginSerializer,
+    ChangePasswordSerializer,
+    RegisterSerializer,
+    RecoverAccountSerializer,
+    _generate_recovery_code,
+    RECOVERY_CODE_TTL,
+)
+from .authentication import TOKEN_TTL
+
+
+# --- Throttle classes (rate limiting por escopo) ---------------------------
+
+class LoginRateThrottle(AnonRateThrottle):
+    scope = 'login'
+
+
+class RegisterRateThrottle(AnonRateThrottle):
+    scope = 'register'
+
+
+class RecoveryRateThrottle(AnonRateThrottle):
+    scope = 'recovery'
+
+
+# --- Validação de upload de imagem (defesa em profundidade) ----------------
+
+ALLOWED_IMAGE_MIME = {'image/jpeg', 'image/png', 'image/webp'}
+ALLOWED_IMAGE_KINDS = {'jpeg', 'png', 'webp'}
+MAX_IMAGE_SIZE = 5 * 1024 * 1024  # 5 MB
+
+
+def _validate_uploaded_image(file):
+    """Retorna (ok, error_message). Valida tamanho, MIME, magic bytes e
+    integridade via Pillow. Bloqueia SVG e tipos perigosos."""
+    if not file:
+        return False, 'Nenhum arquivo enviado.'
+    if file.size > MAX_IMAGE_SIZE:
+        return False, 'Arquivo muito grande (máx 5 MB).'
+    if getattr(file, 'content_type', '') not in ALLOWED_IMAGE_MIME:
+        return False, 'Formato não suportado. Use JPEG, PNG ou WebP.'
+    # Magic bytes
+    file.seek(0)
+    head = file.read(32)
+    file.seek(0)
+    kind = imghdr.what(None, head)
+    if kind not in ALLOWED_IMAGE_KINDS:
+        return False, 'Arquivo não é uma imagem válida.'
+    # Pillow.verify() pega bombs e arquivos corrompidos
+    if Image is not None:
+        try:
+            img = Image.open(io.BytesIO(file.read()))
+            img.verify()
+        except Exception:
+            return False, 'Imagem corrompida ou maliciosa.'
+        finally:
+            file.seek(0)
+    return True, None
+
+
+def _issue_fresh_token(user):
+    """Rotaciona o token: deleta os existentes e cria um novo com `created` atual.
+
+    Garante que o cliente receba sempre um token com 24h cheias de TTL,
+    em vez de um token antigo prestes a expirar.
+    Retorna (token, expires_at_iso).
+    """
+    Token.objects.filter(user=user).delete()
+    token = Token.objects.create(user=user)
+    expires_at = (token.created + TOKEN_TTL).isoformat()
+    return token, expires_at
 
 
 class UserViewSet(viewsets.ModelViewSet):
@@ -51,12 +133,13 @@ class UserViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=['post'], permission_classes=[IsAuthenticated], url_path='profile-picture')
     def profile_picture(self, request):
-        """Atualiza a foto de perfil do usuário atual"""
+        """Atualiza a foto de perfil do usuário atual (validação robusta)."""
         file = request.FILES.get('profile_picture')
-        if not file:
+        ok, err = _validate_uploaded_image(file)
+        if not ok:
             return Response(
-                {'profile_picture': ['Nenhum arquivo enviado.']},
-                status=status.HTTP_400_BAD_REQUEST
+                {'profile_picture': [err]},
+                status=status.HTTP_400_BAD_REQUEST,
             )
         # Remove foto anterior se existir
         if request.user.profile_picture:
@@ -71,29 +154,39 @@ class RegisterView(APIView):
     """Criação de conta: login, senha, e-mail; foto opcional. Novo usuário vem como desenvolvedor."""
     permission_classes = [AllowAny]
     authentication_classes = []
+    throttle_classes = [RegisterRateThrottle]
 
     @method_decorator(csrf_exempt)
     def dispatch(self, *args, **kwargs):
         return super().dispatch(*args, **kwargs)
 
     def post(self, request):
+        # Validação de upload de imagem antes mesmo do serializer
+        # (ImageField do DRF valida mínimo, mas a checagem manual é mais rigorosa).
+        if 'profile_picture' in request.FILES:
+            ok, err = _validate_uploaded_image(request.FILES['profile_picture'])
+            if not ok:
+                return Response({'profile_picture': [err]}, status=status.HTTP_400_BAD_REQUEST)
         serializer = RegisterSerializer(data=request.data)
         if serializer.is_valid():
             user = serializer.save()
-            token, _ = Token.objects.get_or_create(user=user)
+            token, expires_at = _issue_fresh_token(user)
             user_serializer = UserSerializer(user, context={'request': request})
             return Response({
                 'user': user_serializer.data,
                 'token': token.key,
+                'expires_at': expires_at,
                 'message': 'Conta criada com sucesso.',
+                'recovery_code': user.recovery_code,
             })
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
 class LoginView(APIView):
-    """View de login sem CSRF para desenvolvimento"""
+    """View de login - token DRF com TTL de 24h."""
     permission_classes = [AllowAny]
     authentication_classes = []  # Não requer autenticação
+    throttle_classes = [LoginRateThrottle]
 
     @method_decorator(csrf_exempt)
     def dispatch(self, *args, **kwargs):
@@ -104,24 +197,63 @@ class LoginView(APIView):
         serializer = LoginSerializer(data=request.data)
         if serializer.is_valid():
             user = serializer.validated_data['user']
-            # Cria ou obtém o token do usuário
-            token, created = Token.objects.get_or_create(user=user)
+            # Rotaciona token: cliente sempre recebe TTL cheio de 24h
+            token, expires_at = _issue_fresh_token(user)
             user_serializer = UserSerializer(user, context={'request': request})
             return Response({
                 'user': user_serializer.data,
                 'token': token.key,
+                'expires_at': expires_at,
                 'message': 'Login realizado com sucesso'
             })
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
 class LogoutView(APIView):
-    """View de logout"""
+    """View de logout - remove apenas o token usado nesta requisição."""
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
-        """Logout do usuário - remove o token"""
-        if hasattr(request.user, 'auth_token'):
+        token = getattr(request, 'auth', None)
+        if token is not None and hasattr(token, 'delete'):
+            token.delete()
+        elif hasattr(request.user, 'auth_token'):
             request.user.auth_token.delete()
         logout(request)
         return Response({'message': 'Logout realizado com sucesso'})
+
+
+class LogoutAllView(APIView):
+    """Logout de TODOS os dispositivos: remove todos os tokens do usuário.
+    Chamar após troca de senha / recuperação para revogar sessões antigas."""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        Token.objects.filter(user=request.user).delete()
+        logout(request)
+        return Response({'message': 'Sessões em todos os dispositivos foram encerradas.'})
+
+
+class RecoverAccountView(APIView):
+    """Recupera acesso via código: redefine senha, rotaciona o código,
+    invalida todos os tokens existentes do usuário."""
+    permission_classes = [AllowAny]
+    authentication_classes = []
+    throttle_classes = [RecoveryRateThrottle]
+
+    @method_decorator(csrf_exempt)
+    def dispatch(self, *args, **kwargs):
+        return super().dispatch(*args, **kwargs)
+
+    def post(self, request):
+        serializer = RecoverAccountSerializer(data=request.data)
+        if serializer.is_valid():
+            user = serializer.validated_data['user']
+            user.set_password(serializer.validated_data['new_password'])
+            user.recovery_code = _generate_recovery_code()
+            user.recovery_code_expires_at = timezone.now() + RECOVERY_CODE_TTL
+            user.save(update_fields=['password', 'recovery_code', 'recovery_code_expires_at'])
+            # Logout-all após recovery (defesa contra atacante que já tinha token)
+            Token.objects.filter(user=user).delete()
+            return Response({'message': 'Senha redefinida com sucesso.'})
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)

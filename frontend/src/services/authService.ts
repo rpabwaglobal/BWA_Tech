@@ -13,7 +13,7 @@ export type User = {
 }
 
 export type LoginData = {
-  username: string;
+  email: string;
   password: string;
 }
 
@@ -28,16 +28,28 @@ export type RegisterData = {
 export type LoginResponse = {
   user: User;
   token: string;
+  /** ISO timestamp do momento em que o token expira (fonte da verdade: servidor). */
+  expires_at?: string;
   message: string;
 }
 
-export const authService = {
-  async register(data: RegisterData): Promise<LoginResponse> {
-    const saveToken = (token: string) => {
-      localStorage.setItem('auth_token', token);
-      localStorage.setItem('auth_expires_at', String(Date.now() + 24 * 60 * 60 * 1000));
-    };
+export type RegisterResponse = LoginResponse & {
+  recovery_code: string;
+}
 
+/** Fallback: 24h a partir de Date.now() caso o servidor não envie `expires_at`. */
+const DEFAULT_TTL_MS = 24 * 60 * 60 * 1000;
+
+const persistSession = (token: string, expiresAtIso?: string) => {
+  localStorage.setItem('auth_token', token);
+  const expiresAtMs = expiresAtIso
+    ? new Date(expiresAtIso).getTime()
+    : Date.now() + DEFAULT_TTL_MS;
+  localStorage.setItem('auth_expires_at', String(expiresAtMs));
+};
+
+export const authService = {
+  async register(data: RegisterData): Promise<RegisterResponse> {
     if (data.profile_picture) {
       const formData = new FormData();
       formData.append('first_name', data.first_name);
@@ -46,7 +58,7 @@ export const authService = {
       formData.append('password', data.password);
       formData.append('profile_picture', data.profile_picture, data.profile_picture.name);
       const response = await api.post('/users/register/', formData);
-      if (response.data.token) saveToken(response.data.token);
+      if (response.data.token) persistSession(response.data.token, response.data.expires_at);
       return response.data;
     }
     const response = await api.post('/users/register/', {
@@ -55,16 +67,13 @@ export const authService = {
       email: data.email,
       password: data.password,
     });
-    if (response.data.token) saveToken(response.data.token);
+    if (response.data.token) persistSession(response.data.token, response.data.expires_at);
     return response.data;
   },
 
   async login(data: LoginData): Promise<LoginResponse> {
     const response = await api.post('/users/login/', data);
-    if (response.data.token) {
-      localStorage.setItem('auth_token', response.data.token);
-      localStorage.setItem('auth_expires_at', String(Date.now() + 24 * 60 * 60 * 1000));
-    }
+    if (response.data.token) persistSession(response.data.token, response.data.expires_at);
     return response.data;
   },
 
@@ -116,5 +125,13 @@ export const authService = {
     formData.append('profile_picture', file, 'profile.png');
     const response = await api.post<User>('/users/profile-picture/', formData);
     return response.data;
+  },
+
+  async recoverAccount(recovery_code: string, new_password: string): Promise<void> {
+    await api.post('/users/recover-account/', {
+      recovery_code,
+      new_password,
+      confirm_password: new_password,
+    });
   },
 };

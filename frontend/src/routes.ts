@@ -5,6 +5,7 @@
 export const ROUTES = {
   entrar: '/entrar',
   cadastro: '/cadastro',
+  recuperarConta: '/recuperar-conta',
   painel: '/painel',
   /** Lista de sprints (segmento singular, como pedido) */
   sprint: '/sprint',

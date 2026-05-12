@@ -24,6 +24,19 @@ class User(AbstractUser):
         blank=True,
         verbose_name='Foto de perfil'
     )
+    recovery_code = models.CharField(
+        max_length=14,
+        unique=True,
+        null=True,
+        blank=True,
+        verbose_name='Código de recuperação'
+    )
+    recovery_code_expires_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        verbose_name='Expiração do código de recuperação',
+        help_text='Quando null/passado, o código é considerado inválido.'
+    )
     created_at = models.DateTimeField(auto_now_add=True, verbose_name='Data de Criação')
     updated_at = models.DateTimeField(auto_now=True, verbose_name='Data de Atualização')
 

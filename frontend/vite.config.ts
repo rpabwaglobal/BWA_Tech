@@ -6,10 +6,19 @@ import { VitePWA } from 'vite-plugin-pwa'
 // https://vite.dev/config/
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, path.resolve(__dirname), '')
-  const formulariosProxyTarget =
-    env.VITE_FORMULARIOS_PROXY_TARGET || 'https://api.bwa.global:3334'
+  // Em produção exigimos a env var explicitamente (sem fallback hardcoded).
+  // Em dev pode-se setar VITE_FORMULARIOS_PROXY_TARGET no .env local.
+  const formulariosProxyTarget = env.VITE_FORMULARIOS_PROXY_TARGET
+  if (mode === 'production' && !formulariosProxyTarget) {
+    // Aviso não fatal: warning no build. Build segue sem proxy de dev.
+    console.warn('[vite] VITE_FORMULARIOS_PROXY_TARGET não definido — proxy /__formularios desativado.')
+  }
 
   return {
+  build: {
+    // Sem source maps em produção (evita expor lógica/path de código original).
+    sourcemap: mode !== 'production',
+  },
   plugins: [
     react(),
     VitePWA({
@@ -17,7 +26,6 @@ export default defineConfig(({ mode }) => {
       includeAssets: [
         'assets/bwa-black.png',
         'assets/bwa-white.png',
-        'gradients/**/*.webp',
       ],
       manifest: {
         name: 'BWA Tech',
@@ -33,22 +41,6 @@ export default defineConfig(({ mode }) => {
       },
       workbox: {
         globPatterns: ['**/*.{js,css,html,ico,png,svg,webp}'],
-        // PNGs de gradients são muito grandes para precache; usamos WebP no precache
-        // e deixamos PNG apenas para fallback em runtime.
-        globIgnores: ['**/gradients/**/*.png'],
-        runtimeCaching: [
-          {
-            urlPattern: /\/gradients\/.*\.(webp|png)$/i,
-            handler: 'CacheFirst',
-            options: {
-              cacheName: 'gradients-cache-v1',
-              expiration: {
-                maxEntries: 128,
-                maxAgeSeconds: 60 * 60 * 24 * 365,
-              },
-            },
-          },
-        ],
       },
     }),
   ],
@@ -57,7 +49,7 @@ export default defineConfig(({ mode }) => {
       "@": path.resolve(__dirname, "./src"),
     },
   },
-  server: {
+  server: formulariosProxyTarget ? {
     proxy: {
       // Mesmo origin no dev → sem CORS ao chamar a API externa de formulários (Bearer via Django).
       '/__formularios': {
@@ -70,6 +62,6 @@ export default defineConfig(({ mode }) => {
         rewrite: (p) => p.replace(/^\/__formularios/, ''),
       },
     },
-  },
+  } : undefined,
   }
 })

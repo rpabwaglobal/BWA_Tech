@@ -1,3 +1,5 @@
+import logging
+
 from rest_framework import viewsets, filters, status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.decorators import action
@@ -7,6 +9,8 @@ from django.db import transaction
 from django.db.models import Q, Max, Count, F
 from django.utils import timezone
 from datetime import datetime, timedelta
+
+logger = logging.getLogger(__name__)
 from .models import (
     Sprint,
     Project,
@@ -517,11 +521,9 @@ class CardViewSet(viewsets.ModelViewSet):
                 responsavel__role__in=['supervisor', 'admin']
             ).select_related('responsavel', 'projeto')
             
-            # Debug
-            print(f"[Priorities] Periodo: DIA - Cards encontrados: {cards_em_desenvolvimento.count()}")
-            for card in cards_em_desenvolvimento:
-                print(f"  - Card: {card.nome} | Status: {card.status} | Responsavel: {card.responsavel.username if card.responsavel else None} | Responsavel ID: {card.responsavel.id if card.responsavel else None}")
-            
+            # Debug (sem PII em logs; ativável via logger.debug com handler dedicado)
+            logger.debug("[Priorities] DIA cards=%d", cards_em_desenvolvimento.count())
+
         else:
             # Prioridades da semana: cards que vencem até o final da semana (7 dias)
             fim_semana = hoje + timedelta(days=7)
@@ -542,7 +544,6 @@ class CardViewSet(viewsets.ModelViewSet):
                 if user_id not in cards_por_usuario:
                     cards_por_usuario[user_id] = []
                 cards_por_usuario[user_id].append(card)
-                print(f"[Priorities] Card '{card.nome}' atribuído ao usuário {card.responsavel.username} (ID: {user_id})")
         
         # Ordenar cards por prioridade (absoluta > alta > media > baixa)
         prioridade_order = {'absoluta': 0, 'alta': 1, 'media': 2, 'baixa': 3}
@@ -578,19 +579,12 @@ class CardViewSet(viewsets.ModelViewSet):
                 'cards': cards_serializados
             })
         
-        # Debug detalhado
-        print(f"[Priorities] Usuarios com cards: {usuarios_com_cards} de {len(usuarios_ativos)}")
-        print(f"[Priorities] Total de resultados: {len(result)}")
-        print(f"[Priorities] Cards por usuario (dict): {list(cards_por_usuario.keys())}")
-        for r in result:
-            if r['cards']:
-                print(f"  - {r['usuario']['username']} (ID: {r['usuario']['id']}): {len(r['cards'])} cards")
-                for card in r['cards']:
-                    print(f"    * {card.get('nome', 'N/A')} | Status: {card.get('status', 'N/A')}")
-            elif r['usuario']['username'] in ['jefferson', 'italo', 'ilton']:  # Usuários que devem ter cards
-                print(f"  - {r['usuario']['username']} (ID: {r['usuario']['id']}): SEM CARDS (esperado ter cards)")
-                print(f"    Cards no dict para este usuario: {cards_por_usuario.get(r['usuario']['id'], [])}")
-            
+        # Métrica agregada sem PII
+        logger.debug(
+            "[Priorities] usuarios_com_cards=%d/%d total_result=%d",
+            usuarios_com_cards, len(usuarios_ativos), len(result),
+        )
+
         # Ordenar: primeiro usuários com cards (por prioridade), depois sem cards
         result.sort(key=lambda x: (
             0 if x['cards'] else 1,  # Com cards primeiro

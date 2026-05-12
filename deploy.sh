@@ -22,10 +22,20 @@ echo " [INFO] Log completo desta execução: $DEPLOY_FULL_LOG"
 echo " [INFO] Atalho: $SCRIPT_DIR/deploy_latest.log"
 echo ""
 
-# Credenciais do superadmin. Altere via variáveis de ambiente se precisar.
-SU_USER="${ADMIN_USERNAME:-italoadmin}"
-SU_PASS="${ADMIN_PASSWORD:-Italommf@45}"
-SU_EMAIL="${ADMIN_EMAIL:-italoadmin@bwatech.local}"
+# Credenciais do superadmin — OBRIGATÓRIO via variáveis de ambiente.
+# Para gerar senha: ADMIN_PASSWORD=$(openssl rand -base64 24) ./deploy.sh
+if [ -z "${ADMIN_USERNAME:-}" ] || [ -z "${ADMIN_PASSWORD:-}" ] || [ -z "${ADMIN_EMAIL:-}" ]; then
+    echo " [ERRO] Defina ADMIN_USERNAME, ADMIN_PASSWORD e ADMIN_EMAIL antes de rodar este script."
+    echo "         Exemplo:"
+    echo "           export ADMIN_USERNAME=meuadmin"
+    echo "           export ADMIN_PASSWORD=\$(openssl rand -base64 24)"
+    echo "           export ADMIN_EMAIL=admin@bwa.global"
+    echo "           ./deploy.sh"
+    exit 1
+fi
+SU_USER="$ADMIN_USERNAME"
+SU_PASS="$ADMIN_PASSWORD"
+SU_EMAIL="$ADMIN_EMAIL"
 export COMPOSE_PROJECT_NAME=bwaproj
 
 echo ""
@@ -93,14 +103,15 @@ if [ "$APP_PORT" != "8000" ]; then
 fi
 export APP_PORT
 
-# VPS com Traefik: NÃO exportar HOST_BIND — o Compose usa o valor do `.env` (ex.: 127.0.0.1).
-# O export antigo HOST_BIND=0.0.0.0 publicava :8000 na internet e gerava DisallowedHost (Host=IP:8000).
-# Rede LAN / acesso por IP noutros PCs: export DEPLOY_LAN_EXPOSE=1 antes de executar este script.
+# VPS com Traefik: NÃO exportar HOST_BIND — o Compose usa o valor do `.env` (127.0.0.1).
+# Exposição externa SOMENTE via Traefik com TLS. A flag DEPLOY_LAN_EXPOSE foi REMOVIDA
+# por publicar :8000 em 0.0.0.0 sem TLS (vetor de takeover). Para LAN restrita, configure
+# HOST_BIND no .env explicitamente com o IP da interface LAN específica (ex.: 192.168.1.10).
 if [ "${DEPLOY_LAN_EXPOSE:-}" = "1" ]; then
-  export HOST_BIND=0.0.0.0
-  export ALLOWED_HOSTS="localhost,127.0.0.1,${SERVER_IP},${SERVER_IP}:${APP_PORT}"
-  export CORS_ALLOWED_ORIGINS="http://localhost:${APP_PORT},http://127.0.0.1:${APP_PORT},http://${SERVER_IP}:${APP_PORT}"
-  export CSRF_TRUSTED_ORIGINS="$CORS_ALLOWED_ORIGINS"
+  echo " [ERRO] DEPLOY_LAN_EXPOSE=1 foi removido por motivos de segurança."
+  echo "         Configure HOST_BIND no .env com IP específico da LAN (ex.: 192.168.1.10),"
+  echo "         ou use Traefik+TLS para exposição pública."
+  exit 1
 else
   unset HOST_BIND
 fi
