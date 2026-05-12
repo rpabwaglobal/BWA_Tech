@@ -86,7 +86,7 @@ export default function Settings() {
     try {
       const data = await authService.regenerateRecoveryCode();
       setRecoveryCode(data.recovery_code);
-      setRecoveryVisible(true); // mostrar imediatamente após gerar
+      setRecoveryVisible(false); // mantém mascarado; user clica no olho pra ver
       setRegenOpen(false);
     } catch {
       setRecoveryError('Erro ao gerar novo código.');
@@ -376,17 +376,17 @@ export default function Settings() {
             </div>
           ) : (
             <>
-              <div className="flex items-center justify-between gap-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-muted)]/50 px-4 py-3">
-                <span className="font-mono text-lg font-bold tracking-widest text-[var(--color-foreground)]">
-                  {recoveryCode
-                    ? recoveryVisible
-                      ? recoveryCode
-                      : recoveryCode.replace(/[A-Z0-9]/gi, '•')
-                    : '—'}
-                </span>
-                <div className="flex items-center gap-1">
+              <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-muted)]/50 px-4 py-4">
+                <div className="flex flex-col items-center gap-3">
+                  <span className="font-mono text-2xl font-bold tracking-widest text-[var(--color-foreground)] text-center select-all">
+                    {recoveryCode
+                      ? recoveryVisible
+                        ? recoveryCode
+                        : recoveryCode.replace(/[A-Z0-9]/gi, '•')
+                      : '—'}
+                  </span>
                   {recoveryCode && (
-                    <>
+                    <div className="flex items-center gap-2">
                       <Button
                         type="button"
                         variant="ghost"
@@ -409,7 +409,7 @@ export default function Settings() {
                           ? <Check className="h-4 w-4 text-green-500" />
                           : <Copy className="h-4 w-4" />}
                       </Button>
-                    </>
+                    </div>
                   )}
                 </div>
               </div>
