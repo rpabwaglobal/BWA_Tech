@@ -13,6 +13,7 @@ from .models import (
     Event,
     CardLog,
     Notification,
+    UserNotificationPreference,
     WeeklyPriority,
     WeeklyPriorityConfig,
     CardArea,
@@ -630,12 +631,30 @@ class CardLogSerializer(serializers.ModelSerializer):
 
 class NotificationSerializer(serializers.ModelSerializer):
     tipo_display = serializers.CharField(source='get_tipo_display', read_only=True)
-    
+
     class Meta:
         model = Notification
-        fields = ['id', 'tipo', 'tipo_display', 'titulo', 'mensagem', 'lida', 
+        fields = ['id', 'tipo', 'tipo_display', 'titulo', 'mensagem', 'lida',
                  'data_criacao', 'card_id', 'sprint_id', 'project_id', 'metadata']
         read_only_fields = ['data_criacao']
+
+
+class NotificationPreferenceSerializer(serializers.ModelSerializer):
+    """Preferências do usuário sobre quais tipos de notificação receber.
+    Read/write nos 11 booleans (4 default OFF + 7 default ON)."""
+
+    class Meta:
+        model = UserNotificationPreference
+        fields = [
+            # 7 default ON
+            'card_updated', 'card_deleted', 'project_created',
+            'card_overdue', 'card_due_24h', 'card_due_1h', 'card_due_10min',
+            # 4 default OFF
+            'card_created', 'card_moved', 'sprint_created', 'role_changed',
+            # read-only
+            'updated_at',
+        ]
+        read_only_fields = ['updated_at']
 
 
 class WeeklyPriorityConfigSerializer(serializers.ModelSerializer):

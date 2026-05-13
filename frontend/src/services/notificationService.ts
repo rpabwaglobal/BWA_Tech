@@ -26,6 +26,26 @@ type UnreadCountResponse = {
   mine: number;
 };
 
+export type NotificationPreferences = {
+  // 7 default ON
+  card_updated: boolean;
+  card_deleted: boolean;
+  project_created: boolean;
+  card_overdue: boolean;
+  card_due_24h: boolean;
+  card_due_1h: boolean;
+  card_due_10min: boolean;
+  // 4 default OFF (opt-in)
+  card_created: boolean;
+  card_moved: boolean;
+  sprint_created: boolean;
+  role_changed: boolean;
+  // read-only
+  updated_at?: string;
+};
+
+export type NotificationTypeSlug = keyof Omit<NotificationPreferences, 'updated_at'>;
+
 export const notificationService = {
   async getAll(params?: {
     filter?: 'mine' | 'all';
@@ -104,5 +124,15 @@ export const notificationService = {
 
   async delete(id: string): Promise<void> {
     await api.delete(`/notifications/${id}/`);
+  },
+
+  async getPreferences(): Promise<NotificationPreferences> {
+    const response = await api.get<NotificationPreferences>('/notifications/preferences/');
+    return response.data;
+  },
+
+  async updatePreferences(patch: Partial<NotificationPreferences>): Promise<NotificationPreferences> {
+    const response = await api.patch<NotificationPreferences>('/notifications/preferences/', patch);
+    return response.data;
   },
 };

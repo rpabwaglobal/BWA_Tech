@@ -1,9 +1,10 @@
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 from .views import (
-    SprintViewSet, ProjectViewSet, CardViewSet, CardTodoViewSet, EventViewSet, CardLogViewSet, 
-    NotificationViewSet, WeeklyPriorityViewSet, WeeklyPriorityConfigViewSet, CardDueDateChangeRequestViewSet
-    ,KanbanStageViewSet
+    SprintViewSet, ProjectViewSet, CardViewSet, CardTodoViewSet, EventViewSet, CardLogViewSet,
+    NotificationViewSet, NotificationPreferenceView,
+    WeeklyPriorityViewSet, WeeklyPriorityConfigViewSet, CardDueDateChangeRequestViewSet,
+    KanbanStageViewSet,
 )
 
 router = DefaultRouter()
@@ -20,5 +21,7 @@ router.register(r'card-date-change-requests', CardDueDateChangeRequestViewSet, b
 router.register(r'kanban-stages', KanbanStageViewSet, basename='kanbanstage')
 
 urlpatterns = [
+    # Preferências de notificação (single-resource — não usa router)
+    path('notifications/preferences/', NotificationPreferenceView.as_view(), name='notification-preferences'),
     path('', include(router.urls)),
 ]

@@ -1,9 +1,10 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { X, Clock, Check, Trash2, Filter } from 'lucide-react';
+import { X, Clock, Check, Trash2, Filter, Settings } from 'lucide-react';
 import { useNotifications } from '@/context/NotificationContext';
 import { formatDateTime } from '@/lib/dateUtils';
 import { Button } from './ui/button';
+import { NotificationPreferencesDialog } from './NotificationPreferencesDialog';
 import { cn } from '@/lib/utils';
 import { ROUTES } from '@/routes';
 
@@ -22,6 +23,7 @@ export function NotificationsPanel({ onClose }: NotificationsPanelProps) {
     deleteNotification,
   } = useNotifications();
   const navigate = useNavigate();
+  const [prefsOpen, setPrefsOpen] = useState(false);
 
   // Filtrar notificações
   const filteredNotifications = useMemo(() => {
@@ -161,6 +163,15 @@ export function NotificationsPanel({ onClose }: NotificationsPanelProps) {
             Não lidas
           </Button>
         </div>
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={() => setPrefsOpen(true)}
+          className="h-[28px] w-[28px] shrink-0"
+          title="Preferências de notificação"
+        >
+          <Settings className="h-[16px] w-[16px]" />
+        </Button>
       </div>
 
       {/* Lista de notificações */}
@@ -258,6 +269,8 @@ export function NotificationsPanel({ onClose }: NotificationsPanelProps) {
           </div>
         )}
       </div>
+
+      <NotificationPreferencesDialog open={prefsOpen} onOpenChange={setPrefsOpen} />
     </div>
   );
 }

@@ -430,94 +430,19 @@ export default function MyTasks() {
       const notification = event.detail as any;
       
       // Tipos de notificação que devem atualizar os cards na visão geral
+      // (card_todo_updated foi removido da plataforma — TODOs agora só atualizam via refetch
+      // do card completo no branch `else if (notification.card_id)` abaixo.)
       const relevantTypes = [
         'card_created',
         'card_updated',
         'card_moved',
         'card_deleted',
-        'card_todo_updated',
       ];
-      
+
       if (relevantTypes.includes(notification.tipo)) {
         console.log('[MyTasks] Notificação relevante recebida, atualizando cards:', notification.tipo, notification);
-        
-        // Se for atualização de TODO, atualizar apenas os TODOs do card
-        if (notification.tipo === 'card_todo_updated' && notification.card_id) {
-          console.log('[MyTasks] Atualizando TODOs do card:', notification.card_id, notification.metadata);
-          
-          // Se for deleção de TODO, remover da lista
-          if (notification.metadata?.is_deleted && notification.metadata?.todo_id) {
-            const cardId = String(notification.card_id);
-            const todoId = String(notification.metadata.todo_id);
-            
-            setAllCards((prevCards) => {
-              const existingIndex = prevCards.findIndex(c => String(c.id) === cardId);
-              
-              if (existingIndex >= 0) {
-                console.log('[MyTasks] Removendo TODO deletado:', todoId);
-                const newCards = [...prevCards];
-                newCards[existingIndex] = {
-                  ...newCards[existingIndex],
-                  todos: (newCards[existingIndex].todos || []).filter(t => String(t.id) !== todoId)
-                };
-                return newCards;
-              }
-              
-              return prevCards;
-            });
-          } else {
-            // Se for criação ou atualização, buscar TODOs atualizados
-            try {
-              // Converter card_id para string se necessário (pode vir como número)
-              const cardId = String(notification.card_id);
-              
-              // Buscar apenas os TODOs atualizados do card
-              const todos = await cardTodoService.getByCard(cardId);
-              console.log('[MyTasks] TODOs carregados:', todos.length);
-              
-              // Atualizar apenas os TODOs do card na lista
-              setAllCards((prevCards) => {
-                const existingIndex = prevCards.findIndex(c => String(c.id) === cardId);
-                
-                if (existingIndex >= 0) {
-                  console.log('[MyTasks] Card encontrado na lista, atualizando TODOs');
-                  // Atualizar apenas os TODOs do card existente
-                  const newCards = [...prevCards];
-                  newCards[existingIndex] = {
-                    ...newCards[existingIndex],
-                    todos: todos
-                  };
-                  return newCards;
-                } else {
-                  console.log('[MyTasks] Card não encontrado na lista');
-                }
-                
-                return prevCards;
-              });
-            } catch (error) {
-              console.error('[MyTasks] Erro ao atualizar TODOs do card:', error);
-              // Se falhar, recarregar o card completo
-              try {
-                const cardId = String(notification.card_id);
-                const updatedCard = await cardService.getById(cardId);
-                const todos = await cardTodoService.getByCard(updatedCard.id);
-                updatedCard.todos = todos;
-                
-                setAllCards((prevCards) => {
-                  const existingIndex = prevCards.findIndex(c => String(c.id) === String(updatedCard.id));
-                  if (existingIndex >= 0) {
-                    const newCards = [...prevCards];
-                    newCards[existingIndex] = updatedCard;
-                    return newCards;
-                  }
-                  return prevCards;
-                });
-              } catch (err) {
-                console.error('[MyTasks] Erro ao recarregar card completo:', err);
-              }
-            }
-          }
-        } else if (notification.card_id) {
+
+        if (notification.card_id) {
           // Para outros tipos de notificação, atualizar o card completo
           try {
             // Buscar o card atualizado

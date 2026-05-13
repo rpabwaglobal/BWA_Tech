@@ -495,7 +495,8 @@ class NotificationType(models.TextChoices):
     CARD_UPDATED = 'card_updated', 'Card Atualizado'
     CARD_DELETED = 'card_deleted', 'Card Deletado'
     CARD_MOVED = 'card_moved', 'Card Movido'
-    CARD_TODO_UPDATED = 'card_todo_updated', 'TODO do Card Atualizado'
+    # CARD_TODO_UPDATED removido — decisão de produto (signals correspondentes
+    # também apagados em signals.py). Registros antigos continuam no DB para histórico.
     SPRINT_CREATED = 'sprint_created', 'Sprint Criada'
     PROJECT_CREATED = 'project_created', 'Projeto Criado'
     ROLE_CHANGED = 'role_changed', 'Cargo Alterado'
@@ -723,3 +724,51 @@ class Notification(models.Model):
 
     def __str__(self):
         return f"{self.titulo} - {self.usuario.username} ({'Lida' if self.lida else 'Não lida'})"
+
+
+class UserNotificationPreference(models.Model):
+    """Preferências por usuário de quais tipos de notificação ele deseja receber.
+
+    Um registro por usuário (one-to-one). Quando o tipo está desativado,
+    `send_notification()` nem cria a notificação no banco (filtragem no backend).
+
+    Defaults:
+    - 7 tipos ON (essenciais / pouco ruidosos)
+    - 4 tipos OFF (opt-in: card_created, card_moved, sprint_created, role_changed)
+    """
+
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='notification_preferences',
+        verbose_name='Usuário',
+    )
+    # 7 default ON
+    card_updated = models.BooleanField(default=True, verbose_name='Cards atualizados')
+    card_deleted = models.BooleanField(default=True, verbose_name='Cards deletados')
+    project_created = models.BooleanField(default=True, verbose_name='Projetos criados')
+    card_overdue = models.BooleanField(default=True, verbose_name='Cards atrasados')
+    card_due_24h = models.BooleanField(default=True, verbose_name='Vencimento em 24h')
+    card_due_1h = models.BooleanField(default=True, verbose_name='Vencimento em 1h')
+    card_due_10min = models.BooleanField(default=True, verbose_name='Vencimento em 10min')
+    # 4 default OFF (opt-in)
+    card_created = models.BooleanField(default=False, verbose_name='Cards criados')
+    card_moved = models.BooleanField(default=False, verbose_name='Cards movidos')
+    sprint_created = models.BooleanField(default=False, verbose_name='Sprints criadas')
+    role_changed = models.BooleanField(default=False, verbose_name='Mudanças de cargo')
+
+    updated_at = models.DateTimeField(auto_now=True, verbose_name='Atualizado em')
+
+    class Meta:
+        verbose_name = 'Preferência de notificação'
+        verbose_name_plural = 'Preferências de notificação'
+
+    def is_enabled(self, tipo: str) -> bool:
+        """Retorna se o tipo está habilitado para receber notificações.
+
+        Tipos desconhecidos retornam True (não bloqueia tipos novos adicionados
+        antes do field correspondente existir no modelo)."""
+        return bool(getattr(self, tipo, True))
+
+    def __str__(self):
+        return f"Preferências de {self.user.username}"

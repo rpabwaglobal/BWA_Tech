@@ -1,7 +1,7 @@
 from channels.layers import get_channel_layer
 from asgiref.sync import async_to_sync
 from django.contrib.auth import get_user_model
-from .models import Notification, NotificationType
+from .models import Notification, NotificationType, UserNotificationPreference
 import logging
 
 logger = logging.getLogger(__name__)
@@ -36,7 +36,17 @@ def send_notification(
         user = User.objects.get(id=user_id)
     except User.DoesNotExist:
         return None
-    
+
+    # Verifica preferência do usuário. Se desativada, NÃO cria a notificação.
+    # Cria registro on-demand com defaults se ainda não existir.
+    prefs, _ = UserNotificationPreference.objects.get_or_create(user=user)
+    if not prefs.is_enabled(tipo):
+        logger.debug(
+            'Notificacao suprimida pela preferencia do usuario: user=%s tipo=%s',
+            user_id, tipo,
+        )
+        return None
+
     notification = Notification.objects.create(
         usuario=user,
         tipo=tipo,

@@ -4,6 +4,7 @@ from rest_framework import viewsets, filters, status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.decorators import action
 from rest_framework.response import Response
+from rest_framework.views import APIView
 from django_filters.rest_framework import DjangoFilterBackend
 from django.db import transaction
 from django.db.models import Q, Max, Count, F
@@ -22,6 +23,7 @@ from .models import (
     Event,
     CardLog,
     Notification,
+    UserNotificationPreference,
     WeeklyPriority,
     WeeklyPriorityConfig,
     CardDueDateChangeRequest,
@@ -29,8 +31,9 @@ from .models import (
 )
 from .services import finalizar_sprint_replicacao
 from .serializers import (
-    SprintSerializer, ProjectSerializer, CardSerializer, CardTodoSerializer, EventSerializer, 
-    CardLogSerializer, NotificationSerializer, WeeklyPrioritySerializer, WeeklyPriorityConfigSerializer,
+    SprintSerializer, ProjectSerializer, CardSerializer, CardTodoSerializer, EventSerializer,
+    CardLogSerializer, NotificationSerializer, NotificationPreferenceSerializer,
+    WeeklyPrioritySerializer, WeeklyPriorityConfigSerializer,
     CardDueDateChangeRequestSerializer,
     KanbanStageSerializer,
 )
@@ -727,6 +730,23 @@ class NotificationViewSet(viewsets.ReadOnlyModelViewSet):
             'total': count,
             'mine': mine_count
         })
+
+
+class NotificationPreferenceView(APIView):
+    """GET retorna as preferências do usuário autenticado (cria com defaults se ausente).
+    PATCH atualiza qualquer subset dos 11 booleans."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        prefs, _ = UserNotificationPreference.objects.get_or_create(user=request.user)
+        return Response(NotificationPreferenceSerializer(prefs).data)
+
+    def patch(self, request):
+        prefs, _ = UserNotificationPreference.objects.get_or_create(user=request.user)
+        serializer = NotificationPreferenceSerializer(prefs, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(serializer.data)
 
 
 class WeeklyPriorityConfigViewSet(viewsets.ModelViewSet):
