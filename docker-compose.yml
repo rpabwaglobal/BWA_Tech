@@ -50,9 +50,6 @@ services:
       dockerfile: Dockerfile
     # Nome explícito da imagem para celery-worker/celery-beat reutilizarem (build 1x).
     image: bwaproj-app:latest
-    # Força build (em vez de tentar pull do registry inexistente). Silencia
-    # warnings de pull failure no log do Hostinger.
-    pull_policy: build
     env_file: .env
     restart: unless-stopped
     environment:
@@ -93,9 +90,6 @@ services:
   celery-worker:
     # Reutiliza a imagem buildada pelo serviço `backend` (sem rebuild paralelo).
     image: bwaproj-app:latest
-    # NUNCA tenta puxar do registry (imagem é local — buildada pelo backend).
-    # Evita "Error pull access denied" no log do Hostinger.
-    pull_policy: never
     depends_on:
       backend:
         condition: service_started
@@ -115,8 +109,6 @@ services:
 
   celery-beat:
     image: bwaproj-app:latest
-    # Mesmo motivo que celery-worker — imagem é local, não tenta pull.
-    pull_policy: never
     depends_on:
       backend:
         condition: service_started
