@@ -18,7 +18,6 @@ import {
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   Dialog,
   DialogContent,
@@ -842,24 +841,43 @@ export default function MyTasks() {
         </div>
       </header>
 
-      <Tabs value={tab} onValueChange={(v) => setTab(v as 'notes' | 'pins')} className="w-full">
-        <TabsList className="mb-4">
-          <TabsTrigger value="notes">
-            <StickyNote className="mr-1.5 h-4 w-4" />
-            Anotações
-          </TabsTrigger>
-          <TabsTrigger value="pins">
-            <Pin className="mr-1.5 h-4 w-4" />
-            Cards Fixados
-            {pinnedCards.length > 0 && (
-              <span className="ml-1.5 rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] font-semibold text-primary">
-                {pinnedCards.length}
-              </span>
-            )}
-          </TabsTrigger>
-        </TabsList>
+      {/* Tabs (mesmo padrão do GeekDay) */}
+      <div className="mb-4 flex items-center gap-[8px] border-b border-[var(--color-border)] shrink-0">
+        <Button
+          variant="ghost"
+          onClick={() => setTab('notes')}
+          className={cn(
+            'rounded-none border-b-2 border-transparent px-[16px] py-[8px] h-auto',
+            tab === 'notes'
+              ? 'border-[var(--color-primary)] text-[var(--color-primary)] font-semibold'
+              : 'text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]',
+          )}
+        >
+          <StickyNote className="mr-1.5 h-4 w-4" />
+          Anotações
+        </Button>
+        <Button
+          variant="ghost"
+          onClick={() => setTab('pins')}
+          className={cn(
+            'rounded-none border-b-2 border-transparent px-[16px] py-[8px] h-auto',
+            tab === 'pins'
+              ? 'border-[var(--color-primary)] text-[var(--color-primary)] font-semibold'
+              : 'text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]',
+          )}
+        >
+          <Pin className="mr-1.5 h-4 w-4" />
+          Cards Fixados
+          {pinnedCards.length > 0 && (
+            <span className="ml-1.5 rounded-full bg-[var(--color-primary)]/10 px-1.5 py-0.5 text-[10px] font-semibold text-[var(--color-primary)]">
+              {pinnedCards.length}
+            </span>
+          )}
+        </Button>
+      </div>
 
-        <TabsContent value="notes">
+      {tab === 'notes' && (
+        <div>
           <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div className="relative w-full sm:max-w-sm">
               <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
@@ -974,9 +992,11 @@ export default function MyTasks() {
               )}
             </div>
           )}
-        </TabsContent>
+        </div>
+      )}
 
-        <TabsContent value="pins">
+      {tab === 'pins' && (
+        <div>
           {pinsError && (
             <div className="mb-4 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
               {pinsError}
@@ -1019,8 +1039,8 @@ export default function MyTasks() {
               ))}
             </div>
           )}
-        </TabsContent>
-      </Tabs>
+        </div>
+      )}
 
       <NoteEditor
         open={editingId != null}
