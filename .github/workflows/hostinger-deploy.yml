@@ -1,0 +1,39 @@
+name: Deploy to Hostinger VPS
+
+# Dispara o deploy na VPS Hostinger via API (alternativa ao "Compose by URL"
+# do Docker Manager, que estava perdendo o YAML).
+#
+# Pré-requisitos (configurar UMA VEZ no GitHub):
+#  1. Settings → Secrets and variables → Actions:
+#     - Secret  HOSTINGER_API_KEY  (gerar em https://hpanel.hostinger.com → API)
+#     - Variable HOSTINGER_VM_ID  (ID da VPS srv1418910 — pode pegar via API ou painel)
+#
+# Roda DEPOIS do workflow `Build and publish Docker image` finalizar.
+# Sequência: push em main → build & push pra ghcr.io → este action dispara deploy.
+
+on:
+  # Roda automaticamente quando o workflow de build da imagem termina com sucesso
+  workflow_run:
+    workflows: ["Build and publish Docker image"]
+    types:
+      - completed
+    branches:
+      - main
+  # Permite disparar manualmente pela UI ("Run workflow")
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    # Só roda se o workflow anterior (build) deu certo
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Deploy to Hostinger
+        uses: hostinger/deploy-action@v1
+        with:
+          api-key: ${{ secrets.HOSTINGER_API_KEY }}
+          virtual-machine: ${{ vars.HOSTINGER_VM_ID }}
