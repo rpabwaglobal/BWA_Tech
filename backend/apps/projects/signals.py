@@ -340,6 +340,14 @@ def card_created_or_updated(sender, instance, created, **kwargs):
                         'new_status': instance.status
                     }
                 )
+
+            # Broadcast WebSocket: notifica TODOS os clientes conectados ao
+            # Kanban da sprint atual (só dispara se sprint estiver em andamento).
+            # Import local para evitar ciclo em apps.ready.
+            from .realtime import broadcast_card_moved
+            actor = getattr(instance, '_request_user', None)
+            actor_user_id = actor.id if actor else None
+            broadcast_card_moved(instance, old_status, instance.status, actor_user_id)
         else:
             # Card atualizado (sem mudança de status) - detectar campos alterados
             changes = []

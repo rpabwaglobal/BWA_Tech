@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
+import { useSprintKanbanWebSocket } from '@/hooks/useSprintKanbanWebSocket';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -681,6 +682,28 @@ export default function ProjectDetails() {
   const [project, setProject] = useState<Project | null>(null);
   const [sprint, setSprint] = useState<Sprint | null>(null);
   const [cards, setCards] = useState<CardType[]>([]);
+
+  // Real-time: assina o Kanban da sprint do projeto. Eventos de OUTROS
+  // projetos da mesma sprint passam batido (o card_id não está no estado local).
+  const sprintIdForRealtime = sprint?.id ?? null;
+  const handleCardMovedRealtime = useCallback(
+    (evt: { card_id: number; new_status: string; actor_user_id: number | null }) => {
+      // Anti-eco: ignora o próprio user (já atualizou via PATCH)
+      if (user?.id !== undefined && String(evt.actor_user_id) === String(user.id)) return;
+      setCards((prev) =>
+        prev.map((c) =>
+          String(c.id) === String(evt.card_id) ? { ...c, status: evt.new_status as CardType['status'] } : c
+        )
+      );
+    },
+    [user?.id]
+  );
+
+  useSprintKanbanWebSocket({
+    sprintId: sprintIdForRealtime,
+    enabled: !!sprintIdForRealtime,
+    onCardMoved: handleCardMovedRealtime,
+  });
   const [stages, setStages] = useState<ProjectStage[]>(DEFAULT_PROJECT_STAGES);
   const [users, setUsers] = useState<UserType[]>([]);
   const [loading, setLoading] = useState(true);

@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState, type MouseEvent } from 'react';
+import { useCallback, useEffect, useRef, useState, type MouseEvent } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
+import { useSprintKanbanWebSocket } from '@/hooks/useSprintKanbanWebSocket';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -150,6 +151,27 @@ export default function SprintDetails() {
   const [sprint, setSprint] = useState<Sprint | null>(null);
   const [projects, setProjects] = useState<Project[]>([]);
   const [cards, setCards] = useState<CardType[]>([]);
+
+  // Real-time: outros usuários movendo cards aparecem aqui sem F5.
+  // Backend só dispara broadcast se a sprint estiver em andamento.
+  const handleCardMovedRealtime = useCallback(
+    (evt: { card_id: number; new_status: string; actor_user_id: number | null }) => {
+      // Anti-eco: se foi o próprio usuário que moveu, já atualizou via PATCH
+      if (user?.id !== undefined && String(evt.actor_user_id) === String(user.id)) return;
+      setCards((prev) =>
+        prev.map((c) =>
+          String(c.id) === String(evt.card_id) ? { ...c, status: evt.new_status as CardType['status'] } : c
+        )
+      );
+    },
+    [user?.id]
+  );
+
+  useSprintKanbanWebSocket({
+    sprintId: sprint?.id ?? sprintId ?? null,
+    enabled: !!(sprint?.id ?? sprintId),
+    onCardMoved: handleCardMovedRealtime,
+  });
   const [projectKanbanStagesByProjectId, setProjectKanbanStagesByProjectId] = useState<
     Record<string, ProjectStageConfig[]>
   >({});
