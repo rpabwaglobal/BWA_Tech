@@ -1,5 +1,7 @@
 import json
 import logging
+from urllib.parse import parse_qs
+
 from channels.generic.websocket import AsyncWebsocketConsumer
 from channels.db import database_sync_to_async
 from django.contrib.auth import get_user_model
@@ -104,12 +106,14 @@ class SprintKanbanConsumer(AsyncWebsocketConsumer):
         self.user = None
         self.group_name = None
 
-        # Auth: mesma lógica do NotificationConsumer (token via query ou header)
+        # Auth: token via query string (parse_qs aceita valores com `=`) ou header.
+        # NOTA: tokens em query string vazam em logs de proxy (issue F-1 do
+        # security audit). Pre-existente em todos os consumers do projeto.
         query_string = self.scope.get('query_string', b'').decode()
         token = None
         if query_string:
-            params = dict(p.split('=') for p in query_string.split('&') if '=' in p)
-            token = params.get('token')
+            params = parse_qs(query_string)
+            token = params.get('token', [None])[0]
         if not token:
             headers = dict(self.scope.get('headers', []))
             auth_header = headers.get(b'authorization', b'').decode()
@@ -122,9 +126,18 @@ class SprintKanbanConsumer(AsyncWebsocketConsumer):
             await self.close(code=4001)
             return
 
-        sprint_id = self.scope['url_route']['kwargs'].get('sprint_id')
-        if not sprint_id:
+        # Validação do sprint_id (a regex da rota já garante \d+, mas confirmamos
+        # que a sprint existe — evita grupos "fantasmas" e logs limpos).
+        sprint_id_raw = self.scope['url_route']['kwargs'].get('sprint_id')
+        try:
+            sprint_id = int(sprint_id_raw)
+        except (TypeError, ValueError):
             await self.close(code=4002)
+            return
+
+        if not await self._sprint_exists(sprint_id):
+            logger.warning('SprintKanbanWS: sprint %s não existe', sprint_id)
+            await self.close(code=4004)
             return
 
         self.group_name = f'sprint_{sprint_id}_kanban'
@@ -162,8 +175,16 @@ class SprintKanbanConsumer(AsyncWebsocketConsumer):
 
     @database_sync_to_async
     def _get_user_from_token(self, token_key):
+        # NOTA: não valida TTL — pre-existente em todos os consumers do projeto.
+        # REST API valida via ExpiringTokenAuthentication.
         try:
             token = Token.objects.select_related('user').get(key=token_key)
             return token.user if token.user.is_active else None
         except Token.DoesNotExist:
             return None
+
+    @database_sync_to_async
+    def _sprint_exists(self, sprint_id: int) -> bool:
+        # Import local — evita ciclo de import em consumers.py
+        from .models import Sprint
+        return Sprint.objects.filter(pk=sprint_id).exists()

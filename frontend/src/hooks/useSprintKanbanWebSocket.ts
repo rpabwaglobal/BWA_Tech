@@ -108,6 +108,11 @@ export function useSprintKanbanWebSocket(opts: {
         }
       };
 
+      ws.onerror = (err) => {
+        // onclose costuma seguir, mas logamos para debug.
+        if (import.meta.env.DEV) console.debug('[SprintKanbanWS] error', err);
+      };
+
       ws.onclose = () => {
         clearPing();
         ws = null;
