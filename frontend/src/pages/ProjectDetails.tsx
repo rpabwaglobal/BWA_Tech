@@ -49,6 +49,7 @@ import type { CardLink } from '@/services/cardService';
 import { sprintService } from '@/services/sprintService';
 import { getTodosByArea } from '@/constants/cardTodos';
 import { kanbanStageService } from '@/services/kanbanStageService';
+import { cardPinService } from '@/services/cardPinService';
 import type { KanbanStage as KanbanStageType } from '@/services/kanbanStageService';
 import { ROUTES } from '@/routes';
 import type { Project } from '@/services/projectService';
@@ -72,6 +73,8 @@ import {
   Lock,
   ExternalLink,
   Trash2,
+  Pin,
+  PinOff,
   Plus,
   ChevronDown,
   ChevronUp,
@@ -360,6 +363,8 @@ function KanbanColumn({
   showPriorityColorsOnCards,
   selectionMode,
   selectedCardIds,
+  pinnedCardIds,
+  onTogglePin,
 }: {
   stage: ProjectStage;
   cards: CardType[];
@@ -371,6 +376,8 @@ function KanbanColumn({
   showPriorityColorsOnCards: boolean;
   selectionMode: boolean;
   selectedCardIds: string[];
+  pinnedCardIds: Set<string>;
+  onTogglePin: (cardId: string, pin: boolean) => void;
 }) {
   const { setNodeRef, isOver } = useDroppable({
     id: stage.id,
@@ -437,6 +444,8 @@ function KanbanColumn({
                   excludedFromBulkMove={
                     selectionMode && (card.status === 'finalizado' || card.status === 'inviabilizado')
                   }
+                  isPinned={pinnedCardIds.has(card.id)}
+                  onTogglePin={onTogglePin}
                 />
               ))}
             </SortableContext>
@@ -460,6 +469,8 @@ function KanbanCard({
   selectionMode,
   selected,
   excludedFromBulkMove,
+  isPinned,
+  onTogglePin,
 }: {
   card: CardType;
   onClick: () => void;
@@ -474,6 +485,10 @@ function KanbanCard({
   selected: boolean;
   /** Em modo seleção: card em etapa de conclusão não entra na seleção para mover */
   excludedFromBulkMove: boolean;
+  /** Se o usuário atual fixou este card em "Meus Afazeres → Cards Fixados". */
+  isPinned?: boolean;
+  /** Toggle do pin pessoal. Recebe o cardId e o novo estado desejado. */
+  onTogglePin?: (cardId: string, pin: boolean) => void;
 }) {
   // Verificar se card está finalizado ou inviabilizado
   const isCardFinished = card.status === 'finalizado' || card.status === 'inviabilizado';
@@ -482,10 +497,12 @@ function KanbanCard({
   const isDragDisabled = disabled || isCardFinished || selectionMode;
   // Permitir clique para visualização sempre (mesmo se sprint finalizada ou card finalizado)
   const canClick = true;
-  // Permitir delete: 
+  // Permitir delete:
   // - Se sprint não está finalizada
   // - Se card está inviabilizado, apenas admin ou supervisor podem deletar
   const canDelete = !disabled && (!isInviabilizado || userRole === 'admin' || userRole === 'supervisor');
+  // Permitir pin pessoal: card precisa estar em andamento (não finalizado/inviabilizado) e sprint ativa.
+  const canPin = !!onTogglePin && !disabled && !isCardFinished;
 
   const responsibleUser = card.responsavel
     ? users.find((u) => String(u.id) === String(card.responsavel))
@@ -540,19 +557,40 @@ function KanbanCard({
             {card.nome}
           </span>
         </div>
-        {canDelete && (
+        {(canDelete || canPin) && (
           <div className="flex gap-[2px] opacity-0 group-hover:opacity-100 transition-opacity">
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={(e) => {
-                e.stopPropagation();
-                onDelete(e);
-              }}
-              className="h-[24px] w-[24px]"
-            >
-              <Trash2 className="h-[12px] w-[12px] text-red-500" />
-            </Button>
+            {canPin && (
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onTogglePin?.(card.id, !isPinned);
+                }}
+                className="h-[24px] w-[24px]"
+                title={isPinned ? 'Desafixar de Meus Afazeres' : 'Fixar em Meus Afazeres'}
+              >
+                {isPinned ? (
+                  <PinOff className="h-[12px] w-[12px] text-[var(--color-primary)]" />
+                ) : (
+                  <Pin className="h-[12px] w-[12px] text-[var(--color-muted-foreground)]" />
+                )}
+              </Button>
+            )}
+            {canDelete && (
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onDelete(e);
+                }}
+                className="h-[24px] w-[24px]"
+                title="Excluir card"
+              >
+                <Trash2 className="h-[12px] w-[12px] text-red-500" />
+              </Button>
+            )}
           </div>
         )}
       </div>
@@ -791,6 +829,46 @@ export default function ProjectDetails() {
   /** Seleção em massa no Kanban (barra inferior + modais). */
   const [cardSelectionMode, setCardSelectionMode] = useState(false);
   const [selectedKanbanCardIds, setSelectedKanbanCardIds] = useState<string[]>([]);
+
+  /** Cards fixados pelo usuário (página "Meus Afazeres → Cards Fixados"). */
+  const [pinnedCardIds, setPinnedCardIds] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    let cancelled = false;
+    cardPinService
+      .list()
+      .then((pins) => {
+        if (cancelled) return;
+        setPinnedCardIds(new Set(pins.map((p) => p.card)));
+      })
+      .catch((err) => console.error('Erro ao carregar pins do usuário:', err));
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const handleTogglePin = useCallback(async (cardId: string, pin: boolean) => {
+    // Optimistic update
+    setPinnedCardIds((prev) => {
+      const next = new Set(prev);
+      if (pin) next.add(cardId);
+      else next.delete(cardId);
+      return next;
+    });
+    try {
+      if (pin) await cardPinService.pin(cardId);
+      else await cardPinService.unpin(cardId);
+    } catch (err) {
+      console.error('Erro ao alternar pin do card:', err);
+      // Reverte em caso de erro
+      setPinnedCardIds((prev) => {
+        const next = new Set(prev);
+        if (pin) next.delete(cardId);
+        else next.add(cardId);
+        return next;
+      });
+    }
+  }, []);
   const [bulkDeleteCardsDialogOpen, setBulkDeleteCardsDialogOpen] = useState(false);
   const [bulkDeleteCardsLoading, setBulkDeleteCardsLoading] = useState(false);
   const [bulkMoveCardsDialogOpen, setBulkMoveCardsDialogOpen] = useState(false);
@@ -2674,6 +2752,8 @@ export default function ProjectDetails() {
                 showPriorityColorsOnCards={showPriorityColorsOnCards}
                 selectionMode={cardSelectionMode}
                 selectedCardIds={selectedKanbanCardIds}
+                pinnedCardIds={pinnedCardIds}
+                onTogglePin={handleTogglePin}
               />
             ))}
           </div>

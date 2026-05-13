@@ -20,6 +20,7 @@ from .models import (
     Card,
     CardStatus,
     UserNote,
+    CardPin,
     Event,
     CardLog,
     Notification,
@@ -31,7 +32,7 @@ from .models import (
 )
 from .services import finalizar_sprint_replicacao
 from .serializers import (
-    SprintSerializer, ProjectSerializer, CardSerializer, UserNoteSerializer, EventSerializer,
+    SprintSerializer, ProjectSerializer, CardSerializer, UserNoteSerializer, CardPinSerializer, EventSerializer,
     CardLogSerializer, NotificationSerializer, NotificationPreferenceSerializer,
     WeeklyPrioritySerializer, WeeklyPriorityConfigSerializer,
     CardDueDateChangeRequestSerializer,
@@ -610,6 +611,48 @@ class UserNoteViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         return UserNote.objects.filter(user=self.request.user).prefetch_related('todos')
+
+
+class CardPinViewSet(viewsets.ModelViewSet):
+    """Fixações pessoais de cards (página "Meus Afazeres → Cards Fixados").
+
+    Lista apenas pins cujo card ainda esteja em uma sprint ativa e não tenha
+    sido finalizado. Cards que migrarem para finalizado/inviabilizado têm
+    seus pins removidos automaticamente via signal (`remove_pins_when_card_finalized`).
+    """
+    serializer_class = CardPinSerializer
+    permission_classes = [IsAuthenticated]
+    pagination_class = None
+    http_method_names = ['get', 'post', 'delete']
+
+    def get_queryset(self):
+        now = timezone.now()
+        return (
+            CardPin.objects
+            .filter(user=self.request.user)
+            .exclude(card__status__in=[CardStatus.FINALIZADO, CardStatus.INVIABILIZADO])
+            .filter(card__projeto__sprint__finalizada=False)
+            .filter(
+                Q(card__projeto__sprint__fechamento_em__isnull=True)
+                | Q(card__projeto__sprint__fechamento_em__gte=now)
+            )
+            .select_related(
+                'card',
+                'card__projeto',
+                'card__projeto__sprint',
+                'card__responsavel',
+                'card__criado_por',
+            )
+        )
+
+    @action(detail=False, methods=['delete'], url_path='by-card/(?P<card_id>[^/.]+)')
+    def delete_by_card(self, request, card_id=None):
+        """DELETE /card-pins/by-card/<card_id>/ — atalho para desfixar sem
+        precisar conhecer o id do CardPin."""
+        deleted, _ = CardPin.objects.filter(user=request.user, card_id=card_id).delete()
+        if deleted == 0:
+            return Response(status=status.HTTP_404_NOT_FOUND)
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 class EventViewSet(viewsets.ModelViewSet):

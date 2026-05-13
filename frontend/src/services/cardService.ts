@@ -43,6 +43,7 @@ export type Card = {
   tipo_display?: string;
   responsavel?: string | null; // UUID
   responsavel_name?: string;
+  responsavel_role?: string;
   responsavel_profile_picture_url?: string | null;
   criado_por?: string | null; // UUID
   criado_por_name?: string;

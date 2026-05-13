@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import UserNotificationPreference, UserNote, UserNoteTodo
+from .models import UserNotificationPreference, UserNote, UserNoteTodo, CardPin
 
 
 class UserNoteTodoInline(admin.TabularInline):
@@ -16,6 +16,14 @@ class UserNoteAdmin(admin.ModelAdmin):
     search_fields = ('title', 'body', 'user__username', 'user__email')
     readonly_fields = ('created_at', 'updated_at')
     inlines = [UserNoteTodoInline]
+
+
+@admin.register(CardPin)
+class CardPinAdmin(admin.ModelAdmin):
+    list_display = ('user', 'card', 'created_at')
+    search_fields = ('user__username', 'user__email', 'card__nome')
+    readonly_fields = ('created_at',)
+    raw_id_fields = ('user', 'card')
 
 
 @admin.register(UserNotificationPreference)

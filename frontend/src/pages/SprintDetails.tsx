@@ -33,6 +33,7 @@ import { projectService } from '@/services/projectService';
 import { cardService, CARD_AREAS, CARD_TYPES, CARD_PRIORITIES, CARD_STATUSES } from '@/services/cardService';
 import { userService } from '@/services/userService';
 import { cardLogService } from '@/services/cardLogService';
+import { cardPinService } from '@/services/cardPinService';
 import { getTodosByArea } from '@/constants/cardTodos';
 import { CardLogsModal, CARD_TIMELINE_LAYOUT_RESERVE_PX } from '@/components/CardLogsModal';
 import type { Sprint } from '@/services/sprintService';
@@ -47,6 +48,8 @@ import {
   FolderKanban,
   Loader2,
   Pencil,
+  Pin,
+  PinOff,
   Trash2,
   Zap,
   Users,
@@ -1569,6 +1572,44 @@ export default function SprintDetails() {
     }
   };
 
+  /** Cards fixados pelo usuário (Meus Afazeres → Cards Fixados). */
+  const [pinnedCardIds, setPinnedCardIds] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    let cancelled = false;
+    cardPinService
+      .list()
+      .then((pins) => {
+        if (cancelled) return;
+        setPinnedCardIds(new Set(pins.map((p) => p.card)));
+      })
+      .catch((err) => console.error('Erro ao carregar pins do usuário:', err));
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const handleTogglePin = useCallback(async (cardId: string, pin: boolean) => {
+    setPinnedCardIds((prev) => {
+      const next = new Set(prev);
+      if (pin) next.add(cardId);
+      else next.delete(cardId);
+      return next;
+    });
+    try {
+      if (pin) await cardPinService.pin(cardId);
+      else await cardPinService.unpin(cardId);
+    } catch (err) {
+      console.error('Erro ao alternar pin do card:', err);
+      setPinnedCardIds((prev) => {
+        const next = new Set(prev);
+        if (pin) next.delete(cardId);
+        else next.add(cardId);
+        return next;
+      });
+    }
+  }, []);
+
   const handleDeleteCard = (e: React.MouseEvent, id: string) => {
     e.stopPropagation();
     const card = cards.find(c => c.id === id);
@@ -2018,9 +2059,26 @@ export default function SprintDetails() {
                 size="icon"
                 onClick={(e) => {
                   e.stopPropagation();
+                  handleTogglePin(card.id, !pinnedCardIds.has(card.id));
+                }}
+                className="h-[24px] w-[24px]"
+                title={pinnedCardIds.has(card.id) ? 'Desafixar de Meus Afazeres' : 'Fixar em Meus Afazeres'}
+              >
+                {pinnedCardIds.has(card.id) ? (
+                  <PinOff className="h-[12px] w-[12px] text-[var(--color-primary)]" />
+                ) : (
+                  <Pin className="h-[12px] w-[12px] text-[var(--color-muted-foreground)]" />
+                )}
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={(e) => {
+                  e.stopPropagation();
                   handleDeleteCard(e, card.id);
                 }}
                 className="h-[24px] w-[24px]"
+                title="Excluir card"
               >
                 <Trash2 className="h-[12px] w-[12px] text-red-500" />
               </Button>

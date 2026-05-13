@@ -12,6 +12,7 @@ from .models import (
     # CardTodo removido — substituído por UserNote
     UserNote,
     UserNoteTodo,
+    CardPin,
     Event,
     CardLog,
     Notification,
@@ -217,15 +218,56 @@ class UserNoteSerializer(serializers.ModelSerializer):
         return instance
 
 
+class CardPinSerializer(serializers.ModelSerializer):
+    """Serializer de CardPin com `card_detail` aninhado para uso direto em
+    listagens — evita um round-trip extra para buscar os campos do Card."""
+    card_detail = serializers.SerializerMethodField(read_only=True)
+
+    class Meta:
+        model = CardPin
+        fields = ['id', 'card', 'card_detail', 'created_at']
+        read_only_fields = ['created_at', 'card_detail']
+
+    def get_card_detail(self, obj):
+        # Import tardio para evitar referência circular (CardSerializer está abaixo).
+        return CardSerializer(obj.card, context=self.context).data
+
+    def validate_card(self, card):
+        """Aceita apenas cards da sprint atual e ainda não concluídos."""
+        if card.status in (CardStatus.FINALIZADO, CardStatus.INVIABILIZADO):
+            raise serializers.ValidationError(
+                'Não é possível fixar um card finalizado ou inviabilizado.'
+            )
+        sprint = getattr(card.projeto, 'sprint', None) if card.projeto_id else None
+        if sprint is None:
+            raise serializers.ValidationError('O card precisa estar vinculado a uma sprint.')
+        if sprint.finalizada:
+            raise serializers.ValidationError('A sprint do card já foi finalizada.')
+        now = timezone.now()
+        if sprint.fechamento_em and sprint.fechamento_em < now:
+            raise serializers.ValidationError('A sprint do card já encerrou.')
+        return card
+
+    def create(self, validated_data):
+        user = self.context['request'].user
+        # get_or_create torna a operação idempotente.
+        pin, _ = CardPin.objects.get_or_create(user=user, card=validated_data['card'])
+        return pin
+
+
 class CardSerializer(serializers.ModelSerializer):
     projeto_detail = ProjectSerializer(source='projeto', read_only=True)
     responsavel_name = serializers.SerializerMethodField()
+    responsavel_role = serializers.SerializerMethodField()
     responsavel_profile_picture_url = serializers.SerializerMethodField()
     criado_por_name = serializers.SerializerMethodField()
     criado_por_profile_picture_url = serializers.SerializerMethodField()
-    
+
     def get_responsavel_name(self, obj):
         return format_user_name(obj.responsavel)
+
+    def get_responsavel_role(self, obj):
+        return getattr(obj.responsavel, 'role', None) if obj.responsavel else None
     
     def get_responsavel_profile_picture_url(self, obj):
         if not obj.responsavel or not obj.responsavel.profile_picture:
@@ -605,7 +647,7 @@ class CardSerializer(serializers.ModelSerializer):
         model = Card
         fields = ['id', 'nome', 'descricao', 'script_url', 'projeto', 'projeto_detail', 
                  'area', 'area_display', 'tipo', 'tipo_display',
-                 'responsavel', 'responsavel_name', 'responsavel_profile_picture_url', 
+                 'responsavel', 'responsavel_name', 'responsavel_role', 'responsavel_profile_picture_url',
                  'criado_por', 'criado_por_name', 'criado_por_profile_picture_url',
                  'status', 'status_display', 'prioridade', 'prioridade_display',
                  'data_inicio', 'data_fim', 'finalizado_em',

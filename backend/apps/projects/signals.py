@@ -13,6 +13,7 @@ from .models import (
     Notification,
     NotificationType,
     CardStatus,
+    CardPin,
 )
 from .notification_utils import send_notification, send_notification_to_multiple_users
 
@@ -773,3 +774,18 @@ def user_role_changed(sender, instance, created, **kwargs):
 
 # Signals de CardTodo removidos — tipo card_todo_updated foi removido da plataforma.
 # Notificações sobre subtarefas (TODOs) eram muito ruidosas (Supervisores+Gerentes+Admins+Responsável).
+
+
+@receiver(post_save, sender=Card)
+def remove_pins_when_card_finalized(sender, instance, created, **kwargs):
+    """Remove fixações (CardPin) quando o card é finalizado ou inviabilizado.
+
+    A página "Meus Afazeres → Cards Fixados" só lista cards em andamento da
+    sprint atual. Ao concluir/inviabilizar o card, a fixação perde o sentido.
+    """
+    if created:
+        return
+    previous_status = getattr(instance, '_previous_status', None)
+    terminal_statuses = (CardStatus.FINALIZADO, CardStatus.INVIABILIZADO)
+    if instance.status in terminal_statuses and previous_status not in terminal_statuses:
+        CardPin.objects.filter(card=instance).delete()

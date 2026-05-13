@@ -805,3 +805,37 @@ class UserNoteTodo(models.Model):
     def __str__(self):
         return f'{self.label} ({"✓" if self.done else "○"})'
 
+
+class CardPin(models.Model):
+    """Fixação de um card por usuário — atalho pessoal para acesso rápido.
+
+    Apenas cards da sprint atual (não finalizada) e ainda não concluídos podem
+    ser fixados. Quando o card é finalizado, todas as fixações dele são removidas
+    automaticamente via signal.
+    """
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='pinned_cards',
+        verbose_name='Usuário',
+    )
+    card = models.ForeignKey(
+        'Card',
+        on_delete=models.CASCADE,
+        related_name='pins',
+        verbose_name='Card',
+    )
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name='Fixado em')
+
+    class Meta:
+        verbose_name = 'Card fixado'
+        verbose_name_plural = 'Cards fixados'
+        ordering = ['-created_at']
+        unique_together = [('user', 'card')]
+        indexes = [
+            models.Index(fields=['user', '-created_at']),
+        ]
+
+    def __str__(self):
+        return f'{self.user.username} ⇩ {self.card_id}'
+

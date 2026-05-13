@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   Archive,
   ArchiveRestore,
@@ -17,6 +18,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   Dialog,
   DialogContent,
@@ -31,6 +33,9 @@ import {
   type UserNoteColor,
   type UserNoteTodo,
 } from '@/services/userNoteService';
+import { cardPinService, type CardPin } from '@/services/cardPinService';
+import { KanbanCardPreview } from '@/components/KanbanCardPreview';
+import { ROUTES } from '@/routes';
 import { cn } from '@/lib/utils';
 
 type NoteFilter = 'active' | 'archived';
@@ -645,6 +650,8 @@ function NoteEditor({
 }
 
 export default function MyTasks() {
+  const navigate = useNavigate();
+  const [tab, setTab] = useState<'notes' | 'pins'>('notes');
   const [notes, setNotes] = useState<UserNote[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -653,6 +660,11 @@ export default function MyTasks() {
   const [creating, setCreating] = useState(false);
   const [savingId, setSavingId] = useState<number | null>(null);
   const [editingId, setEditingId] = useState<number | null>(null);
+
+  // Aba "Cards Fixados"
+  const [pinnedCards, setPinnedCards] = useState<CardPin[]>([]);
+  const [pinsLoading, setPinsLoading] = useState(false);
+  const [pinsError, setPinsError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -668,9 +680,42 @@ export default function MyTasks() {
     }
   }, []);
 
+  const loadPins = useCallback(async () => {
+    setPinsLoading(true);
+    setPinsError(null);
+    try {
+      const data = await cardPinService.list();
+      setPinnedCards(data);
+    } catch (err) {
+      console.error('Erro ao carregar cards fixados:', err);
+      setPinsError('Não foi possível carregar os cards fixados.');
+    } finally {
+      setPinsLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
-    void load();
-  }, [load]);
+    if (tab === 'pins') void loadPins();
+  }, [tab, loadPins]);
+
+  const handleUnpin = useCallback(async (cardId: string) => {
+    try {
+      await cardPinService.unpin(cardId);
+      setPinnedCards((prev) => prev.filter((p) => p.card !== cardId));
+    } catch (err) {
+      console.error('Erro ao desafixar card:', err);
+      setPinsError('Falha ao desafixar o card.');
+    }
+  }, []);
+
+  const handleOpenCard = useCallback(
+    (pin: CardPin) => {
+      const projectId = pin.card_detail.projeto;
+      if (!projectId) return;
+      navigate(ROUTES.projetoCard(projectId, pin.card));
+    },
+    [navigate],
+  );
 
   const handleCreate = useCallback(
     async (draft: DraftNote) => {
@@ -797,120 +842,185 @@ export default function MyTasks() {
         </div>
       </header>
 
-      <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="relative w-full sm:max-w-sm">
-          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Buscar anotações..."
-            className="pl-9"
-          />
-        </div>
-        <div className="inline-flex rounded-md border border-border bg-card p-0.5 text-sm">
-          <button
-            type="button"
-            onClick={() => setFilter('active')}
-            className={cn(
-              'rounded-sm px-3 py-1.5 transition-colors',
-              filter === 'active'
-                ? 'bg-primary text-primary-foreground'
-                : 'text-muted-foreground hover:text-foreground',
+      <Tabs value={tab} onValueChange={(v) => setTab(v as 'notes' | 'pins')} className="w-full">
+        <TabsList className="mb-4">
+          <TabsTrigger value="notes">
+            <StickyNote className="mr-1.5 h-4 w-4" />
+            Anotações
+          </TabsTrigger>
+          <TabsTrigger value="pins">
+            <Pin className="mr-1.5 h-4 w-4" />
+            Cards Fixados
+            {pinnedCards.length > 0 && (
+              <span className="ml-1.5 rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] font-semibold text-primary">
+                {pinnedCards.length}
+              </span>
             )}
-          >
-            Ativas
-          </button>
-          <button
-            type="button"
-            onClick={() => setFilter('archived')}
-            className={cn(
-              'rounded-sm px-3 py-1.5 transition-colors',
-              filter === 'archived'
-                ? 'bg-primary text-primary-foreground'
-                : 'text-muted-foreground hover:text-foreground',
-            )}
-          >
-            Arquivadas
-          </button>
-        </div>
-      </div>
+          </TabsTrigger>
+        </TabsList>
 
-      {filter === 'active' && (
-        <div className="mb-6">
-          <NoteComposer onCreate={handleCreate} busy={creating} />
-        </div>
-      )}
+        <TabsContent value="notes">
+          <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="relative w-full sm:max-w-sm">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Buscar anotações..."
+                className="pl-9"
+              />
+            </div>
+            <div className="inline-flex rounded-md border border-border bg-card p-0.5 text-sm">
+              <button
+                type="button"
+                onClick={() => setFilter('active')}
+                className={cn(
+                  'rounded-sm px-3 py-1.5 transition-colors',
+                  filter === 'active'
+                    ? 'bg-primary text-primary-foreground'
+                    : 'text-muted-foreground hover:text-foreground',
+                )}
+              >
+                Ativas
+              </button>
+              <button
+                type="button"
+                onClick={() => setFilter('archived')}
+                className={cn(
+                  'rounded-sm px-3 py-1.5 transition-colors',
+                  filter === 'archived'
+                    ? 'bg-primary text-primary-foreground'
+                    : 'text-muted-foreground hover:text-foreground',
+                )}
+              >
+                Arquivadas
+              </button>
+            </div>
+          </div>
 
-      {error && (
-        <div className="mb-4 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-          {error}
-        </div>
-      )}
-
-      {loading ? (
-        <div className="flex items-center justify-center py-12 text-muted-foreground">
-          <Loader2 className="h-5 w-5 animate-spin mr-2" />
-          Carregando anotações...
-        </div>
-      ) : filteredNotes.length === 0 ? (
-        <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-border py-16 text-center text-muted-foreground">
-          <StickyNote className="h-10 w-10 mb-3 opacity-50" />
-          <p className="text-sm">
-            {filter === 'archived'
-              ? 'Nenhuma anotação arquivada.'
-              : search
-                ? 'Nenhuma anotação encontrada para sua busca.'
-                : 'Suas anotações aparecerão aqui. Crie a primeira logo acima.'}
-          </p>
-        </div>
-      ) : (
-        <div className="space-y-6">
-          {pinned.length > 0 && (
-            <section>
-              <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                Fixadas
-              </h2>
-              <div className="columns-1 gap-3 sm:columns-2 lg:columns-3 xl:columns-4">
-                {pinned.map((note) => (
-                  <NoteCard
-                    key={note.id}
-                    note={note}
-                    onClick={() => setEditingId(note.id)}
-                    onTogglePin={() => void togglePin(note)}
-                    onToggleArchive={() => void toggleArchive(note)}
-                    onDelete={() => void handleDelete(note.id)}
-                    onChangeColor={(color) => void changeColor(note, color)}
-                    onToggleTodo={(idx, done) => void toggleTodoOnCard(note, idx, done)}
-                  />
-                ))}
-              </div>
-            </section>
+          {filter === 'active' && (
+            <div className="mb-6">
+              <NoteComposer onCreate={handleCreate} busy={creating} />
+            </div>
           )}
-          {others.length > 0 && (
-            <section>
+
+          {error && (
+            <div className="mb-4 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+              {error}
+            </div>
+          )}
+
+          {loading ? (
+            <div className="flex items-center justify-center py-12 text-muted-foreground">
+              <Loader2 className="h-5 w-5 animate-spin mr-2" />
+              Carregando anotações...
+            </div>
+          ) : filteredNotes.length === 0 ? (
+            <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-border py-16 text-center text-muted-foreground">
+              <StickyNote className="h-10 w-10 mb-3 opacity-50" />
+              <p className="text-sm">
+                {filter === 'archived'
+                  ? 'Nenhuma anotação arquivada.'
+                  : search
+                    ? 'Nenhuma anotação encontrada para sua busca.'
+                    : 'Suas anotações aparecerão aqui. Crie a primeira logo acima.'}
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-6">
               {pinned.length > 0 && (
-                <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                  Outras
-                </h2>
+                <section>
+                  <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                    Fixadas
+                  </h2>
+                  <div className="columns-1 gap-3 sm:columns-2 lg:columns-3 xl:columns-4">
+                    {pinned.map((note) => (
+                      <NoteCard
+                        key={note.id}
+                        note={note}
+                        onClick={() => setEditingId(note.id)}
+                        onTogglePin={() => void togglePin(note)}
+                        onToggleArchive={() => void toggleArchive(note)}
+                        onDelete={() => void handleDelete(note.id)}
+                        onChangeColor={(color) => void changeColor(note, color)}
+                        onToggleTodo={(idx, done) => void toggleTodoOnCard(note, idx, done)}
+                      />
+                    ))}
+                  </div>
+                </section>
               )}
-              <div className="columns-1 gap-3 sm:columns-2 lg:columns-3 xl:columns-4">
-                {others.map((note) => (
-                  <NoteCard
-                    key={note.id}
-                    note={note}
-                    onClick={() => setEditingId(note.id)}
-                    onTogglePin={() => void togglePin(note)}
-                    onToggleArchive={() => void toggleArchive(note)}
-                    onDelete={() => void handleDelete(note.id)}
-                    onChangeColor={(color) => void changeColor(note, color)}
-                    onToggleTodo={(idx, done) => void toggleTodoOnCard(note, idx, done)}
-                  />
-                ))}
-              </div>
-            </section>
+              {others.length > 0 && (
+                <section>
+                  {pinned.length > 0 && (
+                    <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                      Outras
+                    </h2>
+                  )}
+                  <div className="columns-1 gap-3 sm:columns-2 lg:columns-3 xl:columns-4">
+                    {others.map((note) => (
+                      <NoteCard
+                        key={note.id}
+                        note={note}
+                        onClick={() => setEditingId(note.id)}
+                        onTogglePin={() => void togglePin(note)}
+                        onToggleArchive={() => void toggleArchive(note)}
+                        onDelete={() => void handleDelete(note.id)}
+                        onChangeColor={(color) => void changeColor(note, color)}
+                        onToggleTodo={(idx, done) => void toggleTodoOnCard(note, idx, done)}
+                      />
+                    ))}
+                  </div>
+                </section>
+              )}
+            </div>
           )}
-        </div>
-      )}
+        </TabsContent>
+
+        <TabsContent value="pins">
+          {pinsError && (
+            <div className="mb-4 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+              {pinsError}
+            </div>
+          )}
+          {pinsLoading ? (
+            <div className="flex items-center justify-center py-12 text-muted-foreground">
+              <Loader2 className="h-5 w-5 animate-spin mr-2" />
+              Carregando cards fixados...
+            </div>
+          ) : pinnedCards.length === 0 ? (
+            <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-border py-16 text-center text-muted-foreground">
+              <Pin className="h-10 w-10 mb-3 opacity-50" />
+              <p className="text-sm">
+                Nenhum card fixado. Clique no <Pin className="inline h-3.5 w-3.5 mx-1" />
+                ao lado da lixeira de um card no Kanban para fixá-lo aqui.
+              </p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+              {pinnedCards.map((pin) => (
+                <KanbanCardPreview
+                  key={pin.id}
+                  card={pin.card_detail}
+                  onClick={() => handleOpenCard(pin)}
+                  topRightSlot={
+                    <button
+                      type="button"
+                      title="Desafixar"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        void handleUnpin(pin.card);
+                      }}
+                      className="rounded-full p-1 text-muted-foreground hover:bg-background/60 hover:text-foreground"
+                    >
+                      <PinOff className="h-3.5 w-3.5" />
+                    </button>
+                  }
+                />
+              ))}
+            </div>
+          )}
+        </TabsContent>
+      </Tabs>
 
       <NoteEditor
         open={editingId != null}
