@@ -1,39 +1,77 @@
 name: Deploy to Hostinger VPS
 
-# Dispara o deploy na VPS Hostinger via API (alternativa ao "Compose by URL"
+# Dispara o deploy na VPS Hostinger via SSH (alternativa ao "Compose by URL"
 # do Docker Manager, que estava perdendo o YAML).
 #
-# Pré-requisitos (configurar UMA VEZ no GitHub):
-#  1. Settings → Secrets and variables → Actions:
-#     - Secret  HOSTINGER_API_KEY  (gerar em https://hpanel.hostinger.com → API)
-#     - Variable HOSTINGER_VM_ID  (ID da VPS srv1418910 — pode pegar via API ou painel)
+# Como funciona:
+#  1. Espera o workflow `Build and publish Docker image` terminar (publica em ghcr.io)
+#  2. SSH na VPS
+#  3. Clona/atualiza o repo em /opt/bwa_tech
+#  4. `docker compose pull` (puxa imagem nova de ghcr.io)
+#  5. `docker compose up -d` (recria os containers afetados)
+#  6. Volumes nomeados (postgres_data, etc.) são preservados — dados intactos
 #
-# Roda DEPOIS do workflow `Build and publish Docker image` finalizar.
-# Sequência: push em main → build & push pra ghcr.io → este action dispara deploy.
+# Pré-requisitos no GitHub (Settings → Secrets and variables → Actions):
+#  - Secret  VPS_HOST       = 187.77.53.184
+#  - Secret  VPS_USER       = root
+#  - Secret  VPS_SSH_KEY    = chave PRIVADA SSH (conteúdo do id_ed25519 ou similar)
+#  - Secret  VPS_SSH_PORT   = 22 (opcional, default 22)
+#
+# Pré-requisito na VPS (UMA VEZ): adicionar a chave PÚBLICA correspondente em
+#  /root/.ssh/authorized_keys
 
 on:
-  # Roda automaticamente quando o workflow de build da imagem termina com sucesso
   workflow_run:
     workflows: ["Build and publish Docker image"]
     types:
       - completed
     branches:
       - main
-  # Permite disparar manualmente pela UI ("Run workflow")
   workflow_dispatch:
 
 jobs:
   deploy:
-    # Só roda se o workflow anterior (build) deu certo
+    # Só roda se o workflow de build foi sucesso (ou se manual)
     if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Deploy to Hostinger
-        uses: hostinger/deploy-action@v1
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.0.3
         with:
-          api-key: ${{ secrets.HOSTINGER_API_KEY }}
-          virtual-machine: ${{ vars.HOSTINGER_VM_ID }}
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          port: ${{ secrets.VPS_SSH_PORT || 22 }}
+          script: |
+            set -e
+            export COMPOSE_PROJECT_NAME=bwa_tech
+
+            # Clona o repo se ainda não existe, ou atualiza se já tem
+            if [ ! -d /opt/bwa_tech/.git ]; then
+              echo "==> Clonando repo em /opt/bwa_tech (primeira vez)"
+              mkdir -p /opt/bwa_tech
+              git clone https://github.com/rpabwaglobal/BWA_Tech.git /opt/bwa_tech
+            else
+              echo "==> Atualizando repo em /opt/bwa_tech"
+              cd /opt/bwa_tech
+              git fetch origin main
+              git reset --hard origin/main
+            fi
+
+            cd /opt/bwa_tech
+
+            # Puxa a imagem nova (publicada pelo workflow anterior)
+            echo "==> Pulling latest images..."
+            docker compose pull
+
+            # Recria os containers afetados (volumes nomeados preservados)
+            echo "==> Restarting containers..."
+            docker compose up -d --remove-orphans
+
+            # Limpa imagens antigas pra não encher o disco
+            echo "==> Cleaning up old images..."
+            docker image prune -f
+
+            echo "==> Status final:"
+            docker compose ps
