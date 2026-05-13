@@ -1,14 +1,15 @@
 # BWAproj: Postgres + Redis + backend (Django/Daphne) + Celery.
 #
-# O `.env` na raiz é copiado para DENTRO da imagem no Dockerfile (Django + build Vite).
-# Precisa existir nessa pasta ao correr `docker compose build`; backend/Celery usam também `env_file: .env`
-# (DOTENV_OVERRIDE=false na imagem) para o .env actual na VPS prevalecer sobre o baked ao arrancar.
+# IMAGEM: publicada em ghcr.io/rpabwaglobal/bwa_tech:latest por GitHub Actions
+# (workflow .github/workflows/docker-publish.yml a cada push em `main`).
+# Hostinger Docker Manager faz `docker compose pull` — não builda local.
+# Para forçar rebuild manual: GitHub → aba Actions → "Run workflow".
 #
-# O serviço `db` usa `env_file: .env` para POSTGRES_* coincidir com os valores do mesmo ficheiro.
+# `.env` permanece no repositório e é injetado em runtime via `env_file` em
+# todos os serviços (mais o DOTENV_OVERRIDE=false dentro da imagem).
+#
 # Labels Traefik expandem ${PUBLIC_HOST} a partir do `.env` lido pelo Compose no host.
-#
-# Rede `web`: docker network create web (se ainda não existir). deploy.sh cria na LAN.
-# Portas: HOST_BIND (default 127.0.0.1); deploy LAN: export DEPLOY_LAN_EXPOSE=1 antes de deploy.sh para 0.0.0.0.
+# Rede `web`: docker network create web (se ainda não existir).
 
 services:
   db:
@@ -47,11 +48,10 @@ services:
       - ALL
 
   backend:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    # Nome explícito da imagem para celery-worker/celery-beat reutilizarem (build 1x).
-    image: bwaproj-app:latest
+    # Imagem publicada por GitHub Actions a cada push para `main`.
+    # Workflow: .github/workflows/docker-publish.yml
+    # Para forçar rebuild manual: aba "Actions" no GitHub → "Build and publish Docker image" → "Run workflow"
+    image: ghcr.io/rpabwaglobal/bwa_tech:latest
     env_file:
       - .env
     restart: unless-stopped
@@ -92,7 +92,7 @@ services:
 
   celery-worker:
     # Reutiliza a imagem buildada pelo serviço `backend` (sem rebuild paralelo).
-    image: bwaproj-app:latest
+    image: ghcr.io/rpabwaglobal/bwa_tech:latest
     depends_on:
       backend:
         condition: service_started
@@ -112,7 +112,7 @@ services:
       - no-new-privileges:true
 
   celery-beat:
-    image: bwaproj-app:latest
+    image: ghcr.io/rpabwaglobal/bwa_tech:latest
     depends_on:
       backend:
         condition: service_started
