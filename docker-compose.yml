@@ -134,18 +134,6 @@ networks:
     external: true
 
 volumes:
-  # Volumes EXTERNOS — sobrevivem a `docker compose down -v` (Hostinger
-  # executa isso a cada redeploy do "Compose by URL", o que apagava os dados).
-  # Criar UMA VEZ na VPS antes do primeiro deploy:
-  #   docker volume create bwaproj_postgres_data
-  #   docker volume create bwaproj_backend_media
-  #   docker volume create bwaproj_redis_data
   postgres_data:
-    external: true
-    name: bwaproj_postgres_data
   backend_media:
-    external: true
-    name: bwaproj_backend_media
   redis_data:
-    external: true
-    name: bwaproj_redis_data
