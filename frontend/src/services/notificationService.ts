@@ -21,6 +21,14 @@ type PaginatedResponse<T> = {
   results: T[];
 };
 
+export type NotificationsPage = {
+  results: Notification[];
+  /** Total absoluto no servidor (após filtros). */
+  count: number;
+  /** Path relativo para a próxima página (ex: "/notifications/?page=2"), ou null. */
+  next: string | null;
+};
+
 type UnreadCountResponse = {
   total: number;
   mine: number;
@@ -47,64 +55,49 @@ export type NotificationPreferences = {
 export type NotificationTypeSlug = keyof Omit<NotificationPreferences, 'updated_at'>;
 
 export const notificationService = {
-  async getAll(params?: {
-    filter?: 'mine' | 'all';
+  /**
+   * Busca UMA página de notificações. Para a primeira página, passe `page=1`
+   * (ou omita). Para próxima, passe o `next` retornado anteriormente em `pageUrl`.
+   *
+   * Retorna `{results, count, next}` onde `next` é o path relativo da próxima
+   * página (ou null se acabou). Use com `loadMore` no contexto.
+   */
+  async getPage(params?: {
     tipo?: string;
     lida?: boolean;
     page?: number;
-  }): Promise<Notification[]> {
-    const allNotifications: Notification[] = [];
-    const queryParams = new URLSearchParams();
-    
-    if (params?.filter) {
-      queryParams.append('filter', params.filter);
+    pageUrl?: string | null;
+  }): Promise<NotificationsPage> {
+    let url: string;
+    if (params?.pageUrl) {
+      url = params.pageUrl;
+    } else {
+      const qp = new URLSearchParams();
+      if (params?.tipo) qp.append('tipo', params.tipo);
+      if (params?.lida !== undefined) qp.append('lida', String(params.lida));
+      if (params?.page) qp.append('page', String(params.page));
+      url = `/notifications/${qp.toString() ? `?${qp.toString()}` : ''}`;
     }
-    if (params?.tipo) {
-      queryParams.append('tipo', params.tipo);
+    const response = await api.get<PaginatedResponse<Notification> | Notification[]>(url);
+
+    // Fallback: endpoint pode retornar array sem paginação em alguns casos
+    if (Array.isArray(response.data)) {
+      return { results: response.data, count: response.data.length, next: null };
     }
-    if (params?.lida !== undefined) {
-      queryParams.append('lida', params.lida.toString());
-    }
-    if (params?.page) {
-      queryParams.append('page', params.page.toString());
-    }
-    
-    let nextUrl: string | null = `/notifications/${queryParams.toString() ? `?${queryParams.toString()}` : ''}`;
 
-    // Cap de segurança: limita o fetch às N páginas mais recentes. Para usuários
-    // com milhares de notificações, evita esgotar a cota de rate-limit e travar
-    // outros endpoints da mesma sessão. UX de "load more" cobre o restante.
-    const MAX_PAGES = 5;
-    let pagesFetched = 0;
-
-    while (nextUrl && pagesFetched < MAX_PAGES) {
-      const response = await api.get<PaginatedResponse<Notification> | Notification[]>(nextUrl);
-      pagesFetched += 1;
-
-      if (Array.isArray(response.data)) {
-        // Se não for paginado, retornar diretamente
-        return response.data;
-      }
-
-      // Se for paginado, adicionar os resultados e verificar se há próxima página
-      const paginatedData = response.data as PaginatedResponse<Notification>;
-      allNotifications.push(...(paginatedData.results || []));
-
-      // Se houver próxima página, extrair o caminho da URL
-      if (paginatedData.next) {
-        const url = new URL(paginatedData.next);
-        // Remover o /api/ do início do pathname se existir, pois a baseURL já inclui /api
-        let pathname = url.pathname;
-        if (pathname.startsWith('/api/')) {
-          pathname = pathname.substring(4); // Remove '/api'
-        }
-        nextUrl = pathname + url.search;
-      } else {
-        nextUrl = null;
+    const paginated = response.data as PaginatedResponse<Notification>;
+    let nextPath: string | null = null;
+    if (paginated.next) {
+      try {
+        const u = new URL(paginated.next);
+        let pathname = u.pathname;
+        if (pathname.startsWith('/api/')) pathname = pathname.substring(4);
+        nextPath = pathname + u.search;
+      } catch {
+        nextPath = paginated.next;
       }
     }
-
-    return allNotifications;
+    return { results: paginated.results ?? [], count: paginated.count ?? 0, next: nextPath };
   },
 
   async getUnreadCount(): Promise<UnreadCountResponse> {

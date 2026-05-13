@@ -5,7 +5,7 @@ import { NotificationsPanel } from './NotificationsPanel';
 import { cn } from '@/lib/utils';
 
 export function NotificationsButton() {
-  const { unreadCount, mineCount } = useNotifications();
+  const { unreadCount } = useNotifications();
   const [isOpen, setIsOpen] = useState(false);
   const buttonRef = useRef<HTMLButtonElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
@@ -46,7 +46,7 @@ export function NotificationsButton() {
       >
         <Bell className="h-[20px] w-[20px] text-[var(--color-foreground)]" />
         
-        {/* Bolinha vermelha - notificações gerais */}
+        {/* Badge vermelho — total não lidas (após filtragem por preferência no backend) */}
         {unreadCount > 0 && (
           <span
             className={cn(
@@ -58,21 +58,6 @@ export function NotificationsButton() {
             )}
           >
             {unreadCount > 99 ? '99+' : unreadCount}
-          </span>
-        )}
-        
-        {/* Bolinha verde - notificações específicas do usuário */}
-        {mineCount > 0 && (
-          <span
-            className={cn(
-              "absolute bottom-[-4px] right-[-4px]",
-              "flex items-center justify-center",
-              "min-w-[20px] h-[20px] px-[4px]",
-              "bg-green-500 text-white text-xs font-semibold",
-              "rounded-full border-2 border-[var(--color-background)]"
-            )}
-          >
-            {mineCount > 99 ? '99+' : mineCount}
           </span>
         )}
       </button>

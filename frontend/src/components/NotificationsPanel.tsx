@@ -1,6 +1,6 @@
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { X, Clock, Check, Trash2, Filter, Settings } from 'lucide-react';
+import { X, Clock, Check, Trash2, Filter, Settings, Loader2 } from 'lucide-react';
 import { useNotifications } from '@/context/NotificationContext';
 import { formatDateTime } from '@/lib/dateUtils';
 import { Button } from './ui/button';
@@ -16,30 +16,22 @@ export function NotificationsPanel({ onClose }: NotificationsPanelProps) {
   const {
     notifications,
     loading,
+    loadingMore,
+    hasMore,
     filter,
     setFilter,
+    loadMore,
     markAsRead,
     markAllAsRead,
     deleteNotification,
+    refreshNotifications,
   } = useNotifications();
   const navigate = useNavigate();
   const [prefsOpen, setPrefsOpen] = useState(false);
 
-  // Filtrar notificações
-  const filteredNotifications = useMemo(() => {
-    let filtered = [...notifications];
-
-    if (filter === 'mine') {
-      // Excluir notificações gerais
-      filtered = filtered.filter(
-        (n) => !['sprint_created'].includes(n.tipo)
-      );
-    } else if (filter === 'unread') {
-      filtered = filtered.filter((n) => !n.lida);
-    }
-
-    return filtered;
-  }, [notifications, filter]);
+  // Backend já filtra por preferência. Frontend só filtra "não lidas".
+  const filteredNotifications =
+    filter === 'unread' ? notifications.filter((n) => !n.lida) : notifications;
 
   // Obter cor baseada no tipo de notificação
   const getNotificationColor = (tipo: string) => {
@@ -145,14 +137,6 @@ export function NotificationsPanel({ onClose }: NotificationsPanelProps) {
             className="h-[28px] text-xs"
           >
             Todas
-          </Button>
-          <Button
-            variant={filter === 'mine' ? 'default' : 'ghost'}
-            size="sm"
-            onClick={() => setFilter('mine')}
-            className="h-[28px] text-xs"
-          >
-            Minhas
           </Button>
           <Button
             variant={filter === 'unread' ? 'default' : 'ghost'}
@@ -266,11 +250,43 @@ export function NotificationsPanel({ onClose }: NotificationsPanelProps) {
                 </div>
               ))}
             </div>
+
+            {/* Botão "Carregar mais" (paginação real — 20 por página) */}
+            {filter === 'all' && hasMore && (
+              <div className="flex justify-center pt-[12px]">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={loadMore}
+                  disabled={loadingMore}
+                  className="h-[28px] text-xs"
+                >
+                  {loadingMore ? (
+                    <>
+                      <Loader2 className="h-[12px] w-[12px] animate-spin mr-1.5" />
+                      Carregando...
+                    </>
+                  ) : (
+                    'Carregar mais'
+                  )}
+                </Button>
+              </div>
+            )}
           </div>
         )}
       </div>
 
-      <NotificationPreferencesDialog open={prefsOpen} onOpenChange={setPrefsOpen} />
+      <NotificationPreferencesDialog
+        open={prefsOpen}
+        onOpenChange={(open) => {
+          setPrefsOpen(open);
+          // Ao fechar o modal de preferências, refaz fetch — preferências
+          // mudadas afetam quais tipos são visíveis (filtragem é no backend).
+          if (!open) {
+            void refreshNotifications();
+          }
+        }}
+      />
     </div>
   );
 }

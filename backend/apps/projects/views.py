@@ -668,6 +668,22 @@ class CardLogViewSet(viewsets.ModelViewSet):
             serializer.save()
 
 
+# Slugs dos 11 tipos vivos (espelha campos de UserNotificationPreference).
+# Tipos legados como `card_todo_updated` e `log_created` ficam DE FORA — registros
+# antigos com esses tipos não aparecem mais na lista do usuário (são phased out).
+ACTIVE_NOTIFICATION_TYPES = [
+    'card_updated', 'card_deleted', 'project_created',
+    'card_overdue', 'card_due_24h', 'card_due_1h', 'card_due_10min',
+    'card_created', 'card_moved', 'sprint_created', 'role_changed',
+]
+
+
+def _enabled_types_for(user):
+    """Retorna a lista de slugs habilitados pela preferência do usuário."""
+    prefs, _ = UserNotificationPreference.objects.get_or_create(user=user)
+    return [t for t in ACTIVE_NOTIFICATION_TYPES if getattr(prefs, t, False)]
+
+
 class NotificationViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class = NotificationSerializer
     permission_classes = [IsAuthenticated]
@@ -675,22 +691,13 @@ class NotificationViewSet(viewsets.ReadOnlyModelViewSet):
     filterset_fields = ['tipo', 'lida']
     ordering_fields = ['data_criacao']
     ordering = ['-data_criacao']
-    
+
     def get_queryset(self):
-        # Retornar apenas notificações do usuário atual
-        queryset = Notification.objects.filter(usuario=self.request.user)
-        
-        # Filtro adicional para "minhas" notificações (específicas do usuário)
-        filter_type = self.request.query_params.get('filter', None)
-        if filter_type == 'mine':
-            # Notificações específicas do usuário (excluir gerais como sprint criada)
-            from .models import NotificationType
-            queryset = queryset.exclude(tipo__in=[
-                NotificationType.SPRINT_CREATED
-            ])
-        
-        return queryset
-    
+        user = self.request.user
+        # Apenas tipos atualmente habilitados pela preferência do usuário.
+        enabled = _enabled_types_for(user)
+        return Notification.objects.filter(usuario=user, tipo__in=enabled)
+
     @action(detail=True, methods=['post'])
     def mark_as_read(self, request, pk=None):
         """Marcar uma notificação como lida"""
@@ -699,37 +706,30 @@ class NotificationViewSet(viewsets.ReadOnlyModelViewSet):
         notification.save()
         serializer = self.get_serializer(notification)
         return Response(serializer.data)
-    
+
     @action(detail=False, methods=['post'])
     def mark_all_as_read(self, request):
-        """Marcar todas as notificações do usuário como lidas"""
+        """Marcar todas as notificações VISÍVEIS (tipos habilitados) como lidas."""
+        enabled = _enabled_types_for(request.user)
         count = Notification.objects.filter(
             usuario=request.user,
-            lida=False
+            lida=False,
+            tipo__in=enabled,
         ).update(lida=True)
         return Response({'count': count})
-    
+
     @action(detail=False, methods=['get'])
     def unread_count(self, request):
-        """Contar notificações não lidas"""
-        count = Notification.objects.filter(
+        """Contar notificações não lidas (somente tipos habilitados pela preferência)."""
+        enabled = _enabled_types_for(request.user)
+        total = Notification.objects.filter(
             usuario=request.user,
-            lida=False
+            lida=False,
+            tipo__in=enabled,
         ).count()
-        
-        # Contar notificações específicas do usuário (excluindo gerais)
-        from .models import NotificationType
-        mine_count = Notification.objects.filter(
-            usuario=request.user,
-            lida=False
-        ).exclude(tipo__in=[
-            NotificationType.SPRINT_CREATED
-        ]).count()
-        
-        return Response({
-            'total': count,
-            'mine': mine_count
-        })
+        # `mine` mantido por compatibilidade do contrato (FE legado pode ler),
+        # mas agora é igual a `total` pois "Minhas" foi removido da UI.
+        return Response({'total': total, 'mine': total})
 
 
 class NotificationPreferenceView(APIView):
