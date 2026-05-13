@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { Avatar, AvatarImage, AvatarFallback } from '@/components/ui/avatar';
 import { sprintService } from '@/services/sprintService';
 import { projectService } from '@/services/projectService';
@@ -9,6 +11,8 @@ import { cardService, type Card as CardType } from '@/services/cardService';
 import { userService, type User } from '@/services/userService';
 import type { Project } from '@/services/projectService';
 import { formatDate } from '@/lib/dateUtils';
+import { QuickCreateCardModal } from '@/components/QuickCreateCardModal';
+import { ROUTES } from '@/routes';
 import {
   Zap,
   FolderKanban,
@@ -18,6 +22,8 @@ import {
   Users,
   Code,
   UserX,
+  Plus,
+  ListChecks,
 } from 'lucide-react';
 
 type Stats = {
@@ -51,6 +57,10 @@ export default function Dashboard() {
   const [cardsInDevelopment, setCardsInDevelopment] = useState<(CardType & { projeto_nome?: string })[]>([]);
   const [developersWithoutCards, setDevelopersWithoutCards] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
+  /** ID da sprint em andamento — usado no atalho "Meus Cards". */
+  const [activeSprintId, setActiveSprintId] = useState<string | null>(null);
+  const [quickCreateOpen, setQuickCreateOpen] = useState(false);
+  const navigate = useNavigate();
 
   useEffect(() => {
     loadData();
@@ -88,6 +98,9 @@ export default function Dashboard() {
         const fechamento = new Date(sprint.fechamento_em);
         return today >= start && now <= fechamento;
       });
+
+      // Guarda a primeira sprint ativa para o atalho "Meus Cards"
+      setActiveSprintId(sprintsEmAndamento[0] ? String(sprintsEmAndamento[0].id) : null);
 
       // Filtrar projetos das sprints em andamento
       const projetosSprintsAtivas = projects.filter((project) => {
@@ -218,6 +231,20 @@ export default function Dashboard() {
     return 'Boa noite';
   };
 
+  /** Pega os 2 primeiros nomes (do first_name) capitalizados.
+   *  Fallback para username se first_name vazio. */
+  const getDisplayName = (): string => {
+    const raw = (user?.first_name ?? '').trim();
+    if (!raw) return user?.username ?? '';
+    const cap = (w: string) =>
+      w ? w.charAt(0).toUpperCase() + w.slice(1).toLowerCase() : '';
+    return raw
+      .split(/\s+/)
+      .slice(0, 2)
+      .map(cap)
+      .join(' ');
+  };
+
   const statCards = [
     {
       title: 'Sprints Ativas',
@@ -315,15 +342,51 @@ export default function Dashboard() {
 
   return (
     <div className="space-y-[16px]">
-      {/* Greeting */}
-      <div>
-        <h2 className="text-2xl font-semibold text-[var(--color-foreground)]">
-          {getGreeting()}, {user?.username}!
-        </h2>
-        <p className="mt-[8px] text-[var(--color-muted-foreground)]">
-          Aqui está um resumo do seu ambiente de trabalho.
-        </p>
+      {/* Greeting + caixa de Atalhos Rápidos (direita, slim e alinhada
+          verticalmente ao bloco de saudação). */}
+      <div className="flex items-center justify-between gap-[16px] flex-wrap">
+        <div className="min-w-0 flex-1">
+          <h2 className="text-2xl font-semibold text-[var(--color-foreground)]">
+            {getGreeting()}, {getDisplayName()}!
+          </h2>
+          <p className="mt-[8px] text-[var(--color-muted-foreground)]">
+            Aqui está um resumo do seu ambiente de trabalho.
+          </p>
+        </div>
+
+        <div className="shrink-0 rounded-lg border border-[var(--color-border)] bg-[var(--color-card)]/40 px-3 py-2.5">
+          <div className="text-[10px] uppercase tracking-wider font-medium text-[var(--color-muted-foreground)] mb-2">
+            Atalhos Rápidos
+          </div>
+          <div className="flex gap-2">
+            <Button
+              type="button"
+              variant="default"
+              onClick={() => setQuickCreateOpen(true)}
+              className="gap-2"
+            >
+              <Plus className="h-4 w-4" />
+              Criar Card
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                if (!activeSprintId || !user?.id) return;
+                navigate(`${ROUTES.sprintPorId(activeSprintId)}?dev=${user.id}`);
+              }}
+              disabled={!activeSprintId}
+              title={!activeSprintId ? 'Nenhuma sprint em andamento' : undefined}
+              className="gap-2"
+            >
+              <ListChecks className="h-4 w-4" />
+              Meus Cards
+            </Button>
+          </div>
+        </div>
       </div>
+
+      <QuickCreateCardModal isOpen={quickCreateOpen} onClose={() => setQuickCreateOpen(false)} />
 
       {/* Stats Grid - gap de 16px */}
       <div className="grid gap-[16px] md:grid-cols-2 lg:grid-cols-4">

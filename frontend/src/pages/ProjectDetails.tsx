@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
 import { useSprintKanbanWebSocket } from '@/hooks/useSprintKanbanWebSocket';
 import { Button } from '@/components/ui/button';
@@ -1801,6 +1801,20 @@ export default function ProjectDetails() {
     }
     void openEditCardDialog(card, { skipUrlSync: true });
   }, [id, cardId, cards, cardDialogOpen, editingCard, loading]);
+
+  // Deep-link `?newCard=1` (vindo do Dashboard → Atalho "Criar Card")
+  const [searchParams, setSearchParams] = useSearchParams();
+  useEffect(() => {
+    if (loading || !project) return;
+    if (searchParams.get('newCard') !== '1') return;
+    if (cardDialogOpen) return;
+    openCreateCardDialog();
+    // Limpa o param pra não reabrir ao F5
+    const next = new URLSearchParams(searchParams);
+    next.delete('newCard');
+    setSearchParams(next, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading, project, searchParams]);
 
   const normalizeStagesFromApi = (apiStages: any[] | undefined | null): ProjectStage[] => {
     if (!apiStages || !apiStages.length) return DEFAULT_PROJECT_STAGES;
@@ -4065,6 +4079,17 @@ export default function ProjectDetails() {
           setConclusaoPendingData(null);
         }}
         onConfirm={handleConclusaoConfirm}
+        card={
+          conclusaoPendingData?.card
+            ? {
+                ...conclusaoPendingData.card,
+                // Enriquece com role do responsável (badge "Dev." vem disso)
+                responsavel_role: users.find(
+                  (u) => String(u.id) === String(conclusaoPendingData.card.responsavel),
+                )?.role,
+              }
+            : undefined
+        }
         cardName={conclusaoCardName || undefined}
       />
     </div>

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type MouseEvent } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
 import { useSprintKanbanWebSocket } from '@/hooks/useSprintKanbanWebSocket';
 import { Card, CardContent } from '@/components/ui/card';
@@ -172,6 +172,8 @@ export default function SprintDetails() {
     enabled: !!(sprint?.id ?? sprintId),
     onCardMoved: handleCardMovedRealtime,
   });
+
+  const [searchParams] = useSearchParams();
   const [projectKanbanStagesByProjectId, setProjectKanbanStagesByProjectId] = useState<
     Record<string, ProjectStageConfig[]>
   >({});
@@ -218,6 +220,15 @@ export default function SprintDetails() {
   // Filter state for projects
   const [projectStatusFilter, setProjectStatusFilter] = useState<string>('');
   const [projectDeveloperFilter, setProjectDeveloperFilter] = useState<string>('');
+
+  // Deep-link `?dev=<id>` (Dashboard → "Meus Cards") — pré-filtra por responsável.
+  useEffect(() => {
+    const devParam = searchParams.get('dev');
+    if (devParam) {
+      setProjectDeveloperFilter(devParam);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
 
   // Project dialog state
   const [projectDialogOpen, setProjectDialogOpen] = useState(false);
