@@ -849,11 +849,6 @@ export default function GeekDay() {
                                 Apresentação: {formatDate(draw.data_apresentacao)}
                               </Badge>
                             )}
-                            {draw.marcado_manual && (
-                              <Badge variant="secondary" className="text-xs">
-                                Manual
-                              </Badge>
-                            )}
                             {draw.sorteado_por_name && (
                               <span className="text-xs text-[var(--color-muted-foreground)]">
                                 por {draw.sorteado_por_name}

@@ -4,6 +4,10 @@ import { cn } from "@/lib/utils"
 interface DropdownMenuContextValue {
   open: boolean
   setOpen: (open: boolean) => void
+  /** Ref do wrapper externo — usado pelo Content para excluir cliques no
+   *  trigger (irmão dele) do handler de "click outside". Sem isto o
+   *  click no trigger gera mousedown→fecha + click→reabre (flicker). */
+  wrapperRef: React.RefObject<HTMLDivElement>
 }
 
 const DropdownMenuContext = React.createContext<DropdownMenuContextValue | undefined>(undefined)
@@ -16,10 +20,12 @@ interface DropdownMenuProps {
 
 const DropdownMenu = ({ children, className }: DropdownMenuProps) => {
   const [open, setOpen] = React.useState(false)
+  const wrapperRef = React.useRef<HTMLDivElement>(null)
 
   return (
-    <DropdownMenuContext.Provider value={{ open, setOpen }}>
+    <DropdownMenuContext.Provider value={{ open, setOpen, wrapperRef }}>
       <div
+        ref={wrapperRef}
         className={cn(
           'relative text-left',
           className ?? 'inline-block',
@@ -99,9 +105,17 @@ const DropdownMenuContent = React.forwardRef<HTMLDivElement, DropdownMenuContent
       return contentRef
     }, [ref])
 
+    const wrapperRef = context?.wrapperRef
+
     React.useEffect(() => {
       const handleClickOutside = (event: MouseEvent) => {
-        if (contentRef.current && !contentRef.current.contains(event.target as Node)) {
+        const target = event.target as Node
+        // Considera "dentro" qualquer click no wrapper inteiro (trigger + content),
+        // não só no content — sem isto, click no trigger fecharia antes do onClick
+        // do trigger reabrir (flicker / toggle quebrado).
+        const insideWrapper = wrapperRef?.current?.contains(target)
+        const insideContent = contentRef.current?.contains(target)
+        if (!insideWrapper && !insideContent) {
           if (setIsOpen) {
             setIsOpen(false)
           }
@@ -115,7 +129,7 @@ const DropdownMenuContent = React.forwardRef<HTMLDivElement, DropdownMenuContent
       return () => {
         document.removeEventListener("mousedown", handleClickOutside)
       }
-    }, [isOpen, setIsOpen])
+    }, [isOpen, setIsOpen, wrapperRef])
 
     if (!isOpen) return null
 

@@ -23,12 +23,7 @@ export function useWebSocket({ onNotification, enabled = true }: UseWebSocketOpt
 
     // Obter token de autenticação
     const token = localStorage.getItem('auth_token');
-    if (!token) {
-      console.warn('[WebSocket] Token de autenticação não encontrado');
-      return;
-    }
-    
-    console.log('[WebSocket] Tentando conectar...');
+    if (!token) return;
 
     // Em produção: use VITE_WS_URL (ex: wss://tech.bwa.global) ou mesmo host da página
     const viteWs = import.meta.env.VITE_WS_URL as string | undefined;
@@ -48,7 +43,6 @@ export function useWebSocket({ onNotification, enabled = true }: UseWebSocketOpt
       wsRef.current = ws;
 
       ws.onopen = () => {
-        console.log('[WebSocket] Conectado com sucesso');
         reconnectAttemptsRef.current = 0;
         
         // Enviar ping periódico para manter conexão viva
