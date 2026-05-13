@@ -21,18 +21,27 @@ name: Deploy to Hostinger VPS
 #  /root/.ssh/authorized_keys
 
 on:
+  # Quando o build da imagem termina (com sucesso) → deploy
   workflow_run:
     workflows: ["Build and publish Docker image"]
     types:
       - completed
     branches:
       - main
+  # Quando MUDA SÓ o docker-compose.yml (não rebuilda imagem mas reaplica compose)
+  push:
+    branches:
+      - main
+    paths:
+      - 'docker-compose.yml'
+      - '.github/workflows/hostinger-deploy.yml'
+  # Disparo manual pela UI ("Run workflow")
   workflow_dispatch:
 
 jobs:
   deploy:
-    # Só roda se o workflow de build foi sucesso (ou se manual)
-    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    # Roda em: dispatch manual / push (compose-only) / build bem-sucedido
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event_name == 'push' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
 
     steps:
