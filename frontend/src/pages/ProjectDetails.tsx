@@ -47,7 +47,7 @@ import { projectService } from '@/services/projectService';
 import { cardService, CARD_AREAS, CARD_TYPES, CARD_PRIORITIES } from '@/services/cardService';
 import type { CardLink } from '@/services/cardService';
 import { sprintService } from '@/services/sprintService';
-import { cardTodoService } from '@/services/cardTodoService';
+import { getTodosByArea } from '@/constants/cardTodos';
 import { kanbanStageService } from '@/services/kanbanStageService';
 import type { KanbanStage as KanbanStageType } from '@/services/kanbanStageService';
 import { ROUTES } from '@/routes';
@@ -2162,26 +2162,6 @@ export default function ProjectDetails() {
       } else {
         const newCard = await cardService.create(dataToSend);
         // Log de criação é criado automaticamente pelo backend
-        
-        // Criar TODOs automaticamente baseados na área do card
-        const todos = getTodosByArea(cardFormData.area);
-        if (todos.length > 0) {
-          try {
-            const todoPromises = todos.map((todo, index) =>
-              cardTodoService.create({
-                card: newCard.id,
-                label: todo.label,
-                is_original: true,
-                status: 'pending',
-                order: index,
-              })
-            );
-            await Promise.all(todoPromises);
-          } catch (error) {
-            console.error('Erro ao criar TODOs do card:', error);
-            // Não bloquear a criação do card se os TODOs falharem
-          }
-        }
         setCards((prevCards) => [...prevCards, newCard]);
       }
       closeCardDialog();

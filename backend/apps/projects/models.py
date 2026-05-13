@@ -361,53 +361,10 @@ class Card(models.Model):
         return f"{self.nome} - {self.projeto.nome}"
 
 
-class CardTodoStatus(models.TextChoices):
-    PENDING = 'pending', 'Pendente'
-    COMPLETED = 'completed', 'Concluído'
-    BLOCKED = 'blocked', 'Bloqueado'
-    WARNING = 'warning', 'Aviso'
-
-
-class CardTodo(models.Model):
-    card = models.ForeignKey(
-        Card,
-        on_delete=models.CASCADE,
-        related_name='todos',
-        verbose_name='Card'
-    )
-    label = models.CharField(max_length=500, verbose_name='Texto do TODO')
-    is_original = models.BooleanField(
-        default=False,
-        verbose_name='TODO Original',
-        help_text='Se é um TODO original criado automaticamente (não pode ser removido)'
-    )
-    status = models.CharField(
-        max_length=20,
-        choices=CardTodoStatus.choices,
-        default=CardTodoStatus.PENDING,
-        verbose_name='Status'
-    )
-    comment = models.TextField(
-        blank=True,
-        null=True,
-        verbose_name='Comentário',
-        help_text='Comentário do TODO'
-    )
-    order = models.IntegerField(
-        default=0,
-        verbose_name='Ordem',
-        help_text='Ordem de exibição do TODO'
-    )
-    created_at = models.DateTimeField(auto_now_add=True, verbose_name='Data de Criação')
-    updated_at = models.DateTimeField(auto_now=True, verbose_name='Data de Atualização')
-
-    class Meta:
-        verbose_name = 'TODO do Card'
-        verbose_name_plural = 'TODOs dos Cards'
-        ordering = ['order', 'created_at']
-
-    def __str__(self):
-        return f"{self.card.nome} - {self.label}"
+# CardTodo e CardTodoStatus REMOVIDOS — sistema de subtarefas por card foi
+# substituído por UserNote/UserNoteTodo (notas pessoais estilo Google Keep),
+# definidos abaixo. CardTodo gerava muito ruído no banco e não era usado
+# efetivamente. Ver migration `drop_cardtodo_add_usernote` para o cleanup.
 
 
 class EventType(models.TextChoices):
@@ -772,3 +729,79 @@ class UserNotificationPreference(models.Model):
 
     def __str__(self):
         return f"Preferências de {self.user.username}"
+
+class UserNoteColor(models.TextChoices):
+    DEFAULT = 'default', 'Padrão'
+    RED = 'red', 'Vermelho'
+    ORANGE = 'orange', 'Laranja'
+    YELLOW = 'yellow', 'Amarelo'
+    GREEN = 'green', 'Verde'
+    TEAL = 'teal', 'Verde-água'
+    BLUE = 'blue', 'Azul'
+    PURPLE = 'purple', 'Roxo'
+    PINK = 'pink', 'Rosa'
+    GRAY = 'gray', 'Cinza'
+
+
+class UserNote(models.Model):
+    """Nota pessoal estilo Google Keep — privada por usuário.
+
+    Substitui o sistema antigo de CardTodo. Cada nota pode ter um título,
+    corpo de texto livre, cor de destaque, ser fixada, arquivada ou
+    conter checklist de itens (UserNoteTodo).
+    """
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='notes',
+        verbose_name='Usuário',
+    )
+    title = models.CharField(max_length=200, blank=True, verbose_name='Título')
+    body = models.TextField(blank=True, verbose_name='Conteúdo')
+    color = models.CharField(
+        max_length=20,
+        choices=UserNoteColor.choices,
+        default=UserNoteColor.DEFAULT,
+        verbose_name='Cor',
+    )
+    pinned = models.BooleanField(default=False, verbose_name='Fixada')
+    archived = models.BooleanField(default=False, verbose_name='Arquivada')
+    order = models.IntegerField(default=0, verbose_name='Ordem de exibição')
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name='Criado em')
+    updated_at = models.DateTimeField(auto_now=True, verbose_name='Atualizado em')
+
+    class Meta:
+        verbose_name = 'Nota'
+        verbose_name_plural = 'Notas'
+        ordering = ['-pinned', 'order', '-updated_at']
+        indexes = [
+            models.Index(fields=['user', 'archived', '-updated_at']),
+            models.Index(fields=['user', 'pinned', '-updated_at']),
+        ]
+
+    def __str__(self):
+        return f'{self.title or "(sem título)"} — {self.user.username}'
+
+
+class UserNoteTodo(models.Model):
+    """Item de checklist dentro de uma UserNote."""
+    note = models.ForeignKey(
+        UserNote,
+        on_delete=models.CASCADE,
+        related_name='todos',
+        verbose_name='Nota',
+    )
+    label = models.CharField(max_length=500, verbose_name='Texto')
+    done = models.BooleanField(default=False, verbose_name='Concluído')
+    order = models.IntegerField(default=0, verbose_name='Ordem')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'Item de nota'
+        verbose_name_plural = 'Itens de nota'
+        ordering = ['order', 'created_at']
+
+    def __str__(self):
+        return f'{self.label} ({"✓" if self.done else "○"})'
+

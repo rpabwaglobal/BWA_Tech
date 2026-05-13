@@ -1,3 +1,7 @@
+// Default label templates por área de atuação.
+// Usados como sugestões/itens iniciais no estimador de tempo (complexidade)
+// dentro do formulário de criação/edição de card. Não estão mais ligados ao
+// extinto modelo CardTodo — agora servem apenas como dados estáticos de UI.
 export type TodoItem = {
   id: string;
   label: string;

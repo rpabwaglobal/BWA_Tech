@@ -1,5 +1,4 @@
 import api from './api';
-import type { CardTodo } from './cardTodoService';
 
 export type ProjectDetail = {
   id: string;
@@ -60,7 +59,6 @@ export type Card = {
   complexidade_selected_development?: string | null;
   complexidade_custom_items?: Array<{ id: string; label: string; hours: number }>;
   card_comment?: string | null;
-  todos?: CardTodo[];
   events_count?: number;
   created_at?: string;
   updated_at?: string;

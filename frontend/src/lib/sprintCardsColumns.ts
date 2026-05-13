@@ -55,7 +55,6 @@ export const SPRINT_CARDS_COLUMN_DEFS: ColumnDefinition[] = [
   { id: 'card.complexidade_custom_items', label: 'Complexidade (custom_items)', group: 'card', getValue: ({ card }) => safeToString(card.complexidade_custom_items) },
   { id: 'card.card_comment', label: 'Card Comentário', group: 'card', getValue: ({ card }) => card.card_comment || '' },
   { id: 'card.events_count', label: 'Card Events Count', group: 'card', getValue: ({ card }) => card.events_count ?? '' },
-  { id: 'card.todos', label: 'Card Todos', group: 'card', getValue: ({ card }) => safeToString(card.todos) },
   { id: 'card.created_at', label: 'Card Criado em', group: 'card', getValue: ({ card }) => card.created_at },
   { id: 'card.updated_at', label: 'Card Atualizado em', group: 'card', getValue: ({ card }) => card.updated_at },
 

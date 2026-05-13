@@ -33,7 +33,6 @@ import { projectService } from '@/services/projectService';
 import { cardService, CARD_AREAS, CARD_TYPES, CARD_PRIORITIES, CARD_STATUSES } from '@/services/cardService';
 import { userService } from '@/services/userService';
 import { cardLogService } from '@/services/cardLogService';
-import { cardTodoService } from '@/services/cardTodoService';
 import { getTodosByArea } from '@/constants/cardTodos';
 import { CardLogsModal, CARD_TIMELINE_LAYOUT_RESERVE_PX } from '@/components/CardLogsModal';
 import type { Sprint } from '@/services/sprintService';
@@ -1533,27 +1532,7 @@ export default function SprintDetails() {
         }
       } else {
         const newCard = await cardService.create(dataToSend);
-        
-        // Criar TODOs automaticamente baseados na área do card
-        const todos = getTodosByArea(cardFormData.area);
-        if (todos.length > 0) {
-          try {
-            const todoPromises = todos.map((todo, index) =>
-              cardTodoService.create({
-                card: newCard.id,
-                label: todo.label,
-                is_original: true,
-                status: 'pending',
-                order: index,
-              })
-            );
-            await Promise.all(todoPromises);
-          } catch (error) {
-            console.error('Erro ao criar TODOs do card:', error);
-            // Não bloquear a criação do card se os TODOs falharem
-          }
-        }
-        
+
         // Adicionar o novo card à lista local sem recarregar tudo
         const cardWithUser = {
           ...newCard,

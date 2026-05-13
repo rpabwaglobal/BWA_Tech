@@ -9,7 +9,9 @@ from .models import (
     ProjectKanbanStageConfig,
     Card,
     CardStatus,
-    CardTodo,
+    # CardTodo removido — substituído por UserNote
+    UserNote,
+    UserNoteTodo,
     Event,
     CardLog,
     Notification,
@@ -169,14 +171,50 @@ class ProjectSerializer(serializers.ModelSerializer):
         read_only_fields = ['created_at', 'updated_at', 'data_criacao']
 
 
-class CardTodoSerializer(serializers.ModelSerializer):
-    status_display = serializers.CharField(source='get_status_display', read_only=True)
-    
+class UserNoteTodoSerializer(serializers.ModelSerializer):
     class Meta:
-        model = CardTodo
-        fields = ['id', 'card', 'label', 'is_original', 'status', 'status_display', 
-                 'comment', 'order', 'created_at', 'updated_at']
+        model = UserNoteTodo
+        fields = ['id', 'label', 'done', 'order', 'created_at', 'updated_at']
         read_only_fields = ['created_at', 'updated_at']
+
+
+class UserNoteSerializer(serializers.ModelSerializer):
+    todos = UserNoteTodoSerializer(many=True, required=False)
+
+    class Meta:
+        model = UserNote
+        fields = [
+            'id', 'title', 'body', 'color', 'pinned', 'archived', 'order',
+            'todos', 'created_at', 'updated_at',
+        ]
+        read_only_fields = ['created_at', 'updated_at']
+
+    def create(self, validated_data):
+        todos_data = validated_data.pop('todos', [])
+        user = self.context['request'].user
+        note = UserNote.objects.create(user=user, **validated_data)
+        for idx, todo in enumerate(todos_data):
+            UserNoteTodo.objects.create(note=note, order=todo.get('order', idx), **{
+                k: v for k, v in todo.items() if k != 'order'
+            })
+        return note
+
+    def update(self, instance, validated_data):
+        todos_data = validated_data.pop('todos', None)
+        for attr, value in validated_data.items():
+            setattr(instance, attr, value)
+        instance.save()
+        if todos_data is not None:
+            # Replace strategy: deleta os existentes e recria com os enviados.
+            # Frontend envia a lista completa em cada PATCH com `todos`.
+            instance.todos.all().delete()
+            for idx, todo in enumerate(todos_data):
+                UserNoteTodo.objects.create(
+                    note=instance,
+                    order=todo.get('order', idx),
+                    **{k: v for k, v in todo.items() if k != 'order'},
+                )
+        return instance
 
 
 class CardSerializer(serializers.ModelSerializer):
@@ -185,7 +223,6 @@ class CardSerializer(serializers.ModelSerializer):
     responsavel_profile_picture_url = serializers.SerializerMethodField()
     criado_por_name = serializers.SerializerMethodField()
     criado_por_profile_picture_url = serializers.SerializerMethodField()
-    todos = CardTodoSerializer(many=True, read_only=True)
     
     def get_responsavel_name(self, obj):
         return format_user_name(obj.responsavel)
@@ -425,11 +462,10 @@ class CardSerializer(serializers.ModelSerializer):
             logger = logging.getLogger(__name__)
             logger.error(f'Erro ao criar CardLog no serializer para card {instance.id}: {str(e)}', exc_info=True)
         
-        # Criar TODOs baseados na área do card
-        try:
-            from apps.projects.models import CardTodo, CardTodoStatus
-            
-            # Mapeamento de área para TODOs (baseado no frontend)
+        # Bloco antigo de auto-criação de CardTodo removido — o sistema de
+        # subtarefas por card foi descontinuado em favor de UserNote
+        # (notas pessoais estilo Google Keep, geridas pela página /meus-afazeres).
+        if False:
             todos_by_area = {
                 'backend': [
                     {'id': 'modelagem_banco', 'label': 'Modelagem Do Banco De Dados (Models)'},
@@ -546,22 +582,9 @@ class CardSerializer(serializers.ModelSerializer):
                     should_create = todo_id in selected_items or todo_id == selected_development
                 
                 if should_create:
-                    # Verificar se já existe para evitar duplicatas
-                    if not CardTodo.objects.filter(card=instance, label=todo_label, is_original=True).exists():
-                        CardTodo.objects.create(
-                            card=instance,
-                            label=todo_label,
-                            is_original=True,
-                            status=CardTodoStatus.PENDING,
-                            order=order,
-                        )
                     order += 1
-                    
-        except Exception as e:
-            import logging
-            logger = logging.getLogger(__name__)
-            logger.error(f'Erro ao criar TODOs para card {instance.id}: {str(e)}', exc_info=True)
-        
+        # fim do bloco descontinuado (CardTodo removido)
+
         return instance
     
     def update(self, instance, validated_data):

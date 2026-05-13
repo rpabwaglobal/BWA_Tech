@@ -19,7 +19,7 @@ from .models import (
     ProjectKanbanStageConfig,
     Card,
     CardStatus,
-    CardTodo,
+    UserNote,
     Event,
     CardLog,
     Notification,
@@ -31,7 +31,7 @@ from .models import (
 )
 from .services import finalizar_sprint_replicacao
 from .serializers import (
-    SprintSerializer, ProjectSerializer, CardSerializer, CardTodoSerializer, EventSerializer,
+    SprintSerializer, ProjectSerializer, CardSerializer, UserNoteSerializer, EventSerializer,
     CardLogSerializer, NotificationSerializer, NotificationPreferenceSerializer,
     WeeklyPrioritySerializer, WeeklyPriorityConfigSerializer,
     CardDueDateChangeRequestSerializer,
@@ -597,48 +597,19 @@ class CardViewSet(viewsets.ModelViewSet):
         return Response(result)
 
 
-class CardTodoViewSet(viewsets.ModelViewSet):
-    queryset = CardTodo.objects.all()
-    serializer_class = CardTodoSerializer
+class UserNoteViewSet(viewsets.ModelViewSet):
+    """API CRUD para notas pessoais do usuário autenticado (substituto do
+    sistema antigo de CardTodo). Cada usuário só vê/edita suas próprias notas."""
+    serializer_class = UserNoteSerializer
     permission_classes = [IsAuthenticated]
     filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
-    filterset_fields = ['card', 'status', 'is_original']
-    ordering_fields = ['order', 'created_at']
-    ordering = ['order', 'created_at']
-    
-    def perform_update(self, serializer):
-        """Passar usuário da requisição para o signal e salvar dados anteriores"""
-        instance = serializer.instance
-        # Salvar dados anteriores antes de atualizar (para o signal)
-        if instance.pk:
-            instance._previous_status = instance.status
-            instance._previous_comment = instance.comment
-        instance = serializer.save()
-        # O signal já será disparado automaticamente pelo post_save
-    
-    @action(detail=True, methods=['patch'], url_path='update-status')
-    def update_status(self, request, pk=None):
-        """Atualizar apenas o status de um TODO"""
-        todo = self.get_object()
-        new_status = request.data.get('status')
-        
-        if new_status not in ['pending', 'completed', 'blocked', 'warning']:
-            from rest_framework.exceptions import ValidationError
-            raise ValidationError({'status': 'Status inválido. Deve ser: pending, completed, blocked ou warning'})
-        
-        # Salvar dados anteriores antes de atualizar (para o signal)
-        old_status = todo.status
-        old_comment = todo.comment
-        todo.status = new_status
-        
-        # Atribuir dados anteriores diretamente para garantir que o signal tenha acesso
-        todo._previous_status = old_status
-        todo._previous_comment = old_comment
-        
-        todo.save()  # Isso disparará o signal post_save
-        
-        serializer = self.get_serializer(todo)
-        return Response(serializer.data)
+    filterset_fields = ['archived', 'pinned', 'color']
+    ordering_fields = ['order', 'updated_at', 'created_at']
+    ordering = ['-pinned', 'order', '-updated_at']
+    pagination_class = None  # listagem completa — notas pessoais costumam ser poucas
+
+    def get_queryset(self):
+        return UserNote.objects.filter(user=self.request.user).prefetch_related('todos')
 
 
 class EventViewSet(viewsets.ModelViewSet):
