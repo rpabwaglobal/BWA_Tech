@@ -731,24 +731,21 @@ class UserNotificationPreference(models.Model):
         return f"Preferências de {self.user.username}"
 
 class UserNoteColor(models.TextChoices):
+    """Paleta inspirada em papéis Color Plus / Sirio Color."""
     DEFAULT = 'default', 'Padrão'
-    RED = 'red', 'Vermelho'
-    ORANGE = 'orange', 'Laranja'
-    YELLOW = 'yellow', 'Amarelo'
-    GREEN = 'green', 'Verde'
-    TEAL = 'teal', 'Verde-água'
-    BLUE = 'blue', 'Azul'
-    PURPLE = 'purple', 'Roxo'
-    PINK = 'pink', 'Rosa'
-    GRAY = 'gray', 'Cinza'
+    LILAS = 'lilas', 'Lilás (San Francisco)'
+    ROSA = 'rosa', 'Rosa (Verona)'
+    VERDE = 'verde', 'Verde (Tahiti)'
+    AZUL = 'azul', 'Azul (Celeste)'
+    BEGE = 'bege', 'Bege (Paglierino)'
 
 
 class UserNote(models.Model):
     """Nota pessoal estilo Google Keep — privada por usuário.
 
-    Substitui o sistema antigo de CardTodo. Cada nota pode ter um título,
-    corpo de texto livre, cor de destaque, ser fixada, arquivada ou
-    conter checklist de itens (UserNoteTodo).
+    O conteúdo é uma sequência ordenada de `UserNoteItem` (blocos), permitindo
+    intercalar parágrafos de texto e itens de checklist livremente. Atributos
+    de nível-nota (título, cor, fixar, arquivar) ficam aqui.
     """
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL,
@@ -757,7 +754,6 @@ class UserNote(models.Model):
         verbose_name='Usuário',
     )
     title = models.CharField(max_length=200, blank=True, verbose_name='Título')
-    body = models.TextField(blank=True, verbose_name='Conteúdo')
     color = models.CharField(
         max_length=20,
         choices=UserNoteColor.choices,
@@ -783,16 +779,29 @@ class UserNote(models.Model):
         return f'{self.title or "(sem título)"} — {self.user.username}'
 
 
-class UserNoteTodo(models.Model):
-    """Item de checklist dentro de uma UserNote."""
+class UserNoteItemKind(models.TextChoices):
+    TEXT = 'text', 'Texto'
+    TODO = 'todo', 'Item de lista'
+
+
+class UserNoteItem(models.Model):
+    """Bloco dentro de uma UserNote. Pode ser um parágrafo de texto ou um
+    item de checklist. A ordem entre blocos é livre — o frontend pode misturar
+    text/todo na ordem desejada."""
     note = models.ForeignKey(
         UserNote,
         on_delete=models.CASCADE,
-        related_name='todos',
+        related_name='items',
         verbose_name='Nota',
     )
-    label = models.CharField(max_length=500, verbose_name='Texto')
-    done = models.BooleanField(default=False, verbose_name='Concluído')
+    kind = models.CharField(
+        max_length=10,
+        choices=UserNoteItemKind.choices,
+        default=UserNoteItemKind.TEXT,
+        verbose_name='Tipo',
+    )
+    text = models.TextField(blank=True, verbose_name='Texto')
+    done = models.BooleanField(default=False, verbose_name='Concluído (só p/ kind=todo)')
     order = models.IntegerField(default=0, verbose_name='Ordem')
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -801,9 +810,14 @@ class UserNoteTodo(models.Model):
         verbose_name = 'Item de nota'
         verbose_name_plural = 'Itens de nota'
         ordering = ['order', 'created_at']
+        indexes = [
+            models.Index(fields=['note', 'order']),
+        ]
 
     def __str__(self):
-        return f'{self.label} ({"✓" if self.done else "○"})'
+        if self.kind == UserNoteItemKind.TODO:
+            return f'[{"x" if self.done else " "}] {self.text[:40]}'
+        return self.text[:60]
 
 
 class CardPin(models.Model):

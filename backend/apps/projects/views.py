@@ -611,7 +611,7 @@ class UserNoteViewSet(viewsets.ModelViewSet):
     pagination_class = None  # listagem completa — notas pessoais costumam ser poucas
 
     def get_queryset(self):
-        return UserNote.objects.filter(user=self.request.user).prefetch_related('todos')
+        return UserNote.objects.filter(user=self.request.user).prefetch_related('items')
 
 
 class CardPinViewSet(viewsets.ModelViewSet):

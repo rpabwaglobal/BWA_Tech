@@ -11,7 +11,8 @@ from .models import (
     CardStatus,
     # CardTodo removido — substituído por UserNote
     UserNote,
-    UserNoteTodo,
+    UserNoteItem,
+    UserNoteItemKind,
     CardPin,
     Event,
     CardLog,
@@ -173,49 +174,52 @@ class ProjectSerializer(serializers.ModelSerializer):
         read_only_fields = ['created_at', 'updated_at', 'data_criacao']
 
 
-class UserNoteTodoSerializer(serializers.ModelSerializer):
+class UserNoteItemSerializer(serializers.ModelSerializer):
     class Meta:
-        model = UserNoteTodo
-        fields = ['id', 'label', 'done', 'order', 'created_at', 'updated_at']
-        read_only_fields = ['created_at', 'updated_at']
+        model = UserNoteItem
+        fields = ['id', 'kind', 'text', 'done', 'order', 'created_at', 'updated_at']
+        # `id` precisa ser read-only — o backend usa estratégia de replace (delete + create)
+        # nos updates aninhados, então ids vindos do cliente seriam ignorados ou
+        # piores: causariam IntegrityError ao tentar inserir com PK já existente.
+        read_only_fields = ['id', 'created_at', 'updated_at']
 
 
 class UserNoteSerializer(serializers.ModelSerializer):
-    todos = UserNoteTodoSerializer(many=True, required=False)
+    items = UserNoteItemSerializer(many=True, required=False)
 
     class Meta:
         model = UserNote
         fields = [
-            'id', 'title', 'body', 'color', 'pinned', 'archived', 'order',
-            'todos', 'created_at', 'updated_at',
+            'id', 'title', 'color', 'pinned', 'archived', 'order',
+            'items', 'created_at', 'updated_at',
         ]
         read_only_fields = ['created_at', 'updated_at']
 
+    def _create_items(self, note, items_data):
+        for idx, item in enumerate(items_data):
+            payload = {k: v for k, v in item.items() if k != 'order'}
+            # `done` só faz sentido pra todos — zero para texto evita confusão no admin.
+            if payload.get('kind') != UserNoteItemKind.TODO:
+                payload['done'] = False
+            UserNoteItem.objects.create(note=note, order=item.get('order', idx), **payload)
+
     def create(self, validated_data):
-        todos_data = validated_data.pop('todos', [])
+        items_data = validated_data.pop('items', [])
         user = self.context['request'].user
         note = UserNote.objects.create(user=user, **validated_data)
-        for idx, todo in enumerate(todos_data):
-            UserNoteTodo.objects.create(note=note, order=todo.get('order', idx), **{
-                k: v for k, v in todo.items() if k != 'order'
-            })
+        self._create_items(note, items_data)
         return note
 
     def update(self, instance, validated_data):
-        todos_data = validated_data.pop('todos', None)
+        items_data = validated_data.pop('items', None)
         for attr, value in validated_data.items():
             setattr(instance, attr, value)
         instance.save()
-        if todos_data is not None:
-            # Replace strategy: deleta os existentes e recria com os enviados.
-            # Frontend envia a lista completa em cada PATCH com `todos`.
-            instance.todos.all().delete()
-            for idx, todo in enumerate(todos_data):
-                UserNoteTodo.objects.create(
-                    note=instance,
-                    order=todo.get('order', idx),
-                    **{k: v for k, v in todo.items() if k != 'order'},
-                )
+        if items_data is not None:
+            # Replace strategy: deleta todos os blocos atuais e recria com os
+            # enviados. O frontend manda a lista completa em cada PATCH com `items`.
+            instance.items.all().delete()
+            self._create_items(instance, items_data)
         return instance
 
 
@@ -639,7 +643,7 @@ class CardSerializer(serializers.ModelSerializer):
                  'status', 'status_display', 'prioridade', 'prioridade_display',
                  'data_inicio', 'data_fim', 'finalizado_em',
                  'complexidade_selected_items', 'complexidade_selected_development', 'complexidade_custom_items',
-                 'card_comment', 'links', 'todos', 'events_count', 'created_at', 'updated_at']
+                 'card_comment', 'links', 'events_count', 'created_at', 'updated_at']
         read_only_fields = ['created_at', 'updated_at', 'criado_por', 'finalizado_em']
 
 

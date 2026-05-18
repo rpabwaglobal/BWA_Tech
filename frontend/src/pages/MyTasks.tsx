@@ -30,7 +30,8 @@ import {
   userNoteService,
   type UserNote,
   type UserNoteColor,
-  type UserNoteTodo,
+  type UserNoteItem,
+  type UserNoteItemKind,
 } from '@/services/userNoteService';
 import { cardPinService, type CardPin } from '@/services/cardPinService';
 import { KanbanCardPreview } from '@/components/KanbanCardPreview';
@@ -39,43 +40,96 @@ import { cn } from '@/lib/utils';
 
 type NoteFilter = 'active' | 'archived';
 
-type DraftTodo = UserNoteTodo & { _key: string };
+// Cada bloco do draft tem um _key estável p/ React; o id do backend (quando
+// existe) é descartado já que a estratégia de update é replace-all no servidor.
+type DraftItem = UserNoteItem & { _key: string };
 
 type DraftNote = {
   id?: number;
   title: string;
-  body: string;
   color: UserNoteColor;
   pinned: boolean;
   archived: boolean;
-  todos: DraftTodo[];
+  items: DraftItem[];
 };
 
-const COLOR_OPTIONS: Array<{ value: UserNoteColor; label: string; swatchClass: string }> = [
-  { value: 'default', label: 'Padrão', swatchClass: 'bg-background border-border' },
-  { value: 'red', label: 'Vermelho', swatchClass: 'bg-rose-200 dark:bg-rose-900' },
-  { value: 'orange', label: 'Laranja', swatchClass: 'bg-orange-200 dark:bg-orange-900' },
-  { value: 'yellow', label: 'Amarelo', swatchClass: 'bg-amber-200 dark:bg-amber-900' },
-  { value: 'green', label: 'Verde', swatchClass: 'bg-emerald-200 dark:bg-emerald-900' },
-  { value: 'teal', label: 'Verde-água', swatchClass: 'bg-teal-200 dark:bg-teal-900' },
-  { value: 'blue', label: 'Azul', swatchClass: 'bg-sky-200 dark:bg-sky-900' },
-  { value: 'purple', label: 'Roxo', swatchClass: 'bg-violet-200 dark:bg-violet-900' },
-  { value: 'pink', label: 'Rosa', swatchClass: 'bg-pink-200 dark:bg-pink-900' },
-  { value: 'gray', label: 'Cinza', swatchClass: 'bg-slate-300 dark:bg-slate-700' },
+// Paleta inspirada em 5 papéis Color Plus / Sirio Color.
+// Hex light = aproximação visual do papel. Hex dark = versão escurecida do
+// mesmo matiz. Aplicado via inline style para evitar problemas de purge/JIT
+// com valores arbitrários no Tailwind.
+type ColorSpec = {
+  bg: string;
+  bgDark: string;
+  border: string;
+  borderDark: string;
+};
+
+/** Breakpoints (px do viewport → nº de colunas) usados pelo Masonry de notas
+ * e de cards fixados. Espelha os antigos columns-1 / sm:columns-2 / lg:3 / xl:4. */
+const NOTES_MASONRY_BREAKPOINTS = { default: 1, 640: 2, 1024: 3, 1280: 4 };
+
+/** Limites de tamanho. O backend tem só title.max_length=200; o conteúdo
+ * (items.text) é TextField sem limite — limitamos no frontend pra prevenir
+ * abuso. Por item: 10k caracteres parece confortável tanto pra texto livre
+ * quanto pra lista. */
+const NOTE_TITLE_MAX = 200;
+const NOTE_ITEM_TEXT_MAX = 10_000;
+
+const COLOR_PALETTE: Record<UserNoteColor, ColorSpec | null> = {
+  // null = usa as cores do tema (var(--color-card), var(--color-border))
+  default: null,
+  lilas: { bg: '#D7C8E8', bgDark: '#3A2D52', border: '#C0AEDB', borderDark: '#4F4271' },
+  rosa:  { bg: '#F1CDD9', bgDark: '#4A2A38', border: '#E3B3C3', borderDark: '#693D50' },
+  verde: { bg: '#C9DDA8', bgDark: '#2C3A1F', border: '#B4CD89', borderDark: '#3F5230' },
+  azul:  { bg: '#BFD7E8', bgDark: '#1F3349', border: '#A5C2D9', borderDark: '#324B68' },
+  bege:  { bg: '#F1E5A8', bgDark: '#3A3119', border: '#E0D08A', borderDark: '#544728' },
+};
+
+const COLOR_OPTIONS: Array<{ value: UserNoteColor; label: string }> = [
+  { value: 'default', label: 'Padrão' },
+  { value: 'lilas', label: 'Lilás (San Francisco)' },
+  { value: 'rosa', label: 'Rosa (Verona)' },
+  { value: 'verde', label: 'Verde (Tahiti)' },
+  { value: 'azul', label: 'Azul (Celeste)' },
+  { value: 'bege', label: 'Bege (Paglierino)' },
 ];
 
-const NOTE_COLOR_CLASSES: Record<UserNoteColor, string> = {
-  default: 'bg-card border-border',
-  red: 'bg-rose-50 dark:bg-rose-950/40 border-rose-200/70 dark:border-rose-900/70',
-  orange: 'bg-orange-50 dark:bg-orange-950/40 border-orange-200/70 dark:border-orange-900/70',
-  yellow: 'bg-amber-50 dark:bg-amber-950/40 border-amber-200/70 dark:border-amber-900/70',
-  green: 'bg-emerald-50 dark:bg-emerald-950/40 border-emerald-200/70 dark:border-emerald-900/70',
-  teal: 'bg-teal-50 dark:bg-teal-950/40 border-teal-200/70 dark:border-teal-900/70',
-  blue: 'bg-sky-50 dark:bg-sky-950/40 border-sky-200/70 dark:border-sky-900/70',
-  purple: 'bg-violet-50 dark:bg-violet-950/40 border-violet-200/70 dark:border-violet-900/70',
-  pink: 'bg-pink-50 dark:bg-pink-950/40 border-pink-200/70 dark:border-pink-900/70',
-  gray: 'bg-slate-100 dark:bg-slate-900/60 border-slate-200/70 dark:border-slate-800/70',
-};
+/** Hook leve para detectar dark mode pela classe no <html>. */
+function useIsDark(): boolean {
+  const [isDark, setIsDark] = useState(() =>
+    typeof document !== 'undefined' && document.documentElement.classList.contains('dark'),
+  );
+  useEffect(() => {
+    const root = document.documentElement;
+    const obs = new MutationObserver(() => setIsDark(root.classList.contains('dark')));
+    obs.observe(root, { attributes: true, attributeFilter: ['class'] });
+    return () => obs.disconnect();
+  }, []);
+  return isDark;
+}
+
+function getNoteStyle(color: UserNoteColor, isDark: boolean): React.CSSProperties {
+  const spec = COLOR_PALETTE[color];
+  if (!spec) return {};
+  return {
+    backgroundColor: isDark ? spec.bgDark : spec.bg,
+    borderColor: isDark ? spec.borderDark : spec.border,
+  };
+}
+
+function getSwatchStyle(color: UserNoteColor, isDark: boolean): React.CSSProperties {
+  const spec = COLOR_PALETTE[color];
+  if (!spec) {
+    // Default: usa fundo do tema com checkerboard suave para indicar "sem cor"
+    return {
+      backgroundImage:
+        'linear-gradient(135deg, transparent 45%, currentColor 45% 55%, transparent 55%)',
+      backgroundColor: 'transparent',
+      color: isDark ? '#94a3b8' : '#94a3b8',
+    };
+  }
+  return { backgroundColor: isDark ? spec.bgDark : spec.bg };
+}
 
 const newKey = () => `tmp-${Math.random().toString(36).slice(2, 10)}`;
 
@@ -83,43 +137,46 @@ function toDraft(note: UserNote): DraftNote {
   return {
     id: note.id,
     title: note.title,
-    body: note.body,
     color: note.color,
     pinned: note.pinned,
     archived: note.archived,
-    todos: (note.todos || [])
+    items: (note.items || [])
       .slice()
       .sort((a, b) => a.order - b.order)
-      .map((t) => ({ ...t, _key: t.id != null ? `id-${t.id}` : newKey() })),
+      .map((it) => ({ ...it, _key: it.id != null ? `id-${it.id}` : newKey() })),
   };
 }
 
 function emptyDraft(): DraftNote {
   return {
     title: '',
-    body: '',
     color: 'default',
     pinned: false,
     archived: false,
-    todos: [],
+    // Começa com um único bloco de texto vazio para o usuário digitar logo de cara.
+    items: [{ _key: newKey(), kind: 'text', text: '', done: false, order: 0 }],
   };
 }
 
 function isDraftEmpty(draft: DraftNote): boolean {
-  return !draft.title.trim() && !draft.body.trim() && draft.todos.every((t) => !t.label.trim());
+  return !draft.title.trim() && draft.items.every((it) => !it.text.trim());
 }
 
 function draftToPayload(draft: DraftNote) {
-  const cleanTodos = draft.todos
-    .filter((t) => t.label.trim().length > 0)
-    .map((t, index) => ({ label: t.label.trim(), done: t.done, order: index }));
+  const cleanItems = draft.items
+    .filter((it) => it.text.trim().length > 0)
+    .map((it, index) => ({
+      kind: it.kind,
+      text: it.text.trim(),
+      done: it.kind === 'todo' ? it.done : false,
+      order: index,
+    }));
   return {
     title: draft.title.trim(),
-    body: draft.body.trim(),
     color: draft.color,
     pinned: draft.pinned,
     archived: draft.archived,
-    todos: cleanTodos,
+    items: cleanItems,
   };
 }
 
@@ -132,6 +189,7 @@ function ColorPicker({
 }) {
   const [open, setOpen] = useState(false);
   const wrapperRef = useRef<HTMLDivElement>(null);
+  const isDark = useIsDark();
 
   useEffect(() => {
     if (!open) return;
@@ -157,223 +215,215 @@ function ColorPicker({
         <Palette className="h-4 w-4" />
       </Button>
       {open && (
-        <div className="absolute bottom-full left-0 mb-2 z-50 grid grid-cols-5 gap-1.5 rounded-lg border border-border bg-popover p-2 shadow-md">
-          {COLOR_OPTIONS.map((opt) => (
-            <button
-              key={opt.value}
-              type="button"
-              title={opt.label}
-              onClick={() => {
-                onChange(opt.value);
-                setOpen(false);
-              }}
-              className={cn(
-                'h-7 w-7 rounded-full border-2 transition-transform hover:scale-110',
-                opt.swatchClass,
-                value === opt.value ? 'border-primary ring-2 ring-primary/30' : 'border-border',
-              )}
-            />
-          ))}
+        <div
+          className="absolute bottom-full left-0 mb-2 z-50 flex items-center gap-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-popover)] p-2 shadow-md"
+        >
+          {COLOR_OPTIONS.map((opt) => {
+            const isSelected = value === opt.value;
+            return (
+              <button
+                key={opt.value}
+                type="button"
+                title={opt.label}
+                onClick={() => {
+                  onChange(opt.value);
+                  setOpen(false);
+                }}
+                style={getSwatchStyle(opt.value, isDark)}
+                className={cn(
+                  'h-7 w-7 shrink-0 rounded-full border-2 transition-transform hover:scale-110',
+                  isSelected
+                    ? 'border-[var(--color-primary)] ring-2 ring-[var(--color-primary)]/30'
+                    : 'border-[var(--color-border)]',
+                )}
+              />
+            );
+          })}
         </div>
       )}
     </div>
   );
 }
 
-function TodoLine({
-  todo,
+/** Ajusta a altura do textarea pra caber todo o conteúdo (sem scroll interno). */
+function autoResize(el: HTMLTextAreaElement | null) {
+  if (!el) return;
+  el.style.height = 'auto';
+  el.style.height = `${el.scrollHeight}px`;
+}
+
+/** Renderiza um bloco do conteúdo da nota — texto ou checklist — no editor.
+ * Permite converter entre os dois tipos via botão hover. */
+function ItemBlock({
+  item,
   onChange,
   onRemove,
+  onConvert,
   autoFocus,
 }: {
-  todo: DraftTodo;
-  onChange: (next: DraftTodo) => void;
+  item: DraftItem;
+  onChange: (next: DraftItem) => void;
   onRemove: () => void;
+  onConvert: (next: UserNoteItemKind) => void;
   autoFocus?: boolean;
 }) {
-  const inputRef = useRef<HTMLInputElement>(null);
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+
   useEffect(() => {
-    if (autoFocus) inputRef.current?.focus();
-  }, [autoFocus]);
+    if (!autoFocus) return;
+    if (item.kind === 'todo') inputRef.current?.focus();
+    else textareaRef.current?.focus();
+  }, [autoFocus, item.kind]);
+
+  // Reajusta a altura sempre que o texto mudar OU o componente montar com
+  // valor inicial (caso da nota carregada do servidor com texto longo).
+  useEffect(() => {
+    if (item.kind === 'text') autoResize(textareaRef.current);
+  }, [item.kind, item.text]);
 
   return (
-    <div className="group flex items-center gap-2">
-      <input
-        type="checkbox"
-        checked={todo.done}
-        onChange={(e) => onChange({ ...todo, done: e.target.checked })}
-        className="h-4 w-4 shrink-0 cursor-pointer rounded border-border accent-primary"
-      />
-      <Input
-        ref={inputRef}
-        value={todo.label}
-        onChange={(e) => onChange({ ...todo, label: e.target.value })}
-        placeholder="Item da lista"
-        className={cn(
-          'h-7 border-0 bg-transparent px-1 text-sm shadow-none focus-visible:ring-0 focus-visible:ring-offset-0',
-          todo.done && 'line-through text-muted-foreground',
+    <div className="group flex items-start gap-2">
+      {item.kind === 'todo' ? (
+        <input
+          type="checkbox"
+          checked={item.done}
+          onChange={(e) => onChange({ ...item, done: e.target.checked })}
+          className="mt-1.5 h-4 w-4 shrink-0 cursor-pointer rounded border-border accent-primary"
+        />
+      ) : (
+        // Bolinha "marcador" pra alinhar visualmente com checkbox; clica pra converter pra todo
+        <button
+          type="button"
+          onClick={() => onConvert('todo')}
+          title="Converter em item de lista"
+          className="mt-1.5 h-4 w-4 shrink-0 rounded-sm border border-dashed border-[var(--color-muted-foreground)]/40 opacity-0 transition-opacity group-hover:opacity-100"
+        />
+      )}
+      {item.kind === 'todo' ? (
+        <Input
+          ref={inputRef}
+          value={item.text}
+          onChange={(e) => onChange({ ...item, text: e.target.value })}
+          placeholder="Item da lista"
+          maxLength={NOTE_ITEM_TEXT_MAX}
+          className={cn(
+            'h-auto min-h-[28px] border-0 bg-transparent px-1 py-0.5 text-sm shadow-none focus-visible:ring-0 focus-visible:ring-offset-0',
+            item.done && 'line-through text-muted-foreground',
+          )}
+        />
+      ) : (
+        <Textarea
+          ref={textareaRef}
+          value={item.text}
+          onChange={(e) => onChange({ ...item, text: e.target.value })}
+          onInput={(e) => autoResize(e.currentTarget)}
+          placeholder="Texto..."
+          maxLength={NOTE_ITEM_TEXT_MAX}
+          rows={1}
+          className="min-h-[28px] resize-none overflow-hidden border-0 bg-transparent px-1 py-0.5 text-sm shadow-none focus-visible:ring-0 focus-visible:ring-offset-0"
+        />
+      )}
+      <div className="flex shrink-0 items-center opacity-0 transition-opacity group-hover:opacity-100">
+        {item.kind === 'todo' && (
+          <button
+            type="button"
+            onClick={() => onConvert('text')}
+            title="Converter em texto"
+            className="rounded p-0.5 text-muted-foreground hover:text-foreground"
+          >
+            <span className="text-xs">¶</span>
+          </button>
         )}
-      />
-      <button
-        type="button"
-        onClick={onRemove}
-        className="opacity-0 transition-opacity group-hover:opacity-100"
-        title="Remover item"
-      >
-        <X className="h-4 w-4 text-muted-foreground hover:text-foreground" />
-      </button>
+        <button
+          type="button"
+          onClick={onRemove}
+          title="Remover bloco"
+          className="rounded p-0.5 text-muted-foreground hover:text-foreground"
+        >
+          <X className="h-4 w-4" />
+        </button>
+      </div>
     </div>
   );
 }
 
-function NoteComposer({
-  onCreate,
-  busy,
-}: {
-  onCreate: (draft: DraftNote) => Promise<void>;
-  busy: boolean;
-}) {
-  const [expanded, setExpanded] = useState(false);
-  const [draft, setDraft] = useState<DraftNote>(emptyDraft());
-  const [showTodos, setShowTodos] = useState(false);
-  const wrapperRef = useRef<HTMLDivElement>(null);
 
-  const close = useCallback(async () => {
-    setExpanded(false);
-    setShowTodos(false);
-    if (!isDraftEmpty(draft)) {
-      await onCreate(draft);
+/**
+ * Layout masonry estilo Google Keep: N colunas verticais, cada card vai pra
+ * próxima coluna em round-robin. Diferente de CSS multi-column (que tenta
+ * balancear alturas e cria gaps imprevisíveis), todas as colunas começam no
+ * topo e cada uma empilha seus cards com gap constante.
+ */
+function useColumnCount(breakpoints: { default: number; [width: number]: number }): number {
+  const sortedKeys = useMemo(
+    () =>
+      Object.keys(breakpoints)
+        .filter((k) => k !== 'default')
+        .map(Number)
+        .sort((a, b) => b - a),
+    [breakpoints],
+  );
+  const compute = useCallback(() => {
+    if (typeof window === 'undefined') return breakpoints.default;
+    const w = window.innerWidth;
+    for (const bp of sortedKeys) {
+      if (w >= bp) return breakpoints[bp];
     }
-    setDraft(emptyDraft());
-  }, [draft, onCreate]);
-
+    return breakpoints.default;
+  }, [breakpoints, sortedKeys]);
+  const [cols, setCols] = useState<number>(compute);
   useEffect(() => {
-    if (!expanded) return;
-    const handleClickOutside = (e: MouseEvent) => {
-      if (wrapperRef.current && !wrapperRef.current.contains(e.target as Node)) {
-        void close();
-      }
-    };
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, [expanded, close]);
+    const handler = () => setCols(compute());
+    window.addEventListener('resize', handler);
+    return () => window.removeEventListener('resize', handler);
+  }, [compute]);
+  return cols;
+}
 
-  const addTodo = () => {
-    setDraft((prev) => ({
-      ...prev,
-      todos: [...prev.todos, { _key: newKey(), label: '', done: false, order: prev.todos.length }],
-    }));
-  };
-
+function Masonry({
+  children,
+  breakpoints,
+  gap = '12px',
+}: {
+  children: React.ReactNode[];
+  breakpoints: { default: number; [width: number]: number };
+  gap?: string;
+}) {
+  const cols = useColumnCount(breakpoints);
+  const columns = useMemo(() => {
+    const arr: React.ReactNode[][] = Array.from({ length: cols }, () => []);
+    children.forEach((child, i) => arr[i % cols].push(child));
+    return arr;
+  }, [children, cols]);
   return (
-    <div
-      ref={wrapperRef}
+    <div className="flex w-full items-start" style={{ gap }}>
+      {columns.map((col, i) => (
+        <div key={i} className="flex flex-1 min-w-0 flex-col" style={{ gap }}>
+          {col}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function CreateNoteCard({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
       className={cn(
-        'mx-auto w-full max-w-xl rounded-lg border shadow-sm transition-shadow',
-        NOTE_COLOR_CLASSES[draft.color],
-        expanded ? 'shadow-md' : '',
+        'group w-full rounded-lg border-2 border-dashed border-[var(--color-border)]',
+        'flex flex-col items-center justify-center gap-2 px-3 py-8',
+        'text-[var(--color-muted-foreground)] transition-colors',
+        'hover:border-[var(--color-primary)]/60 hover:text-[var(--color-primary)] hover:bg-[var(--color-primary)]/5',
       )}
     >
-      {!expanded ? (
-        <button
-          type="button"
-          onClick={() => setExpanded(true)}
-          className="flex w-full items-center gap-3 px-4 py-3 text-left text-sm text-muted-foreground"
-        >
-          <Plus className="h-4 w-4" />
-          <span>Criar uma anotação...</span>
-        </button>
-      ) : (
-        <div className="p-3 space-y-2">
-          <Input
-            value={draft.title}
-            onChange={(e) => setDraft((prev) => ({ ...prev, title: e.target.value }))}
-            placeholder="Título"
-            className="h-8 border-0 bg-transparent px-1 text-base font-medium shadow-none focus-visible:ring-0 focus-visible:ring-offset-0"
-            autoFocus
-          />
-          {!showTodos && (
-            <Textarea
-              value={draft.body}
-              onChange={(e) => setDraft((prev) => ({ ...prev, body: e.target.value }))}
-              placeholder="Criar uma anotação..."
-              className="min-h-[60px] border-0 bg-transparent px-1 text-sm shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 resize-none"
-            />
-          )}
-          {showTodos && (
-            <div className="space-y-1">
-              {draft.todos.map((todo, idx) => (
-                <TodoLine
-                  key={todo._key}
-                  todo={todo}
-                  autoFocus={idx === draft.todos.length - 1 && !todo.label}
-                  onChange={(next) =>
-                    setDraft((prev) => ({
-                      ...prev,
-                      todos: prev.todos.map((t) => (t._key === todo._key ? next : t)),
-                    }))
-                  }
-                  onRemove={() =>
-                    setDraft((prev) => ({
-                      ...prev,
-                      todos: prev.todos.filter((t) => t._key !== todo._key),
-                    }))
-                  }
-                />
-              ))}
-              <button
-                type="button"
-                onClick={addTodo}
-                className="flex items-center gap-2 px-1 py-1 text-xs text-muted-foreground hover:text-foreground"
-              >
-                <Plus className="h-3.5 w-3.5" />
-                Adicionar item
-              </button>
-            </div>
-          )}
-          <div className="flex items-center justify-between pt-1">
-            <div className="flex items-center gap-1">
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                className="h-8 w-8 p-0"
-                title={showTodos ? 'Voltar para texto' : 'Lista de itens'}
-                onClick={() => {
-                  if (!showTodos && draft.todos.length === 0) addTodo();
-                  setShowTodos((v) => !v);
-                }}
-              >
-                <CheckSquare className="h-4 w-4" />
-              </Button>
-              <ColorPicker
-                value={draft.color}
-                onChange={(color) => setDraft((prev) => ({ ...prev, color }))}
-              />
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                className="h-8 w-8 p-0"
-                title={draft.pinned ? 'Desafixar' : 'Fixar'}
-                onClick={() => setDraft((prev) => ({ ...prev, pinned: !prev.pinned }))}
-              >
-                {draft.pinned ? <PinOff className="h-4 w-4" /> : <Pin className="h-4 w-4" />}
-              </Button>
-            </div>
-            <Button
-              type="button"
-              size="sm"
-              onClick={() => void close()}
-              disabled={busy}
-              className="h-8"
-            >
-              {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Salvar'}
-            </Button>
-          </div>
-        </div>
-      )}
-    </div>
+      <span className="flex h-10 w-10 items-center justify-center rounded-full border-2 border-dashed border-current">
+        <Plus className="h-5 w-5" />
+      </span>
+      <span className="text-sm font-medium">Criar uma anotação</span>
+    </button>
   );
 }
 
@@ -384,7 +434,9 @@ function NoteCard({
   onToggleArchive,
   onDelete,
   onChangeColor,
-  onToggleTodo,
+  onToggleItem,
+  selectionMode = false,
+  selected = false,
 }: {
   note: UserNote;
   onClick: () => void;
@@ -392,110 +444,135 @@ function NoteCard({
   onToggleArchive: () => void;
   onDelete: () => void;
   onChangeColor: (color: UserNoteColor) => void;
-  onToggleTodo: (todoIdx: number, done: boolean) => void;
+  /** Toggle do `done` de um item de checklist (todo). Recebe a posição no
+   * array ordenado de items, NÃO o id. */
+  onToggleItem: (itemIdx: number, done: boolean) => void;
+  /** Em modo seleção: clique no card alterna a seleção (não abre o editor) e
+   * as ações internas (pin, color, archive, delete, checkboxes de todos) são
+   * escondidas/desabilitadas. */
+  selectionMode?: boolean;
+  selected?: boolean;
 }) {
-  const sortedTodos = useMemo(
-    () => (note.todos || []).slice().sort((a, b) => a.order - b.order),
-    [note.todos],
+  const sortedItems = useMemo(
+    () => (note.items || []).slice().sort((a, b) => a.order - b.order),
+    [note.items],
   );
-  const visibleTodos = sortedTodos.slice(0, 8);
-  const hiddenCount = sortedTodos.length - visibleTodos.length;
+  const MAX_VISIBLE = 12;
+  const visibleItems = sortedItems.slice(0, MAX_VISIBLE);
+  const hiddenCount = sortedItems.length - visibleItems.length;
+  const isDark = useIsDark();
 
   return (
     <div
+      style={getNoteStyle(note.color, isDark)}
       className={cn(
-        'group break-inside-avoid mb-3 rounded-lg border shadow-sm transition-shadow hover:shadow-md',
-        NOTE_COLOR_CLASSES[note.color],
+        'group rounded-lg border border-[var(--color-border)] shadow-sm transition-shadow hover:shadow-md bg-[var(--color-card)]',
+        selected && 'ring-2 ring-[var(--color-primary)] border-[var(--color-primary)]',
       )}
     >
       <div className="relative cursor-pointer" onClick={onClick}>
-        <button
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation();
-            onTogglePin();
-          }}
-          className="absolute right-2 top-2 rounded-full p-1 text-muted-foreground opacity-0 transition-opacity hover:bg-background/60 hover:text-foreground group-hover:opacity-100"
-          title={note.pinned ? 'Desafixar' : 'Fixar'}
-        >
-          {note.pinned ? <PinOff className="h-4 w-4" /> : <Pin className="h-4 w-4" />}
-        </button>
+        {!selectionMode && (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              onTogglePin();
+            }}
+            className="absolute right-2 top-2 rounded-full p-1 text-muted-foreground opacity-0 transition-opacity hover:bg-background/60 hover:text-foreground group-hover:opacity-100"
+            title={note.pinned ? 'Desafixar' : 'Fixar'}
+          >
+            {note.pinned ? <PinOff className="h-4 w-4" /> : <Pin className="h-4 w-4" />}
+          </button>
+        )}
         <div className="p-3 space-y-2">
           {note.title && (
             <h3 className="pr-8 text-sm font-medium leading-snug break-words">{note.title}</h3>
           )}
-          {note.body && (
-            <p className="whitespace-pre-wrap break-words text-sm text-muted-foreground">
-              {note.body}
-            </p>
-          )}
-          {sortedTodos.length > 0 && (
-            <ul className="space-y-1">
-              {visibleTodos.map((todo, idx) => (
-                <li
-                  key={todo.id ?? idx}
-                  className="flex items-start gap-2 text-sm"
-                >
-                  <input
-                    type="checkbox"
-                    checked={todo.done}
-                    onChange={(e) => onToggleTodo(idx, e.target.checked)}
-                    onClick={(e) => e.stopPropagation()}
-                    className="mt-1 h-4 w-4 shrink-0 cursor-pointer rounded border-border accent-primary"
-                  />
-                  <span
-                    className={cn(
-                      'break-words',
-                      todo.done && 'line-through text-muted-foreground',
-                    )}
+          {visibleItems.length > 0 && (
+            <ul className="space-y-1.5">
+              {visibleItems.map((it, idx) => {
+                if (it.kind === 'todo') {
+                  return (
+                    <li
+                      key={it.id ?? `idx-${idx}`}
+                      className="flex items-start gap-2 text-sm"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={it.done}
+                        disabled={selectionMode}
+                        onChange={(e) => onToggleItem(idx, e.target.checked)}
+                        onClick={(e) => e.stopPropagation()}
+                        className={cn(
+                          'mt-1 h-4 w-4 shrink-0 rounded border-border accent-primary',
+                          selectionMode ? 'cursor-not-allowed opacity-60' : 'cursor-pointer',
+                        )}
+                      />
+                      <span
+                        className={cn(
+                          'break-words',
+                          it.done && 'line-through text-muted-foreground',
+                        )}
+                      >
+                        {it.text}
+                      </span>
+                    </li>
+                  );
+                }
+                return (
+                  <li
+                    key={it.id ?? `idx-${idx}`}
+                    className="whitespace-pre-wrap break-words text-sm text-muted-foreground"
                   >
-                    {todo.label}
-                  </span>
-                </li>
-              ))}
+                    {it.text}
+                  </li>
+                );
+              })}
               {hiddenCount > 0 && (
-                <li className="text-xs text-muted-foreground">+ {hiddenCount} item(s)</li>
+                <li className="text-xs text-muted-foreground">+ {hiddenCount} bloco(s)</li>
               )}
             </ul>
           )}
-          {!note.title && !note.body && sortedTodos.length === 0 && (
+          {!note.title && sortedItems.length === 0 && (
             <p className="text-sm italic text-muted-foreground">Anotação vazia</p>
           )}
         </div>
       </div>
-      <div className="flex items-center justify-end gap-0.5 px-2 pb-2 opacity-0 transition-opacity group-hover:opacity-100">
-        <ColorPicker value={note.color} onChange={onChangeColor} />
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          className="h-8 w-8 p-0"
-          title={note.archived ? 'Desarquivar' : 'Arquivar'}
-          onClick={(e) => {
-            e.stopPropagation();
-            onToggleArchive();
-          }}
-        >
-          {note.archived ? (
-            <ArchiveRestore className="h-4 w-4" />
-          ) : (
-            <Archive className="h-4 w-4" />
-          )}
-        </Button>
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          className="h-8 w-8 p-0 text-destructive hover:text-destructive"
-          title="Excluir"
-          onClick={(e) => {
-            e.stopPropagation();
-            onDelete();
-          }}
-        >
-          <Trash2 className="h-4 w-4" />
-        </Button>
-      </div>
+      {!selectionMode && (
+        <div className="flex items-center justify-end gap-0.5 px-2 pb-2 opacity-0 transition-opacity group-hover:opacity-100">
+          <ColorPicker value={note.color} onChange={onChangeColor} />
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="h-8 w-8 p-0"
+            title={note.archived ? 'Desarquivar' : 'Arquivar'}
+            onClick={(e) => {
+              e.stopPropagation();
+              onToggleArchive();
+            }}
+          >
+            {note.archived ? (
+              <ArchiveRestore className="h-4 w-4" />
+            ) : (
+              <Archive className="h-4 w-4" />
+            )}
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="h-8 w-8 p-0 text-destructive hover:text-destructive"
+            title="Excluir"
+            onClick={(e) => {
+              e.stopPropagation();
+              onDelete();
+            }}
+          >
+            <Trash2 className="h-4 w-4" />
+          </Button>
+        </div>
+      )}
     </div>
   );
 }
@@ -507,6 +584,7 @@ function NoteEditor({
   onSave,
   onDelete,
   saving,
+  isCreate = false,
 }: {
   open: boolean;
   initial: DraftNote | null;
@@ -514,32 +592,44 @@ function NoteEditor({
   onSave: (draft: DraftNote) => Promise<void>;
   onDelete: () => Promise<void>;
   saving: boolean;
+  /** Modo criar: esconde botão de excluir, troca label do Salvar. */
+  isCreate?: boolean;
 }) {
   const [draft, setDraft] = useState<DraftNote>(emptyDraft());
+  const isDark = useIsDark();
 
   useEffect(() => {
     if (open && initial) setDraft({ ...initial });
   }, [open, initial]);
 
-  const addTodo = () =>
+  const addItem = (kind: UserNoteItemKind) =>
     setDraft((prev) => ({
       ...prev,
-      todos: [...prev.todos, { _key: newKey(), label: '', done: false, order: prev.todos.length }],
+      items: [
+        ...prev.items,
+        { _key: newKey(), kind, text: '', done: false, order: prev.items.length },
+      ],
     }));
 
-  const updateTodo = (key: string, next: DraftTodo) =>
+  const updateItem = (key: string, next: DraftItem) =>
     setDraft((prev) => ({
       ...prev,
-      todos: prev.todos.map((t) => (t._key === key ? next : t)),
+      items: prev.items.map((it) => (it._key === key ? next : it)),
     }));
 
-  const removeTodo = (key: string) =>
+  const removeItem = (key: string) =>
     setDraft((prev) => ({
       ...prev,
-      todos: prev.todos.filter((t) => t._key !== key),
+      items: prev.items.filter((it) => it._key !== key),
     }));
 
-  const hasTodos = draft.todos.length > 0;
+  const convertItem = (key: string, next: UserNoteItemKind) =>
+    setDraft((prev) => ({
+      ...prev,
+      items: prev.items.map((it) =>
+        it._key === key ? { ...it, kind: next, done: next === 'todo' ? it.done : false } : it,
+      ),
+    }));
 
   return (
     <Dialog
@@ -549,48 +639,51 @@ function NoteEditor({
       }}
     >
       <DialogContent
-        className={cn('max-w-lg p-0 overflow-hidden', NOTE_COLOR_CLASSES[draft.color])}
+        style={getNoteStyle(draft.color, isDark)}
+        className="max-w-lg p-0"
       >
         <DialogHeader className="px-4 pt-4 pb-2">
           <DialogTitle className="sr-only">Editar anotação</DialogTitle>
           <DialogDescription className="sr-only">
-            Edite o título, conteúdo e itens da anotação.
+            Edite o título e os blocos de conteúdo da anotação.
           </DialogDescription>
           <Input
             value={draft.title}
             onChange={(e) => setDraft((prev) => ({ ...prev, title: e.target.value }))}
             placeholder="Título"
+            maxLength={NOTE_TITLE_MAX}
             className="h-8 border-0 bg-transparent px-1 text-base font-medium shadow-none focus-visible:ring-0 focus-visible:ring-offset-0"
           />
         </DialogHeader>
-        <div className="space-y-2 px-4 pb-2">
-          <Textarea
-            value={draft.body}
-            onChange={(e) => setDraft((prev) => ({ ...prev, body: e.target.value }))}
-            placeholder="Anotação..."
-            className="min-h-[120px] border-0 bg-transparent px-1 text-sm shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 resize-none"
-          />
-          {hasTodos && (
-            <div className="space-y-1">
-              {draft.todos.map((todo, idx) => (
-                <TodoLine
-                  key={todo._key}
-                  todo={todo}
-                  autoFocus={idx === draft.todos.length - 1 && !todo.label}
-                  onChange={(next) => updateTodo(todo._key, next)}
-                  onRemove={() => removeTodo(todo._key)}
-                />
-              ))}
-            </div>
-          )}
-          <button
-            type="button"
-            onClick={addTodo}
-            className="flex items-center gap-2 px-1 py-1 text-xs text-muted-foreground hover:text-foreground"
-          >
-            <Plus className="h-3.5 w-3.5" />
-            Adicionar item de lista
-          </button>
+        <div className="space-y-1 px-4 pb-2">
+          {draft.items.map((it, idx) => (
+            <ItemBlock
+              key={it._key}
+              item={it}
+              autoFocus={idx === draft.items.length - 1 && !it.text}
+              onChange={(next) => updateItem(it._key, next)}
+              onRemove={() => removeItem(it._key)}
+              onConvert={(kind) => convertItem(it._key, kind)}
+            />
+          ))}
+          <div className="flex items-center gap-3 pt-1">
+            <button
+              type="button"
+              onClick={() => addItem('text')}
+              className="flex items-center gap-1.5 px-1 py-1 text-xs text-muted-foreground hover:text-foreground"
+            >
+              <Plus className="h-3.5 w-3.5" />
+              Adicionar texto
+            </button>
+            <button
+              type="button"
+              onClick={() => addItem('todo')}
+              className="flex items-center gap-1.5 px-1 py-1 text-xs text-muted-foreground hover:text-foreground"
+            >
+              <CheckSquare className="h-3.5 w-3.5" />
+              Adicionar item de lista
+            </button>
+          </div>
         </div>
         <DialogFooter className="flex items-center justify-between gap-2 border-t border-border/40 bg-background/40 px-3 py-2 sm:justify-between">
           <div className="flex items-center gap-1">
@@ -622,16 +715,18 @@ function NoteEditor({
                 <Archive className="h-4 w-4" />
               )}
             </Button>
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              className="h-8 w-8 p-0 text-destructive hover:text-destructive"
-              title="Excluir"
-              onClick={() => void onDelete()}
-            >
-              <Trash2 className="h-4 w-4" />
-            </Button>
+            {!isCreate && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-8 w-8 p-0 text-destructive hover:text-destructive"
+                title="Excluir"
+                onClick={() => void onDelete()}
+              >
+                <Trash2 className="h-4 w-4" />
+              </Button>
+            )}
           </div>
           <Button
             type="button"
@@ -640,7 +735,7 @@ function NoteEditor({
             disabled={saving}
           >
             {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4 mr-1" />}
-            Fechar
+            {isCreate ? 'Criar' : 'Fechar'}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -657,8 +752,33 @@ export default function MyTasks() {
   const [filter, setFilter] = useState<NoteFilter>('active');
   const [search, setSearch] = useState('');
   const [creating, setCreating] = useState(false);
+  const [creatingOpen, setCreatingOpen] = useState(false);
   const [savingId, setSavingId] = useState<number | null>(null);
   const [editingId, setEditingId] = useState<number | null>(null);
+  const [noteToDelete, setNoteToDelete] = useState<number | null>(null);
+  const [deleteLoading, setDeleteLoading] = useState(false);
+  // Flag pra suprimir o auto-save do editor quando o fechamento vem de uma
+  // exclusão bem-sucedida (sem essa flag, o PATCH dispararia pra um id que já
+  // não existe → 404 cosmético com toast "Falha ao salvar a anotação").
+  const skipNextEditorSaveRef = useRef(false);
+
+  // Seleção múltipla (mesma UX do kanban: botão "Selecionar", barra inferior
+  // com contagem + ações, dialog de confirmação para exclusão em massa).
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedNoteIds, setSelectedNoteIds] = useState<number[]>([]);
+  const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
+  const [bulkDeleteLoading, setBulkDeleteLoading] = useState(false);
+
+  const toggleNoteSelected = useCallback((id: number) => {
+    setSelectedNoteIds((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
+    );
+  }, []);
+
+  const exitSelectionMode = useCallback(() => {
+    setSelectionMode(false);
+    setSelectedNoteIds([]);
+  }, []);
 
   // Aba "Cards Fixados"
   const [pinnedCards, setPinnedCards] = useState<CardPin[]>([]);
@@ -693,9 +813,22 @@ export default function MyTasks() {
     }
   }, []);
 
+  // Carrega notas no mount
+  useEffect(() => {
+    void load();
+  }, [load]);
+
   useEffect(() => {
     if (tab === 'pins') void loadPins();
   }, [tab, loadPins]);
+
+  // Sair do modo seleção (e limpar IDs marcados) sempre que o usuário mudar de
+  // aba ou de filtro — evita confusão de selecionar X notas ativas, trocar pra
+  // arquivadas e clicar "Apagar" sem ver o que vai ser excluído.
+  useEffect(() => {
+    setSelectionMode(false);
+    setSelectedNoteIds([]);
+  }, [tab, filter]);
 
   const handleUnpin = useCallback(async (cardId: string) => {
     try {
@@ -753,23 +886,80 @@ export default function MyTasks() {
 
   const handleSaveDraft = useCallback(
     async (draft: DraftNote) => {
+      // Quando o editor é fechado em consequência de uma exclusão, suprimimos
+      // o auto-save (caso contrário PATCH 404 + toast de erro espúrio).
+      if (skipNextEditorSaveRef.current) {
+        skipNextEditorSaveRef.current = false;
+        return;
+      }
       if (draft.id == null) return;
       await patchNote(draft.id, draftToPayload(draft));
     },
     [patchNote],
   );
 
-  const handleDelete = useCallback(async (id: number) => {
-    if (!window.confirm('Excluir esta anotação? Esta ação não pode ser desfeita.')) return;
+  // Apenas dispara a confirmação. A exclusão real está em `confirmDelete`.
+  const handleDelete = useCallback((id: number) => {
+    setNoteToDelete(id);
+  }, []);
+
+  const handleBulkDeleteConfirm = useCallback(async () => {
+    if (selectedNoteIds.length === 0) return;
+    setBulkDeleteLoading(true);
+    const failed: number[] = [];
+    for (const id of selectedNoteIds) {
+      try {
+        await userNoteService.delete(id);
+      } catch (err) {
+        console.error('Erro ao excluir anotação em massa', id, err);
+        failed.push(id);
+      }
+    }
+    // Se o editor estava aberto numa nota deletada, suprime o auto-save.
+    setEditingId((cur) => {
+      if (cur != null && selectedNoteIds.includes(cur) && !failed.includes(cur)) {
+        skipNextEditorSaveRef.current = true;
+        return null;
+      }
+      return cur;
+    });
+    setNotes((prev) =>
+      prev.filter((n) => !selectedNoteIds.includes(n.id) || failed.includes(n.id)),
+    );
+    setSelectedNoteIds(failed);
+    setBulkDeleteLoading(false);
+    setBulkDeleteOpen(false);
+    if (failed.length === 0) {
+      exitSelectionMode();
+    } else {
+      setError(`${failed.length} anotação(ões) não puderam ser excluídas.`);
+    }
+  }, [selectedNoteIds, exitSelectionMode]);
+
+  const confirmDelete = useCallback(async () => {
+    if (noteToDelete == null) return;
+    setDeleteLoading(true);
     try {
-      await userNoteService.delete(id);
-      setNotes((prev) => prev.filter((n) => n.id !== id));
-      setEditingId((cur) => (cur === id ? null : cur));
+      await userNoteService.delete(noteToDelete);
+      // Se essa nota está aberta no editor, marcamos pra suprimir o auto-save
+      // que o `onOpenChange(false)` dispararia ao fechar o dialog.
+      setEditingId((cur) => {
+        if (cur === noteToDelete) {
+          skipNextEditorSaveRef.current = true;
+          return null;
+        }
+        return cur;
+      });
+      setNotes((prev) => prev.filter((n) => n.id !== noteToDelete));
+      setNoteToDelete(null);
     } catch (err) {
       console.error('Erro ao excluir anotação:', err);
       setError('Falha ao excluir a anotação.');
+      // Mantém o dialog aberto pra usuário ver o erro e tentar de novo.
+    } finally {
+      setDeleteLoading(false);
     }
-  }, []);
+  }, [noteToDelete]);
 
   const togglePin = useCallback(
     (note: UserNote) => patchNote(note.id, { pinned: !note.pinned }),
@@ -787,15 +977,16 @@ export default function MyTasks() {
     [patchNote],
   );
 
-  const toggleTodoOnCard = useCallback(
-    async (note: UserNote, todoIdx: number, done: boolean) => {
-      const sorted = (note.todos || []).slice().sort((a, b) => a.order - b.order);
-      const nextTodos = sorted.map((t, idx) => ({
-        label: t.label,
-        done: idx === todoIdx ? done : t.done,
+  const toggleItemOnCard = useCallback(
+    async (note: UserNote, itemIdx: number, done: boolean) => {
+      const sorted = (note.items || []).slice().sort((a, b) => a.order - b.order);
+      const nextItems = sorted.map((it, idx) => ({
+        kind: it.kind,
+        text: it.text,
+        done: it.kind === 'todo' && idx === itemIdx ? done : it.done,
         order: idx,
       }));
-      await patchNote(note.id, { todos: nextTodos });
+      await patchNote(note.id, { items: nextItems });
     },
     [patchNote],
   );
@@ -806,7 +997,7 @@ export default function MyTasks() {
       .filter((n) => (filter === 'archived' ? n.archived : !n.archived))
       .filter((n) => {
         if (!term) return true;
-        const haystack = [n.title, n.body, ...(n.todos || []).map((t) => t.label)]
+        const haystack = [n.title, ...(n.items || []).map((it) => it.text)]
           .join(' ')
           .toLowerCase();
         return haystack.includes(term);
@@ -824,25 +1015,21 @@ export default function MyTasks() {
     () => (editingNote ? toDraft(editingNote) : null),
     [editingNote],
   );
+  // Estabiliza o `initial` do editor em modo create — sem useMemo o objeto vinha
+  // novo a cada render e disparava o useEffect do NoteEditor em loop.
+  const creatingInitial = useMemo(() => (creatingOpen ? emptyDraft() : null), [creatingOpen]);
 
   return (
-    <div className="container mx-auto py-6 px-4 max-w-6xl">
-      <header className="mb-6 space-y-1">
-        <div className="flex items-center gap-3">
-          <div className="rounded-lg bg-primary/10 p-2 text-primary">
-            <StickyNote className="h-5 w-5" />
-          </div>
-          <div>
-            <h1 className="text-2xl font-semibold tracking-tight">Meus Afazeres</h1>
-            <p className="text-sm text-muted-foreground">
-              Anotações, listas e lembretes pessoais. Apenas você vê suas anotações.
-            </p>
-          </div>
-        </div>
-      </header>
+    <div className="space-y-[24px]">
+      <div>
+        <h1 className="text-2xl font-bold text-[var(--color-foreground)]">Meus Afazeres</h1>
+        <p className="text-sm text-[var(--color-muted-foreground)] mt-1">
+          Anotações, listas e lembretes pessoais. Apenas você vê suas anotações.
+        </p>
+      </div>
 
-      {/* Tabs (mesmo padrão do GeekDay) */}
-      <div className="mb-4 flex items-center gap-[8px] border-b border-[var(--color-border)] shrink-0">
+      {/* Tabs (mesmo padrão de Prioridades/GeekDay) */}
+      <div className="flex items-center gap-[8px] border-b border-[var(--color-border)] shrink-0">
         <Button
           variant="ghost"
           onClick={() => setTab('notes')}
@@ -874,6 +1061,34 @@ export default function MyTasks() {
             </span>
           )}
         </Button>
+        {tab === 'notes' && (
+          <div className="ml-auto inline-flex rounded-md border border-border bg-card p-0.5 text-sm">
+            <button
+              type="button"
+              onClick={() => setFilter('active')}
+              className={cn(
+                'rounded-sm px-3 py-1 transition-colors',
+                filter === 'active'
+                  ? 'bg-primary text-primary-foreground'
+                  : 'text-muted-foreground hover:text-foreground',
+              )}
+            >
+              Ativas
+            </button>
+            <button
+              type="button"
+              onClick={() => setFilter('archived')}
+              className={cn(
+                'rounded-sm px-3 py-1 transition-colors',
+                filter === 'archived'
+                  ? 'bg-primary text-primary-foreground'
+                  : 'text-muted-foreground hover:text-foreground',
+              )}
+            >
+              Arquivadas
+            </button>
+          </div>
+        )}
       </div>
 
       {tab === 'notes' && (
@@ -888,39 +1103,19 @@ export default function MyTasks() {
                 className="pl-9"
               />
             </div>
-            <div className="inline-flex rounded-md border border-border bg-card p-0.5 text-sm">
-              <button
-                type="button"
-                onClick={() => setFilter('active')}
-                className={cn(
-                  'rounded-sm px-3 py-1.5 transition-colors',
-                  filter === 'active'
-                    ? 'bg-primary text-primary-foreground'
-                    : 'text-muted-foreground hover:text-foreground',
-                )}
-              >
-                Ativas
-              </button>
-              <button
-                type="button"
-                onClick={() => setFilter('archived')}
-                className={cn(
-                  'rounded-sm px-3 py-1.5 transition-colors',
-                  filter === 'archived'
-                    ? 'bg-primary text-primary-foreground'
-                    : 'text-muted-foreground hover:text-foreground',
-                )}
-              >
-                Arquivadas
-              </button>
-            </div>
+            <Button
+              type="button"
+              variant={selectionMode ? 'default' : 'outline'}
+              size="sm"
+              onClick={() => {
+                if (selectionMode) exitSelectionMode();
+                else setSelectionMode(true);
+              }}
+            >
+              <CheckSquare className="h-4 w-4 mr-2" />
+              {selectionMode ? 'Sair da seleção' : 'Selecionar anotações'}
+            </Button>
           </div>
-
-          {filter === 'active' && (
-            <div className="mb-6">
-              <NoteComposer onCreate={handleCreate} busy={creating} />
-            </div>
-          )}
 
           {error && (
             <div className="mb-4 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
@@ -933,15 +1128,13 @@ export default function MyTasks() {
               <Loader2 className="h-5 w-5 animate-spin mr-2" />
               Carregando anotações...
             </div>
-          ) : filteredNotes.length === 0 ? (
+          ) : filter === 'archived' && filteredNotes.length === 0 ? (
             <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-border py-16 text-center text-muted-foreground">
               <StickyNote className="h-10 w-10 mb-3 opacity-50" />
               <p className="text-sm">
-                {filter === 'archived'
-                  ? 'Nenhuma anotação arquivada.'
-                  : search
-                    ? 'Nenhuma anotação encontrada para sua busca.'
-                    : 'Suas anotações aparecerão aqui. Crie a primeira logo acima.'}
+                {search
+                  ? 'Nenhuma anotação encontrada para sua busca.'
+                  : 'Nenhuma anotação arquivada.'}
               </p>
             </div>
           ) : (
@@ -951,45 +1144,56 @@ export default function MyTasks() {
                   <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                     Fixadas
                   </h2>
-                  <div className="columns-1 gap-3 sm:columns-2 lg:columns-3 xl:columns-4">
+                  <Masonry breakpoints={NOTES_MASONRY_BREAKPOINTS}>
                     {pinned.map((note) => (
                       <NoteCard
                         key={note.id}
                         note={note}
-                        onClick={() => setEditingId(note.id)}
+                        selectionMode={selectionMode}
+                        selected={selectedNoteIds.includes(note.id)}
+                        onClick={() =>
+                          selectionMode ? toggleNoteSelected(note.id) : setEditingId(note.id)
+                        }
                         onTogglePin={() => void togglePin(note)}
                         onToggleArchive={() => void toggleArchive(note)}
-                        onDelete={() => void handleDelete(note.id)}
+                        onDelete={() => handleDelete(note.id)}
                         onChangeColor={(color) => void changeColor(note, color)}
-                        onToggleTodo={(idx, done) => void toggleTodoOnCard(note, idx, done)}
+                        onToggleItem={(idx, done) => void toggleItemOnCard(note, idx, done)}
                       />
                     ))}
-                  </div>
+                  </Masonry>
                 </section>
               )}
-              {others.length > 0 && (
-                <section>
-                  {pinned.length > 0 && (
-                    <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                      Outras
-                    </h2>
-                  )}
-                  <div className="columns-1 gap-3 sm:columns-2 lg:columns-3 xl:columns-4">
-                    {others.map((note) => (
+              <section>
+                {pinned.length > 0 && (
+                  <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                    Outras
+                  </h2>
+                )}
+                <Masonry breakpoints={NOTES_MASONRY_BREAKPOINTS}>
+                  {[
+                    ...(filter === 'active' && !search && !selectionMode
+                      ? [<CreateNoteCard key="__create__" onClick={() => setCreatingOpen(true)} />]
+                      : []),
+                    ...others.map((note) => (
                       <NoteCard
                         key={note.id}
                         note={note}
-                        onClick={() => setEditingId(note.id)}
+                        selectionMode={selectionMode}
+                        selected={selectedNoteIds.includes(note.id)}
+                        onClick={() =>
+                          selectionMode ? toggleNoteSelected(note.id) : setEditingId(note.id)
+                        }
                         onTogglePin={() => void togglePin(note)}
                         onToggleArchive={() => void toggleArchive(note)}
-                        onDelete={() => void handleDelete(note.id)}
+                        onDelete={() => handleDelete(note.id)}
                         onChangeColor={(color) => void changeColor(note, color)}
-                        onToggleTodo={(idx, done) => void toggleTodoOnCard(note, idx, done)}
+                        onToggleItem={(idx, done) => void toggleItemOnCard(note, idx, done)}
                       />
-                    ))}
-                  </div>
-                </section>
-              )}
+                    )),
+                  ]}
+                </Masonry>
+              </section>
             </div>
           )}
         </div>
@@ -1052,6 +1256,120 @@ export default function MyTasks() {
         }}
         saving={savingId != null}
       />
+
+      <NoteEditor
+        open={creatingOpen}
+        initial={creatingInitial}
+        onClose={() => setCreatingOpen(false)}
+        onSave={async (draft) => {
+          await handleCreate(draft);
+        }}
+        onDelete={async () => setCreatingOpen(false)}
+        saving={creating}
+        isCreate
+      />
+
+      {/* Barra inferior flutuante (mesmo padrão do kanban) */}
+      {selectedNoteIds.length > 0 && (
+        <div className="pointer-events-none fixed inset-x-0 bottom-6 z-40 flex justify-center px-4">
+          <div className="pointer-events-auto flex max-w-[min(100%,560px)] flex-wrap items-center justify-center gap-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-background)] px-5 py-3 shadow-lg">
+            <span className="text-sm font-medium text-[var(--color-foreground)]">
+              {selectedNoteIds.length} anotação(ões) selecionada(s)
+            </span>
+            <Button
+              type="button"
+              variant="destructive"
+              size="sm"
+              onClick={() => setBulkDeleteOpen(true)}
+            >
+              <Trash2 className="h-4 w-4 mr-2" />
+              Apagar
+            </Button>
+            <Button type="button" variant="outline" size="sm" onClick={exitSelectionMode}>
+              Cancelar
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {/* Dialog de confirmação de exclusão em massa */}
+      <Dialog open={bulkDeleteOpen} onOpenChange={setBulkDeleteOpen}>
+        <DialogContent onClose={() => setBulkDeleteOpen(false)}>
+          <DialogHeader>
+            <DialogTitle>Apagar anotações selecionadas</DialogTitle>
+            <DialogDescription>
+              {selectedNoteIds.length} anotação(ões) serão removidas permanentemente.
+              Esta ação não pode ser desfeita.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setBulkDeleteOpen(false)}
+              disabled={bulkDeleteLoading}
+            >
+              Voltar
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              onClick={() => void handleBulkDeleteConfirm()}
+              disabled={bulkDeleteLoading}
+            >
+              {bulkDeleteLoading ? (
+                <>
+                  <Loader2 className="mr-[8px] h-[16px] w-[16px] animate-spin" />
+                  Excluindo...
+                </>
+              ) : (
+                'Confirmar exclusão'
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={noteToDelete != null}
+        onOpenChange={(o) => {
+          if (!o) setNoteToDelete(null);
+        }}
+      >
+        <DialogContent onClose={() => setNoteToDelete(null)}>
+          <DialogHeader>
+            <DialogTitle>Confirmar exclusão</DialogTitle>
+            <DialogDescription>
+              Tem certeza que deseja excluir esta anotação? Esta ação não pode ser desfeita.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setNoteToDelete(null)}
+              disabled={deleteLoading}
+            >
+              Cancelar
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              onClick={() => void confirmDelete()}
+              disabled={deleteLoading}
+            >
+              {deleteLoading ? (
+                <>
+                  <Loader2 className="mr-[8px] h-[16px] w-[16px] animate-spin" />
+                  Excluindo...
+                </>
+              ) : (
+                'Excluir'
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

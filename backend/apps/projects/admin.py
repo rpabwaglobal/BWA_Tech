@@ -1,21 +1,21 @@
 from django.contrib import admin
 
-from .models import UserNotificationPreference, UserNote, UserNoteTodo, CardPin
+from .models import UserNotificationPreference, UserNote, UserNoteItem, CardPin
 
 
-class UserNoteTodoInline(admin.TabularInline):
-    model = UserNoteTodo
+class UserNoteItemInline(admin.TabularInline):
+    model = UserNoteItem
     extra = 0
-    fields = ('label', 'done', 'order')
+    fields = ('kind', 'text', 'done', 'order')
 
 
 @admin.register(UserNote)
 class UserNoteAdmin(admin.ModelAdmin):
     list_display = ('title', 'user', 'color', 'pinned', 'archived', 'updated_at')
     list_filter = ('color', 'pinned', 'archived')
-    search_fields = ('title', 'body', 'user__username', 'user__email')
+    search_fields = ('title', 'user__username', 'user__email')
     readonly_fields = ('created_at', 'updated_at')
-    inlines = [UserNoteTodoInline]
+    inlines = [UserNoteItemInline]
 
 
 @admin.register(CardPin)

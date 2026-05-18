@@ -1,20 +1,24 @@
 import api from './api';
 
+// Paleta inspirada em papéis Color Plus / Sirio Color.
+// default = sem cor (fundo do tema)
 export type UserNoteColor =
   | 'default'
-  | 'red'
-  | 'orange'
-  | 'yellow'
-  | 'green'
-  | 'teal'
-  | 'blue'
-  | 'purple'
-  | 'pink'
-  | 'gray';
+  | 'lilas'   // Color Plus San Francisco
+  | 'rosa'    // Color Plus Verona
+  | 'verde'   // Color Plus Tahiti
+  | 'azul'    // Sirio Color Celeste
+  | 'bege';   // Sirio Paglierino
 
-export type UserNoteTodo = {
+/** Bloco do conteúdo de uma nota. Pode ser parágrafo de texto ou item de
+ * checklist; a ordem é dada por `order`. */
+export type UserNoteItemKind = 'text' | 'todo';
+
+export type UserNoteItem = {
   id?: number;
-  label: string;
+  kind: UserNoteItemKind;
+  text: string;
+  /** Só relevante quando kind='todo'. */
   done: boolean;
   order: number;
 };
@@ -23,24 +27,22 @@ export type UserNote = {
   id: number;
   user: number;
   title: string;
-  body: string;
   color: UserNoteColor;
   pinned: boolean;
   archived: boolean;
   order: number;
-  todos: UserNoteTodo[];
+  items: UserNoteItem[];
   created_at: string;
   updated_at: string;
 };
 
 export type UserNoteCreate = {
   title?: string;
-  body?: string;
   color?: UserNoteColor;
   pinned?: boolean;
   archived?: boolean;
   order?: number;
-  todos?: Array<Omit<UserNoteTodo, 'id'> & { id?: number }>;
+  items?: Array<Omit<UserNoteItem, 'id'> & { id?: number }>;
 };
 
 export type UserNoteUpdate = Partial<UserNoteCreate>;
