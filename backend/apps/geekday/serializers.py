@@ -1,6 +1,7 @@
 from rest_framework import serializers
 from django.conf import settings
 from .models import GeekDayDraw
+from apps.accounts.profile_picture_utils import get_profile_picture_url
 
 
 def format_user_name(user):
@@ -39,14 +40,7 @@ class GeekDayDrawSerializer(serializers.ModelSerializer):
         return format_user_name(obj.sorteado_por) if obj.sorteado_por else None
 
     def get_usuario_profile_picture(self, obj):
-        if not obj.usuario or not obj.usuario.profile_picture:
-            return None
-        url = obj.usuario.profile_picture.url
-        path = url if url.startswith('/') else '/' + url
-        request = self.context.get('request')
-        if request:
-            return request.build_absolute_uri(path)
-        return path
+        return get_profile_picture_url(obj.usuario, request=self.context.get('request'))
 
 
 class GeekDayUserStatusSerializer(serializers.Serializer):

@@ -23,6 +23,7 @@ from .models import (
     CardDueDateChangeRequest,
 )
 from apps.accounts.serializers import UserSerializer
+from apps.accounts.profile_picture_utils import get_profile_picture_url
 
 
 def format_user_name(user):
@@ -270,27 +271,13 @@ class CardSerializer(serializers.ModelSerializer):
         return getattr(obj.responsavel, 'role', None) if obj.responsavel else None
     
     def get_responsavel_profile_picture_url(self, obj):
-        if not obj.responsavel or not obj.responsavel.profile_picture:
-            return None
-        url = obj.responsavel.profile_picture.url
-        path = url if url.startswith('/') else '/' + url
-        request = self.context.get('request')
-        if request:
-            return request.build_absolute_uri(path)
-        return path
-    
+        return get_profile_picture_url(obj.responsavel, request=self.context.get('request'))
+
     def get_criado_por_name(self, obj):
         return format_user_name(obj.criado_por)
-    
+
     def get_criado_por_profile_picture_url(self, obj):
-        if not obj.criado_por or not obj.criado_por.profile_picture:
-            return None
-        url = obj.criado_por.profile_picture.url
-        path = url if url.startswith('/') else '/' + url
-        request = self.context.get('request')
-        if request:
-            return request.build_absolute_uri(path)
-        return path
+        return get_profile_picture_url(obj.criado_por, request=self.context.get('request'))
     status_display = serializers.CharField(source='get_status_display', read_only=True)
     prioridade_display = serializers.CharField(source='get_prioridade_display', read_only=True)
     area_display = serializers.CharField(source='get_area_display', read_only=True)

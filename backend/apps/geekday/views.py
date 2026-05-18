@@ -7,6 +7,7 @@ from django.utils import timezone
 from django.conf import settings
 from .models import GeekDayDraw, GeekDayConfig
 from .serializers import GeekDayDrawSerializer, GeekDayUserStatusSerializer
+from apps.accounts.profile_picture_utils import get_profile_picture_url
 
 
 class GeekDayDrawViewSet(viewsets.ModelViewSet):
@@ -64,7 +65,7 @@ class GeekDayDrawViewSet(viewsets.ModelViewSet):
                 'last_name': user.last_name,
                 'email': user.email,
                 'role': user.role,  # Adicionar role para cores na roleta
-                'profile_picture_url': request.build_absolute_uri(user.profile_picture.url if user.profile_picture.url.startswith('/') else '/' + user.profile_picture.url) if user.profile_picture else None,
+                'profile_picture_url': get_profile_picture_url(user, request=request),
                 'ja_sorteado': ja_sorteado,
                 'total_sorteios': total_sorteios_dict.get(user.id, 0),
                 'ultimo_sorteio': ultimo_sorteio.isoformat() if ultimo_sorteio else None,

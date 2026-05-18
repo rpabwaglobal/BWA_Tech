@@ -31,6 +31,7 @@ from .models import (
     CardLogEventType,
 )
 from .services import finalizar_sprint_replicacao
+from apps.accounts.profile_picture_utils import get_profile_picture_url
 from .serializers import (
     SprintSerializer, ProjectSerializer, CardSerializer, UserNoteSerializer, CardPinSerializer, EventSerializer,
     CardLogSerializer, NotificationSerializer, NotificationPreferenceSerializer,
@@ -578,7 +579,7 @@ class CardViewSet(viewsets.ModelViewSet):
                     'email': usuario.email,
                     'role': usuario.role,
                     'role_display': usuario.get_role_display(),
-                    'profile_picture_url': request.build_absolute_uri(usuario.profile_picture.url if usuario.profile_picture.url.startswith('/') else '/' + usuario.profile_picture.url) if usuario.profile_picture else None,
+                    'profile_picture_url': get_profile_picture_url(usuario, request=request),
                 },
                 'cards': cards_serializados
             })
@@ -1119,7 +1120,7 @@ class CardDueDateChangeRequestViewSet(viewsets.ModelViewSet):
                     'email': usuario.email,
                     'role': usuario.role,
                     'role_display': usuario.get_role_display(),
-                    'profile_picture_url': request.build_absolute_uri(usuario.profile_picture.url if usuario.profile_picture.url.startswith('/') else '/' + usuario.profile_picture.url) if usuario.profile_picture else None,
+                    'profile_picture_url': get_profile_picture_url(usuario, request=request),
                 },
                 'cards': cards_serializados
             })

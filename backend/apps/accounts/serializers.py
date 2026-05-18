@@ -4,6 +4,7 @@ import unicodedata
 
 from rest_framework import serializers
 from .models import User, Role
+from .profile_picture_utils import get_profile_picture_url
 
 
 class UserSerializer(serializers.ModelSerializer):
@@ -11,14 +12,7 @@ class UserSerializer(serializers.ModelSerializer):
     profile_picture_url = serializers.SerializerMethodField(read_only=True)
 
     def get_profile_picture_url(self, obj):
-        if not obj.profile_picture:
-            return None
-        url = obj.profile_picture.url
-        path = url if url.startswith('/') else '/' + url
-        request = self.context.get('request')
-        if request:
-            return request.build_absolute_uri(path)
-        return path
+        return get_profile_picture_url(obj, request=self.context.get('request'))
 
     def validate_role(self, value):
         """
