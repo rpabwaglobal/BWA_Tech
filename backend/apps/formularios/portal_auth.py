@@ -74,3 +74,14 @@ def login_on_portal_cached() -> str:
     token = login_on_portal()
     _cached_access = (token, now + _CACHED_ACCESS_TTL_SEC)
     return token
+
+
+def invalidate_portal_token_cache() -> None:
+    """Força a próxima chamada a re-autenticar no portal.
+
+    Útil quando o upstream devolve 401 — o JWT cacheado provavelmente expirou
+    antes do TTL local ou foi revogado, então é melhor descartar e tentar de novo
+    em vez de esperar 4 min até o cache vencer.
+    """
+    global _cached_access
+    _cached_access = None

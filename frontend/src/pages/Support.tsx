@@ -462,8 +462,13 @@ export default function Support() {
     setDetailChamado((cur) => (cur?.id === row.id ? row : cur));
   }, []);
 
+  // Realtime de suporte:
+  // - Modo local (Django dono dos chamados): signals nativos disparam o broadcast.
+  // - Modo proxy-through-Django (chamados no portal externo): o proxy dispara o
+  //   broadcast manualmente após cada mutação 2xx — então o WS também é útil aqui.
   useSuporteKanbanWebSocket({
-    enabled: isAuthenticated && usesLocalFormulariosBackend(),
+    enabled:
+      isAuthenticated && (usesLocalFormulariosBackend() || proxyThroughDjango()),
     onChamadoUpsert: mergeRemoteChamado,
   });
 
@@ -533,12 +538,16 @@ export default function Support() {
     };
   }, [isAuthenticated, load]);
 
+  // Polling de fallback: rede oscilante / mutação feita fora do nosso proxy
+  // (ex.: alguém editando o chamado direto no portal). Reduzimos pra 15s no
+  // modo proxy-through-Django porque o WS já cobre 99% dos casos.
   useEffect(() => {
     if (!isAuthenticated || usesLocalFormulariosBackend()) return;
+    const intervalMs = proxyThroughDjango() ? 15000 : 4000;
     const id = window.setInterval(() => {
       if (document.visibilityState !== 'visible') return;
       void load({ silent: true });
-    }, 4000);
+    }, intervalMs);
     return () => window.clearInterval(id);
   }, [isAuthenticated, load]);
 

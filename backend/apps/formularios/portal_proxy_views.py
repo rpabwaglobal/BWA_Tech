@@ -19,7 +19,8 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from .portal_auth import PortalLoginError, login_on_portal_cached
+from .portal_auth import PortalLoginError, invalidate_portal_token_cache, login_on_portal_cached
+from .realtime import broadcast_chamado
 
 logger = logging.getLogger(__name__)
 
@@ -57,20 +58,104 @@ def _is_internal_host(hostname: str) -> bool:
     return False
 
 
+def _maybe_broadcast_suporte_event(method: str, path: str, upstream: requests.Response) -> None:
+    """Dispara evento WebSocket de suporte quando a mutação afeta um chamado.
+
+    Heurística (não exige acoplamento com o portal):
+    - POST `suporte/`         → chamado_created
+    - PATCH/PUT `suporte/<id>/...` → chamado_updated
+    - DELETE                   → ignorado (consumer atual não trata)
+
+    Falhas silenciosas (parse JSON ou Channels offline) não devem quebrar o
+    fluxo do proxy — broadcast é melhoria de UX, não correctness.
+    """
+    if method not in ('POST', 'PATCH', 'PUT'):
+        return
+    parts = [p for p in path.split('/') if p]
+    if not parts or parts[0] != 'suporte':
+        return
+    try:
+        payload = upstream.json()
+    except ValueError:
+        return
+    # POST suporte/ retorna o chamado criado; PATCH/PUT suporte/<id>/[...] também.
+    if not isinstance(payload, dict) or 'id' not in payload:
+        return
+    if method == 'POST' and len(parts) == 1:
+        event = 'chamado_created'
+    else:
+        event = 'chamado_updated'
+    try:
+        broadcast_chamado(event, payload)
+    except Exception:
+        logger.exception('Falha ao fazer broadcast do evento %s', event)
+
+
+# Headers da resposta upstream que repassamos ao cliente. Não inclui
+# Content-Length/Transfer-Encoding (Django recalcula), Set-Cookie (cookies do
+# portal não devem vazar pro nosso domínio), Connection (controle de conexão).
+_FORWARDED_RESPONSE_HEADERS = {
+    'content-type',
+    'content-disposition',
+    'cache-control',
+    'etag',
+    'last-modified',
+    'link',
+    'x-total-count',
+    'x-pagination',
+}
+
+
 class PortalFormulariosProxyView(APIView):
-    """GET/POST/PATCH/PUT/DELETE → portal `/api/formularios/<path>`."""
+    """Proxy autenticado entre o frontend BWA e o portal externo de formulários.
+
+    GET/POST/PATCH/PUT/DELETE → `{PORTAL_BASE_URL}/api/formularios/<path>` com
+    Bearer JWT obtido server-side via `login_on_portal_cached()`.
+
+    Fluxo:
+    1. Valida `PORTAL_BASE_URL` (existência, scheme, defesa contra SSRF).
+    2. Valida path (whitelist de caracteres, sem traversal).
+    3. Obtém JWT do cache (ou faz login novo).
+    4. Encaminha a requisição. Se upstream retorna 401, invalida o cache
+       e tenta UMA vez mais — cobre o caso de JWT cacheado revogado/expirado
+       antes do TTL local.
+    5. Repassa status code, content-type e headers úteis (paginação, ETag, etc).
+    """
 
     permission_classes = [IsAuthenticated]
+
+    def _do_request(self, method: str, url: str, request) -> requests.Response:
+        """Monta e executa a requisição HTTP ao upstream. Sempre busca o JWT
+        do cache antes — quem chama é responsável por invalidar em 401."""
+        token = login_on_portal_cached()
+        headers = {
+            'Authorization': f'Bearer {token}',
+            'Accept': request.headers.get('Accept', '*/*'),
+        }
+        kw: dict = {'headers': headers, 'timeout': 90}
+        if method in ('POST', 'PATCH', 'PUT') or (method == 'DELETE' and request.body):
+            headers['Content-Type'] = request.content_type or 'application/json'
+            kw['data'] = request.body
+        return requests.request(method, url, **kw)
 
     def _forward(self, request, path: str):
         base = (getattr(settings, 'PORTAL_BASE_URL', '') or '').strip().rstrip('/')
         if not base:
+            logger.error(
+                'PORTAL_BASE_URL não configurado — proxy portal-formularios offline.',
+            )
             return Response(
-                {'detail': 'PORTAL_BASE_URL não configurado.'},
+                {
+                    'detail': (
+                        'O acesso ao portal de formulários não está configurado neste servidor. '
+                        'Avise o administrador.'
+                    ),
+                    'reason': 'portal_base_url_missing',
+                },
                 status=503,
             )
 
-        # Validar PORTAL_BASE_URL (defesa contra config maliciosa)
+        # Validar PORTAL_BASE_URL (defesa contra config maliciosa / SSRF)
         try:
             parsed_base = urlparse(base)
         except ValueError:
@@ -92,36 +177,73 @@ class PortalFormulariosProxyView(APIView):
             qs = urlencode(request.GET, doseq=True)
             url = f'{url}?{qs}'
 
-        try:
-            token = login_on_portal_cached()
-        except PortalLoginError as exc:
-            return Response({'detail': str(exc)}, status=503)
-
-        headers = {
-            'Authorization': f'Bearer {token}',
-            'Accept': request.headers.get('Accept', '*/*'),
-        }
-
         method = request.method.upper()
-        kw: dict = {'headers': headers, 'timeout': 90}
 
-        if method in ('POST', 'PATCH', 'PUT'):
-            ct = request.content_type or 'application/json'
-            headers['Content-Type'] = ct
-            kw['data'] = request.body
-        elif method == 'DELETE' and request.body:
-            ct = request.content_type or 'application/json'
-            headers['Content-Type'] = ct
-            kw['data'] = request.body
-
+        # Primeira tentativa. Em caso de 401 (JWT cacheado já revogado pelo portal
+        # antes do nosso TTL local), invalida o cache e tenta de novo — UMA vez.
         try:
-            upstream = requests.request(method, url, **kw)
+            try:
+                upstream = self._do_request(method, url, request)
+            except PortalLoginError as exc:
+                logger.warning('Login no portal falhou: %s', exc)
+                return Response(
+                    {
+                        'detail': (
+                            'Falha ao autenticar no portal. Verifique '
+                            'PORTAL_USERNAME/PORTAL_PASSWORD no servidor.'
+                        ),
+                        'reason': 'portal_login_failed',
+                    },
+                    status=503,
+                )
+
+            if upstream.status_code == 401:
+                logger.info(
+                    'Upstream %s respondeu 401; invalidando cache de JWT e tentando novamente.',
+                    url,
+                )
+                invalidate_portal_token_cache()
+                try:
+                    upstream = self._do_request(method, url, request)
+                except PortalLoginError as exc:
+                    logger.warning('Re-login no portal falhou após 401: %s', exc)
+                    return Response(
+                        {
+                            'detail': 'Sessão com o portal expirou e não foi possível renovar.',
+                            'reason': 'portal_token_refresh_failed',
+                        },
+                        status=503,
+                    )
         except requests.RequestException:
             logger.exception('Falha de rede no proxy portal-formularios (%s %s)', method, url)
-            return Response({'detail': 'Erro ao contactar o portal.'}, status=502)
+            return Response(
+                {
+                    'detail': 'Erro ao contactar o portal — tente novamente em instantes.',
+                    'reason': 'portal_unreachable',
+                },
+                status=502,
+            )
 
+        # Broadcast realtime para os outros clientes conectados ao WS de suporte.
+        # Como os chamados estão no portal externo, o Django não recebe sinais
+        # nativos — então usamos as próprias mutações que passam pelo proxy como
+        # gatilho. Cobre o caso comum (todos os usuários editam via tech.bwa.global).
+        if 200 <= upstream.status_code < 300:
+            _maybe_broadcast_suporte_event(method, sub, upstream)
+
+        # Repassa o body e os headers úteis. Excluímos headers de transporte
+        # (Content-Length, Transfer-Encoding) que o Django reescreve, e Set-Cookie
+        # do portal (não queremos vazar cookies de outro domínio).
         content_type = upstream.headers.get('Content-Type') or 'application/json'
-        return HttpResponse(upstream.content, status=upstream.status_code, content_type=content_type)
+        response = HttpResponse(
+            upstream.content,
+            status=upstream.status_code,
+            content_type=content_type,
+        )
+        for raw_name, value in upstream.headers.items():
+            if raw_name.lower() in _FORWARDED_RESPONSE_HEADERS and raw_name.lower() != 'content-type':
+                response[raw_name] = value
+        return response
 
     def get(self, request, path):
         return self._forward(request, path)

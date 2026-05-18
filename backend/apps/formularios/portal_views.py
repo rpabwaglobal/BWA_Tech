@@ -8,20 +8,23 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from .portal_auth import PortalLoginError, login_on_portal
+from .portal_auth import PortalLoginError, login_on_portal_cached
 
 
 class PortalFormulariosJWTView(APIView):
     """
     GET — usuário já autenticado no BWA recebe `access` (JWT) para usar em:
     Authorization: Bearer <access> na API externa (ex.: .../api/formularios/suporte/).
+
+    Usa o cache compartilhado de `login_on_portal_cached()` — evita re-login a
+    cada request quando vários clientes pedem o token em sequência.
     """
 
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
         try:
-            access = login_on_portal()
+            access = login_on_portal_cached()
         except PortalLoginError as exc:
             return Response({'detail': str(exc)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
         return Response({'access': access})
