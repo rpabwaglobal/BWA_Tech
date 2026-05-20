@@ -342,9 +342,7 @@ export const cardService = {
   },
 
   async getById(id: string): Promise<Card> {
-    console.log('[cardService] Fazendo GET para /cards/' + id + '/');
     const response = await api.get(`/cards/${id}/`);
-    console.log('[cardService] Resposta GET recebida:', JSON.stringify(response.data, null, 2));
     return response.data;
   },
 
@@ -354,9 +352,7 @@ export const cardService = {
   },
 
   async update(id: string, data: Partial<CardCreate>): Promise<Card> {
-    console.log('[cardService] Enviando PATCH para /cards/' + id + '/', JSON.stringify(data, null, 2));
     const response = await api.patch(`/cards/${id}/`, data);
-    console.log('[cardService] Resposta recebida:', JSON.stringify(response.data, null, 2));
     return response.data;
   },
 

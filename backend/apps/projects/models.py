@@ -136,6 +136,19 @@ class Project(models.Model):
     data_adiamento_solicitada = models.DateTimeField(null=True, blank=True, verbose_name='Data de Solicitação de Adiamento')
     nova_data_prevista = models.DateField(null=True, blank=True, verbose_name='Nova Data Prevista')
     adiamento_aprovado = models.BooleanField(default=False, verbose_name='Adiamento Aprovado')
+    # Arquivamento (soft delete reversível) — projetos arquivados somem das
+    # operações diárias (Kanban, Prioridades, Dashboard) mas mantêm cards/logs
+    # intactos. Hard delete continua disponível via destroy() do viewset.
+    arquivado = models.BooleanField(default=False, db_index=True, verbose_name='Arquivado')
+    arquivado_em = models.DateTimeField(null=True, blank=True, verbose_name='Arquivado em')
+    arquivado_por = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        related_name='projetos_arquivados',
+        null=True,
+        blank=True,
+        verbose_name='Arquivado por',
+    )
     created_at = models.DateTimeField(auto_now_add=True, verbose_name='Data de Criação')
     updated_at = models.DateTimeField(auto_now=True, verbose_name='Data de Atualização')
 

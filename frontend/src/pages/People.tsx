@@ -834,9 +834,7 @@ export default function People() {
       
       // Construir nodes do zero
       const flowNodes: Node[] = [];
-      
-      console.log('Construindo nodes para', allUsers.length, 'usuários e', teams.length, 'equipes');
-      
+
       const positionsForBuild = nodePositionsRef.current;
       allUsers.forEach((user) => {
         const role = user.role;

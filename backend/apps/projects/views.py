@@ -53,21 +53,24 @@ class SprintViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         hoje = timezone.localdate()
+        # Cards de projetos arquivados ficam DE FORA de todas as métricas
+        # agregadas da sprint — mantém a coerência com o filtro de CardViewSet.
+        not_archived = Q(projects__arquivado=False)
         return (
             Sprint.objects.all()
             .annotate(
-                cards_total=Count('projects__cards'),
+                cards_total=Count('projects__cards', filter=not_archived),
                 cards_finalizados=Count(
                     'projects__cards',
-                    filter=Q(projects__cards__status='finalizado'),
+                    filter=not_archived & Q(projects__cards__status='finalizado'),
                 ),
                 cards_em_andamento=Count(
                     'projects__cards',
-                    filter=Q(projects__cards__status__in=['em_desenvolvimento', 'em_homologacao']),
+                    filter=not_archived & Q(projects__cards__status__in=['em_desenvolvimento', 'em_homologacao']),
                 ),
                 cards_em_atraso=Count(
                     'projects__cards',
-                    filter=(
+                    filter=not_archived & (
                         (
                             Q(projects__cards__data_fim__date__lt=hoje)
                             & ~Q(projects__cards__status__in=['finalizado', 'inviabilizado'])
@@ -80,12 +83,12 @@ class SprintViewSet(viewsets.ModelViewSet):
                 ),
                 cards_entregues_atrasados=Count(
                     'projects__cards',
-                    filter=Q(projects__cards__status='finalizado')
+                    filter=not_archived & Q(projects__cards__status='finalizado')
                     & Q(projects__cards__data_fim__gt=F('fechamento_em')),
                 ),
                 cards_abertos_atrasados=Count(
                     'projects__cards',
-                    filter=Q(projects__cards__data_fim__date__lt=hoje)
+                    filter=not_archived & Q(projects__cards__data_fim__date__lt=hoje)
                     & ~Q(projects__cards__status__in=['finalizado', 'inviabilizado']),
                 ),
             )
@@ -121,14 +124,17 @@ class ProjectViewSet(viewsets.ModelViewSet):
     serializer_class = ProjectSerializer
     permission_classes = [IsAuthenticated]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    # `arquivado` NÃO entra em filterset_fields — fazemos handling manual em
+    # get_queryset (que aceita 'all' além de true/false). Se entrasse aqui,
+    # o BooleanFilter do django-filter rejeitaria valores não-booleanos com 400.
     filterset_fields = ['sprint', 'gerente_atribuido', 'desenvolvedor', 'status']
     search_fields = ['nome', 'descricao']
-    ordering_fields = ['created_at', 'data_criacao', 'data_entrega']
+    ordering_fields = ['created_at', 'data_criacao', 'data_entrega', 'arquivado_em']
     ordering = ['-created_at']
 
     def get_queryset(self):
         # Contagens agregadas para evitar download de cards no frontend.
-        return (
+        qs = (
             Project.objects.all()
             .annotate(
                 cards_entregues_count=Count(
@@ -141,6 +147,22 @@ class ProjectViewSet(viewsets.ModelViewSet):
                 ),
             )
         )
+        # Em ações de detalhe (retrieve/update/destroy/custom @action detail=True)
+        # NÃO filtramos por arquivado — caso contrário, acessar a URL direta de
+        # um projeto arquivado retornaria 404, impedindo até de desarquivar.
+        if self.action != 'list':
+            return qs
+        # LIST: filtro de arquivamento explícito via query param.
+        # Default exclui arquivados (operação diária só quer "vivos").
+        # `?arquivado=true` traz somente arquivados (tab dedicada), com ordering
+        # natural por `-arquivado_em` (recém-arquivados primeiro).
+        # `?arquivado=all` mostra tudo.
+        param = (self.request.query_params.get('arquivado') or '').strip().lower()
+        if param == 'all':
+            return qs
+        if param in ('true', '1', 'yes'):
+            return qs.filter(arquivado=True).order_by('-arquivado_em', '-created_at')
+        return qs.filter(arquivado=False)
 
     def perform_create(self, serializer):
         """
@@ -386,6 +408,216 @@ class ProjectViewSet(viewsets.ModelViewSet):
 
         return Response({'detail': 'Cards movidos.', 'moved_count': len(cards)})
 
+    # ------------------------------------------------------------------
+    # Arquivamento + delete em massa
+    # ------------------------------------------------------------------
+    # Regra: apenas supervisor/admin podem arquivar, desarquivar ou excluir
+    # projetos. Espelha o padrão existente de `_is_supervisor_editor`.
+
+    # Projetos especiais do sistema que NUNCA devem ser arquivados/excluídos
+    # via API — o frontend nem mostra eles em `projetosNormais`, mas um cliente
+    # malicioso poderia tentar via curl. Defesa em profundidade aqui.
+    _SYSTEM_PROJECT_NAMES = ('Sugestões', 'Projetos Descartados')
+
+    # Limite máximo de cards "em jogo" listados por projeto no preview de
+    # exclusão. Acima disso, o JSON cresceria demais e o modal ficaria lento.
+    _PREVIEW_CARDS_LIMIT = 100
+
+    def _ensure_can_manage(self, request):
+        """Retorna `Response` 403 se o usuário não pode gerenciar projetos.
+        Caso contrário, retorna None (segue o fluxo)."""
+        if not self._is_supervisor_editor(request):
+            return Response(
+                {'detail': 'Apenas supervisores e administradores podem arquivar/excluir projetos.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        return None
+
+    def _resolve_ids(self, request):
+        """Extrai e valida `{ids: [int, ...]}` do body. Devolve (ids, error_response)."""
+        raw = request.data.get('ids')
+        if not isinstance(raw, list) or not raw:
+            return None, Response(
+                {'detail': 'Forneça uma lista não-vazia em `ids`.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        try:
+            ids = [int(x) for x in raw]
+        except (TypeError, ValueError):
+            return None, Response(
+                {'detail': '`ids` deve conter apenas inteiros.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        # Defesa contra payload absurdo (DoS) — limite generoso mas finito.
+        if len(ids) > 200:
+            return None, Response(
+                {'detail': 'Máximo 200 projetos por operação em massa.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        return ids, None
+
+    def _safe_ids(self, ids):
+        """Remove IDs de projetos sistêmicos (Sugestões, Descartados, etc.) do
+        conjunto. Retorna (safe_ids, blocked_count).
+
+        Defesa server-side: o frontend já omite esses, mas garantimos aqui pra
+        clientes API diretos."""
+        if not ids:
+            return [], 0
+        blocked_ids = set(
+            Project.objects.filter(id__in=ids, nome__in=self._SYSTEM_PROJECT_NAMES)
+            .values_list('id', flat=True)
+        )
+        safe = [i for i in ids if i not in blocked_ids]
+        return safe, len(blocked_ids)
+
+    def destroy(self, request, *args, **kwargs):
+        # NOTA DE COMPATIBILIDADE: antes desta mudança, qualquer usuário
+        # autenticado podia chamar DELETE /projects/<id>/. Agora exige
+        # supervisor/admin — alinha com a regra das ações em massa.
+        forbidden = self._ensure_can_manage(request)
+        if forbidden:
+            return forbidden
+        instance = self.get_object()
+        if instance.nome in self._SYSTEM_PROJECT_NAMES:
+            return Response(
+                {'detail': f'O projeto "{instance.nome}" é interno do sistema e não pode ser excluído.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        return super().destroy(request, *args, **kwargs)
+
+    @action(detail=False, methods=['post'], url_path='bulk-archive')
+    def bulk_archive(self, request):
+        forbidden = self._ensure_can_manage(request)
+        if forbidden:
+            return forbidden
+        ids, err = self._resolve_ids(request)
+        if err:
+            return err
+        safe_ids, blocked = self._safe_ids(ids)
+        now = timezone.now()
+        with transaction.atomic():
+            projects = (
+                Project.objects.select_for_update()
+                .filter(id__in=safe_ids, arquivado=False)
+            )
+            count = projects.update(arquivado=True, arquivado_em=now, arquivado_por=request.user)
+        return Response({
+            'arquivados': count,
+            'requested': len(ids),
+            'blocked_system_projects': blocked,
+        })
+
+    @action(detail=False, methods=['post'], url_path='bulk-unarchive')
+    def bulk_unarchive(self, request):
+        forbidden = self._ensure_can_manage(request)
+        if forbidden:
+            return forbidden
+        ids, err = self._resolve_ids(request)
+        if err:
+            return err
+        safe_ids, blocked = self._safe_ids(ids)
+        with transaction.atomic():
+            projects = (
+                Project.objects.select_for_update()
+                .filter(id__in=safe_ids, arquivado=True)
+            )
+            # Preserva `arquivado_em` e `arquivado_por` como histórico do último
+            # arquivamento — se desarquivar e re-arquivar depois, os valores são
+            # sobrescritos com a nova data/usuário. Único custo: não distinguimos
+            # "nunca foi arquivado" de "foi arquivado e desarquivado".
+            count = projects.update(arquivado=False)
+        return Response({
+            'desarquivados': count,
+            'requested': len(ids),
+            'blocked_system_projects': blocked,
+        })
+
+    @action(detail=False, methods=['post'], url_path='bulk-delete-preview')
+    def bulk_delete_preview(self, request):
+        """Resumo do impacto antes do delete — usado pelo modal de confirmação.
+
+        Lista, por projeto: total de cards e até `_PREVIEW_CARDS_LIMIT` cards
+        "em jogo" (sprint ativa AND status não-terminal). Inclui flag de
+        truncamento quando há mais.
+        """
+        forbidden = self._ensure_can_manage(request)
+        if forbidden:
+            return forbidden
+        ids, err = self._resolve_ids(request)
+        if err:
+            return err
+        safe_ids, blocked = self._safe_ids(ids)
+
+        # Importa local pra evitar ciclo com realtime.
+        from .realtime import _sprint_is_active
+
+        projects = (
+            Project.objects.filter(id__in=safe_ids)
+            .select_related('sprint')
+            .prefetch_related('cards')
+        )
+        terminal_statuses = {'finalizado', 'inviabilizado'}
+        result = []
+        for p in projects:
+            sprint = p.sprint  # já carregado via select_related — sem query extra
+            sprint_active = _sprint_is_active(sprint)
+            cards_em_jogo = []
+            cards_em_jogo_total = 0
+            cards_total = 0
+            for c in p.cards.all():
+                cards_total += 1
+                if c.status in terminal_statuses:
+                    continue
+                if not sprint_active:
+                    continue
+                cards_em_jogo_total += 1
+                # Apenas os primeiros _PREVIEW_CARDS_LIMIT entram no JSON.
+                if len(cards_em_jogo) < self._PREVIEW_CARDS_LIMIT:
+                    cards_em_jogo.append({
+                        'id': str(c.id),
+                        'nome': c.nome,
+                        'status': c.status,
+                        'status_display': c.get_status_display(),
+                        'sprint_nome': sprint.nome if sprint else None,
+                    })
+            result.append({
+                'id': p.id,
+                'nome': p.nome,
+                'total_cards': cards_total,
+                'cards_em_jogo': cards_em_jogo,
+                'cards_em_jogo_total': cards_em_jogo_total,
+                'cards_em_jogo_truncated': cards_em_jogo_total > len(cards_em_jogo),
+            })
+
+        return Response({
+            'total_projects': len(result),
+            'blocked_system_projects': blocked,
+            'projects': result,
+        })
+
+    @action(detail=False, methods=['post'], url_path='bulk-delete')
+    def bulk_delete(self, request):
+        """Hard delete. CASCADE elimina cards/logs/etc do model — sem
+        recuperação. O frontend obrigatoriamente passou pelo preview antes."""
+        forbidden = self._ensure_can_manage(request)
+        if forbidden:
+            return forbidden
+        ids, err = self._resolve_ids(request)
+        if err:
+            return err
+        safe_ids, blocked = self._safe_ids(ids)
+        with transaction.atomic():
+            projects = Project.objects.filter(id__in=safe_ids)
+            existing_ids = list(projects.values_list('id', flat=True))
+            deleted, _ = projects.delete()
+        return Response({
+            'deleted_projects': len(existing_ids),
+            'cascade_total': deleted,
+            'requested': len(ids),
+            'blocked_system_projects': blocked,
+        })
+
 
 class KanbanStageViewSet(viewsets.ModelViewSet):
     queryset = KanbanStage.objects.all().order_by('key')
@@ -417,7 +649,16 @@ class CardViewSet(viewsets.ModelViewSet):
         """Aplica filtros de permissão baseados no usuário"""
         queryset = Card.objects.select_related(
             'projeto', 'projeto__sprint', 'criado_por', 'responsavel'
-        ).all()
+        )
+        # Cards de projetos arquivados somem do app inteiro em queries
+        # genéricas (Kanban global, Prioridades). EXCEÇÃO: quando o cliente
+        # filtra explicitamente por `?projeto=<id>` ou pede um card específico
+        # via `/cards/<id>/`, ele sabe o que quer (ex.: visualizar projeto
+        # arquivado em ProjectDetails) e não escondemos.
+        is_specific_project = bool(self.request.query_params.get('projeto'))
+        is_detail = self.action != 'list'
+        if not is_specific_project and not is_detail:
+            queryset = queryset.filter(projeto__arquivado=False)
         # Filtro adicional para buscar cards por responsável (para página Meus Afazeres)
         responsavel_id = self.request.query_params.get('responsavel', None)
         if responsavel_id:
@@ -519,6 +760,7 @@ class CardViewSet(viewsets.ModelViewSet):
                 Q(status='parado_pendencias') |  # Cards parados por pendências
                 Q(status='finalizado', updated_at__date=hoje)  # OU cards finalizados hoje
             ).filter(
+                projeto__arquivado=False,
                 projeto__sprint__finalizada=False,
                 projeto__sprint__data_inicio__lte=timezone.now(),
                 projeto__sprint__fechamento_em__date__gte=hoje,
@@ -534,7 +776,7 @@ class CardViewSet(viewsets.ModelViewSet):
             fim_semana = hoje + timedelta(days=7)
             cards_em_desenvolvimento = Card.objects.filter(
                 status__in=['a_desenvolver', 'em_desenvolvimento', 'parado_pendencias', 'em_homologacao', 'finalizado']
-            ).exclude(responsavel__isnull=True).exclude(
+            ).filter(projeto__arquivado=False).exclude(responsavel__isnull=True).exclude(
                 responsavel__role__in=['supervisor', 'admin']
             ).filter(
                 Q(data_fim__gte=hoje, data_fim__lte=fim_semana) |
@@ -632,6 +874,9 @@ class CardPinViewSet(viewsets.ModelViewSet):
             CardPin.objects
             .filter(user=self.request.user)
             .exclude(card__status__in=[CardStatus.FINALIZADO, CardStatus.INVIABILIZADO])
+            # Pins de cards de projetos arquivados somem da tab Cards Fixados —
+            # coerente com o comportamento de CardViewSet (que também esconde).
+            .filter(card__projeto__arquivado=False)
             .filter(card__projeto__sprint__finalizada=False)
             .filter(
                 Q(card__projeto__sprint__fechamento_em__isnull=True)
@@ -657,7 +902,6 @@ class CardPinViewSet(viewsets.ModelViewSet):
 
 
 class EventViewSet(viewsets.ModelViewSet):
-    queryset = Event.objects.all()
     serializer_class = EventSerializer
     permission_classes = [IsAuthenticated]
     filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
@@ -665,15 +909,32 @@ class EventViewSet(viewsets.ModelViewSet):
     ordering_fields = ['data']
     ordering = ['-data']
 
+    def get_queryset(self):
+        # Eventos de cards em projetos arquivados ficam invisíveis em listagens
+        # genéricas. Quando o cliente filtra explicitamente por `?card=<id>` ou
+        # acessa /events/<id>/, retornamos mesmo assim (user acessou de propósito
+        # via ProjectDetails arquivado).
+        qs = Event.objects.all()
+        if self.action == 'list' and not self.request.query_params.get('card'):
+            qs = qs.filter(card__projeto__arquivado=False)
+        return qs
+
 
 class CardLogViewSet(viewsets.ModelViewSet):
-    queryset = CardLog.objects.all()
     serializer_class = CardLogSerializer
     permission_classes = [IsAuthenticated]
     filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
     filterset_fields = ['card', 'tipo_evento', 'usuario']
     ordering_fields = ['data']
     ordering = ['-data']
+
+    def get_queryset(self):
+        # Idem EventViewSet: filtra arquivados em listagens genéricas,
+        # mantém visibilidade quando cliente filtra por card específico.
+        qs = CardLog.objects.all()
+        if self.action == 'list' and not self.request.query_params.get('card'):
+            qs = qs.filter(card__projeto__arquivado=False)
+        return qs
 
     def perform_create(self, serializer):
         # Preencher o usuário automaticamente se não foi fornecido
@@ -966,9 +1227,14 @@ class CardDueDateChangeRequestViewSet(viewsets.ModelViewSet):
     ordering = ['-created_at']
 
     def get_queryset(self):
-        return CardDueDateChangeRequest.objects.select_related(
+        qs = CardDueDateChangeRequest.objects.select_related(
             'card', 'card__projeto', 'requested_by', 'reviewed_by'
-        ).all()
+        )
+        # Filtra projetos arquivados em listagens genéricas. Permite visualização
+        # quando o cliente acessa via `?card=<id>` (workflow histórico).
+        if self.action == 'list' and not self.request.query_params.get('card'):
+            qs = qs.filter(card__projeto__arquivado=False)
+        return qs
 
     def perform_create(self, serializer):
         card = serializer.validated_data.get('card')
@@ -1076,9 +1342,11 @@ class CardDueDateChangeRequestViewSet(viewsets.ModelViewSet):
         config = WeeklyPriorityConfig.get_config()
         semana_fechada = config.is_semana_fechada(semana_inicio)
         
-        # Buscar prioridades da semana atual
+        # Buscar prioridades da semana atual — excluindo prioridades cujo
+        # card pertença a projeto arquivado (já não fazem parte da operação).
         priorities = WeeklyPriority.objects.filter(
-            semana_inicio=semana_inicio
+            semana_inicio=semana_inicio,
+            card__projeto__arquivado=False,
         ).select_related('usuario', 'card', 'definido_por', 'card__projeto')
         
         # Criar dicionário de prioridades por usuário (lista de prioridades)

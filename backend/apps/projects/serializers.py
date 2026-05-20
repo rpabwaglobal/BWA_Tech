@@ -128,12 +128,17 @@ class ProjectSerializer(serializers.ModelSerializer):
     sprint_detail = SprintSerializer(source='sprint', read_only=True)
     gerente_name = serializers.SerializerMethodField()
     desenvolvedor_name = serializers.SerializerMethodField()
-    
+    arquivado_por_name = serializers.SerializerMethodField()
+
     def get_gerente_name(self, obj):
         return format_user_name(obj.gerente_atribuido)
-    
+
     def get_desenvolvedor_name(self, obj):
         return format_user_name(obj.desenvolvedor)
+
+    def get_arquivado_por_name(self, obj):
+        return format_user_name(obj.arquivado_por) if obj.arquivado_por_id else None
+
     status_display = serializers.CharField(source='get_status_display', read_only=True)
     cards_count = serializers.IntegerField(source='cards.count', read_only=True)
     cards_entregues_count = serializers.IntegerField(read_only=True)
@@ -164,14 +169,19 @@ class ProjectSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Project
-        fields = ['id', 'nome', 'descricao', 'sprint', 'sprint_detail', 'gerente_atribuido', 
+        fields = ['id', 'nome', 'descricao', 'sprint', 'sprint_detail', 'gerente_atribuido',
                  'gerente_name', 'desenvolvedor', 'desenvolvedor_name', 'status', 'status_display',
-                 'data_criacao', 'data_avaliacao', 'data_atribuicao_gerente', 
+                 'data_criacao', 'data_avaliacao', 'data_atribuicao_gerente',
                  'data_inicio_desenvolvimento', 'data_entrega', 'data_homologacao',
                  'data_adiamento_solicitada', 'nova_data_prevista', 'adiamento_aprovado',
+                 'arquivado', 'arquivado_em', 'arquivado_por', 'arquivado_por_name',
                  'cards_count', 'cards_entregues_count', 'cards_em_desenvolvimento_count',
                  'created_at', 'updated_at']
-        read_only_fields = ['created_at', 'updated_at', 'data_criacao']
+        # `arquivado_em` e `arquivado_por` SÃO preenchidos pelo backend nas actions
+        # archive/unarchive. O campo `arquivado` é também read-only para clientes —
+        # mudanças passam pelas actions dedicadas (permitem audit + permission check).
+        read_only_fields = ['created_at', 'updated_at', 'data_criacao',
+                            'arquivado', 'arquivado_em', 'arquivado_por', 'arquivado_por_name']
 
 
 class UserNoteItemSerializer(serializers.ModelSerializer):
@@ -242,6 +252,10 @@ class CardPinSerializer(serializers.ModelSerializer):
         if card.status in (CardStatus.FINALIZADO, CardStatus.INVIABILIZADO):
             raise serializers.ValidationError(
                 'Não é possível fixar um card finalizado ou inviabilizado.'
+            )
+        if card.projeto_id and getattr(card.projeto, 'arquivado', False):
+            raise serializers.ValidationError(
+                'Não é possível fixar cards de projetos arquivados.'
             )
         sprint = getattr(card.projeto, 'sprint', None) if card.projeto_id else None
         if sprint is None:

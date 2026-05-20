@@ -144,8 +144,6 @@ export default function Priorities() {
         const response = await api.get('/cards/priorities_view/', {
           params: { periodo }
         });
-        console.log('[Priorities] Dados recebidos:', response.data);
-        console.log('[Priorities] Total de usuários:', response.data?.length || 0);
         setUsersWithCards(response.data || []);
       }
     } catch (error: any) {

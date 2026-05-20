@@ -61,14 +61,10 @@ export function useWebSocket({ onNotification, enabled = true }: UseWebSocketOpt
       ws.onmessage = (event) => {
         try {
           const message: WebSocketMessage = JSON.parse(event.data);
-          console.log('[WebSocket] Mensagem recebida:', message.type);
-          
           if (message.type === 'notification' && message.data) {
-            console.log('[WebSocket] Nova notificação recebida:', message.data);
             onNotification?.(message.data);
-          } else if (message.type === 'pong') {
-            console.log('[WebSocket] Pong recebido - conexão viva');
           }
+          // 'pong' é mantido apenas como sinal de vida — nenhum side-effect.
         } catch (error) {
           console.error('[WebSocket] Erro ao processar mensagem:', error);
         }

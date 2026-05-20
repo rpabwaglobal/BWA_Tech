@@ -946,14 +946,7 @@ export default function SprintDetails() {
     setCardLinks(fullCard.links ?? []);
     setNewLinkUrl('');
     setNewLinkLabel('');
-    
-    // Debug: log dos dados carregados do servidor
-    console.log('[SprintDetails] Carregando card, dados de complexidade:', {
-      complexidade_selected_items: fullCard.complexidade_selected_items,
-      complexidade_selected_development: fullCard.complexidade_selected_development,
-      complexidade_custom_items: fullCard.complexidade_custom_items,
-    });
-    
+
     // Carregar dados de estimativa de complexidade salvos
     if (fullCard.complexidade_selected_items && fullCard.complexidade_selected_items.length > 0) {
       setSelectedTimeItems(new Set(fullCard.complexidade_selected_items));
@@ -1300,54 +1293,27 @@ export default function SprintDetails() {
         complexidade_custom_items: customTimeItems.length > 0 ? customTimeItems : [],
         links: cardLinks,
       };
-      
-      // Debug: log dos dados sendo enviados
-      console.log('[SprintDetails] Salvando card com dados de complexidade:', {
-        complexidade_selected_items: dataToSend.complexidade_selected_items,
-        complexidade_selected_development: dataToSend.complexidade_selected_development,
-        complexidade_custom_items: dataToSend.complexidade_custom_items,
-      });
 
       if (editingCard) {
         // Detectar alterações antes de atualizar
         const changes = detectCardChanges(editingCard, dataToSend, true); // excludeStatus=true porque mudanças de status são tratadas separadamente
-        
-        console.log('[SprintDetails] ANTES de atualizar - dados sendo enviados:', JSON.stringify(dataToSend, null, 2));
-        
-        const updatedCard = await cardService.update(editingCard.id, dataToSend);
-        
-        // Debug: log dos dados retornados do servidor
-        console.log('[SprintDetails] DEPOIS de atualizar - dados retornados do update():', {
-          id: updatedCard.id,
-          complexidade_selected_items: updatedCard.complexidade_selected_items,
-          complexidade_selected_development: updatedCard.complexidade_selected_development,
-          complexidade_custom_items: updatedCard.complexidade_custom_items,
-          fullResponse: JSON.stringify(updatedCard, null, 2)
-        });
-        
+
+        await cardService.update(editingCard.id, dataToSend);
+
         // Recarregar o card completo do servidor para garantir que temos todos os dados atualizados
         const refreshedCard = await cardService.getById(editingCard.id);
-        console.log('[SprintDetails] Card recarregado do servidor via getById():', {
-          id: refreshedCard.id,
-          complexidade_selected_items: refreshedCard.complexidade_selected_items,
-          complexidade_selected_development: refreshedCard.complexidade_selected_development,
-          complexidade_custom_items: refreshedCard.complexidade_custom_items,
-          fullResponse: JSON.stringify(refreshedCard, null, 2)
-        });
-        
+
         // Atualizar o card na lista local com os dados recarregados
-        setCards((prevCards) => {
-          const updated = prevCards.map((card) =>
-            card.id === editingCard.id 
-              ? { 
-                  ...refreshedCard, 
-                  responsavel_name: refreshedCard.responsavel_name ?? (refreshedCard.responsavel ? users.find(u => u.id === refreshedCard.responsavel)?.first_name : undefined)
-                } 
-              : card
-          );
-          console.log('[SprintDetails] Estado atualizado, card na lista:', updated.find(c => c.id === editingCard.id));
-          return updated;
-        });
+        setCards((prevCards) =>
+          prevCards.map((card) =>
+            card.id === editingCard.id
+              ? {
+                  ...refreshedCard,
+                  responsavel_name: refreshedCard.responsavel_name ?? (refreshedCard.responsavel ? users.find(u => u.id === refreshedCard.responsavel)?.first_name : undefined),
+                }
+              : card,
+          ),
+        );
         
         // Registrar log de alteração se houver mudanças
         if (changes.length > 0) {

@@ -76,6 +76,8 @@ import {
   Pin,
   PinOff,
   Plus,
+  Archive,
+  ArchiveRestore,
   ChevronDown,
   ChevronUp,
   Pencil,
@@ -1073,9 +1075,6 @@ export default function ProjectDetails() {
         userService.getAll(),
         projectService.getKanbanConfig(id).catch(() => null),
       ]);
-      console.log('Project data:', projectData);
-      console.log('Cards data:', cardsData);
-      console.log('Project ID:', id);
       setProject(projectData);
       setCards(cardsData);
       setUsers(usersData);
@@ -2528,6 +2527,42 @@ export default function ProjectDetails() {
 
   return (
     <div className="flex flex-col h-[calc(100vh-64px-64px)] min-h-0">
+      {/* Banner: projeto arquivado */}
+      {project?.arquivado && (
+        <div className="mb-[12px] flex items-center justify-between gap-3 rounded-md border border-amber-300 bg-amber-50 dark:border-amber-900 dark:bg-amber-950/40 px-4 py-2 text-sm text-amber-900 dark:text-amber-200">
+          <div className="flex items-center gap-2">
+            <Archive className="h-4 w-4 shrink-0" />
+            <span>
+              Este projeto está <strong>arquivado</strong>. Cards e métricas
+              dele não aparecem em telas operacionais.
+              {project.arquivado_por_name && (
+                <> Arquivado por {project.arquivado_por_name}
+                  {project.arquivado_em && (
+                    <> em {formatDate(project.arquivado_em)}</>
+                  )}.
+                </>
+              )}
+            </span>
+          </div>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            onClick={async () => {
+              try {
+                await projectService.bulkUnarchive([project.id]);
+                navigate(ROUTES.projetos);
+              } catch (err: any) {
+                console.error('Erro ao desarquivar:', err);
+              }
+            }}
+            className="shrink-0"
+          >
+            <ArchiveRestore className="h-4 w-4 mr-2" />
+            Desarquivar
+          </Button>
+        </div>
+      )}
       {/* Header */}
       <div className="flex items-center gap-[16px] mb-[24px] flex-shrink-0">
         <Button

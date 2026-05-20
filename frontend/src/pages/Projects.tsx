@@ -15,7 +15,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { projectService, type Project } from '@/services/projectService';
+import { projectService, type Project, type BulkDeletePreview } from '@/services/projectService';
 import { cardService, CARD_AREAS, CARD_TYPES, CARD_PRIORITIES, CARD_STATUSES, type Card as CardType } from '@/services/cardService';
 import { sprintService, type Sprint } from '@/services/sprintService';
 import { userService, type User } from '@/services/userService';
@@ -36,7 +36,13 @@ import {
   Pencil,
   Trash2,
   ArrowRight,
+  CheckSquare,
+  Archive,
+  ArchiveRestore,
+  Search,
+  AlertTriangle,
 } from 'lucide-react';
+import { cn } from '@/lib/utils';
 import { Avatar, AvatarImage, AvatarFallback } from '@/components/ui/avatar';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { RequestDueDateChangeModal } from '@/components/RequestDueDateChangeModal';
@@ -47,10 +53,29 @@ export default function Projects() {
   const { user } = useAuth();
   const navigate = useNavigate();
   const [projects, setProjects] = useState<Project[]>([]);
+  const [archivedProjects, setArchivedProjects] = useState<Project[]>([]);
   const [sprints, setSprints] = useState<Sprint[]>([]);
   const [cards, setCards] = useState<CardType[]>([]);
   const [users, setUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
+
+  // Sistema de tabs (Em desenvolvimento / Arquivados) + busca persistente.
+  const [archiveTab, setArchiveTab] = useState<'active' | 'archived'>('active');
+  const [searchQuery, setSearchQuery] = useState('');
+
+  // Seleção múltipla espelhando o padrão do kanban (ProjectDetails). Só
+  // supervisor + admin podem entrar nesse modo — checagem no JSX.
+  const [projectSelectionMode, setProjectSelectionMode] = useState(false);
+  const [selectedProjectIds, setSelectedProjectIds] = useState<string[]>([]);
+  const [archiveDialogOpen, setArchiveDialogOpen] = useState(false);
+  const [unarchiveDialogOpen, setUnarchiveDialogOpen] = useState(false);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [deletePreview, setDeletePreview] = useState<BulkDeletePreview | null>(null);
+  const [archiveLoading, setArchiveLoading] = useState(false);
+  const [deleteLoading, setDeleteLoading] = useState(false);
+  const [previewLoading, setPreviewLoading] = useState(false);
+
+  const canManageProjects = user?.role === 'supervisor' || user?.role === 'admin';
   
   // Estados para formulário de sugestão
   const [suggestionDialogOpen, setSuggestionDialogOpen] = useState(false);
@@ -150,13 +175,15 @@ export default function Projects() {
   const loadData = async () => {
     try {
       setLoading(true);
-      const [projectsData, sprintsData, usersData] = await Promise.all([
+      const [projectsData, archivedData, sprintsData, usersData] = await Promise.all([
         projectService.getAll(),
+        projectService.getArchived().catch(() => []), // não bloqueia se falhar
         sprintService.getAll(),
         userService.getAll(),
       ]);
       // Garantir que os dados são arrays
       setProjects(Array.isArray(projectsData) ? projectsData : []);
+      setArchivedProjects(Array.isArray(archivedData) ? archivedData : []);
       setSprints(Array.isArray(sprintsData) ? sprintsData : []);
       setUsers(Array.isArray(usersData) ? usersData : []);
 
@@ -682,12 +709,22 @@ export default function Projects() {
     }
   };
 
-  // Filtrar projetos que são sugestões (projeto "Sugestões")
+  // Filtrar projetos que são sugestões (projeto "Sugestões") — usa SEMPRE a
+  // lista ativa, mesmo na tab Arquivados (sugestões não são arquiváveis).
   const sugestoesProject = projects.find(p => p.nome === 'Sugestões');
   const sugestoesCards = cards;
-  
-  // Filtrar projetos normais (excluindo "Sugestões" e "Projetos Descartados")
-  const projetosNormais = projects.filter(p => p.nome !== 'Sugestões' && p.nome !== 'Projetos Descartados');
+
+  // Fonte da listagem principal: ativos (default) ou arquivados (tab).
+  const projectListForTab: Project[] = archiveTab === 'archived' ? archivedProjects : projects;
+  const normalizedSearch = searchQuery.trim().toLowerCase();
+  const matchesSearch = (p: Project) =>
+    !normalizedSearch || p.nome.toLowerCase().includes(normalizedSearch);
+
+  // A busca textual é aplicada aqui no topo. Os projetos "Sugestões" /
+  // "Projetos Descartados" são especiais e ficam fora das tabs.
+  const projetosNormais = projectListForTab
+    .filter(p => p.nome !== 'Sugestões' && p.nome !== 'Projetos Descartados')
+    .filter(matchesSearch);
   
   // Projetos descartados (projeto especial "Projetos Descartados")
   const projetosDescartadosProject = projects.find(p => p.nome === 'Projetos Descartados');
@@ -793,6 +830,156 @@ export default function Projects() {
       observers.forEach(observer => observer.disconnect());
     };
   }, [projetosEmSprint.length, projetosEmPlanejamento.length, projetosConcluidos.length, projetosEmSprintPage, projetosEmPlanejamentoPage, projetosConcluidosPage]);
+
+  // ------------------------------------------------------------------
+  // Tabs / busca / seleção múltipla — handlers
+  // ------------------------------------------------------------------
+
+  const exitSelectionMode = () => {
+    setProjectSelectionMode(false);
+    setSelectedProjectIds([]);
+  };
+
+  const toggleProjectSelected = (id: string) => {
+    setSelectedProjectIds((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
+    );
+  };
+
+  // Contadores das tabs (visíveis nos rótulos "Em desenvolvimento (N) / Arquivados (M)").
+  const activeCount = projects.filter(
+    (p) => p.nome !== 'Sugestões' && p.nome !== 'Projetos Descartados',
+  ).length;
+  const archivedCount = archivedProjects.length;
+
+  /** Helper: mostra alerta resumindo o resultado de uma bulk action quando há
+   * discrepância entre solicitado e executado (já arquivados, projetos sistêmicos
+   * bloqueados, etc.). Silencioso quando bate tudo. */
+  const reportBulkResult = (
+    actionDoneLabel: string,
+    affected: number,
+    requested: number,
+    blockedSystem: number,
+  ) => {
+    const diff = requested - affected;
+    if (diff <= 0 && blockedSystem === 0) return; // nada a reportar
+    const parts: string[] = [`${affected} de ${requested} projeto(s) ${actionDoneLabel}.`];
+    if (blockedSystem > 0) {
+      parts.push(
+        `${blockedSystem} foi(ram) ignorado(s) por serem projetos internos do sistema.`,
+      );
+    }
+    const remainingDiff = diff - blockedSystem;
+    if (remainingDiff > 0) {
+      parts.push(`${remainingDiff} não estava(m) elegível(is) para esta ação.`);
+    }
+    setAlertMessage(parts.join(' '));
+    setAlertDialogOpen(true);
+  };
+
+  const handleArchiveConfirm = async () => {
+    if (selectedProjectIds.length === 0) return;
+    setArchiveLoading(true);
+    try {
+      const result = await projectService.bulkArchive(selectedProjectIds);
+      const affected = result.arquivados ?? 0;
+      // Update local sem refetch — move dos ativos para arquivados.
+      const movedProjects = projects.filter((p) => selectedProjectIds.includes(String(p.id)));
+      const nowIso = new Date().toISOString();
+      const updatedMoved = movedProjects.map((p) => ({
+        ...p,
+        arquivado: true,
+        arquivado_em: nowIso,
+        arquivado_por: user?.id ?? null,
+        arquivado_por_name: user?.first_name || user?.username || null,
+      }));
+      setProjects((prev) => prev.filter((p) => !selectedProjectIds.includes(String(p.id))));
+      setArchivedProjects((prev) => [...updatedMoved, ...prev]);
+      setArchiveDialogOpen(false);
+      exitSelectionMode();
+      reportBulkResult('arquivado(s)', affected, result.requested, result.blocked_system_projects);
+    } catch (err: any) {
+      setArchiveDialogOpen(false);
+      setAlertMessage(
+        err?.response?.data?.detail || 'Erro ao arquivar projetos. Tente novamente.',
+      );
+      setAlertDialogOpen(true);
+    } finally {
+      setArchiveLoading(false);
+    }
+  };
+
+  const handleUnarchiveConfirm = async () => {
+    if (selectedProjectIds.length === 0) return;
+    setArchiveLoading(true);
+    try {
+      const result = await projectService.bulkUnarchive(selectedProjectIds);
+      const affected = result.desarquivados ?? 0;
+      // Update local: move dos arquivados de volta pros ativos.
+      const movedProjects = archivedProjects.filter((p) =>
+        selectedProjectIds.includes(String(p.id)),
+      );
+      const updatedMoved = movedProjects.map((p) => ({ ...p, arquivado: false }));
+      setArchivedProjects((prev) =>
+        prev.filter((p) => !selectedProjectIds.includes(String(p.id))),
+      );
+      setProjects((prev) => [...updatedMoved, ...prev]);
+      setUnarchiveDialogOpen(false);
+      exitSelectionMode();
+      reportBulkResult('desarquivado(s)', affected, result.requested, result.blocked_system_projects);
+    } catch (err: any) {
+      setUnarchiveDialogOpen(false);
+      setAlertMessage(
+        err?.response?.data?.detail || 'Erro ao desarquivar projetos. Tente novamente.',
+      );
+      setAlertDialogOpen(true);
+    } finally {
+      setArchiveLoading(false);
+    }
+  };
+
+  const openDeletePreviewDialog = async () => {
+    if (selectedProjectIds.length === 0) return;
+    setPreviewLoading(true);
+    setDeletePreview(null);
+    setDeleteDialogOpen(true);
+    try {
+      const preview = await projectService.bulkDeletePreview(selectedProjectIds);
+      setDeletePreview(preview);
+    } catch (err: any) {
+      setDeleteDialogOpen(false);
+      setAlertMessage(
+        err?.response?.data?.detail || 'Erro ao calcular impacto da exclusão.',
+      );
+      setAlertDialogOpen(true);
+    } finally {
+      setPreviewLoading(false);
+    }
+  };
+
+  const handleDeleteConfirm = async () => {
+    if (selectedProjectIds.length === 0) return;
+    setDeleteLoading(true);
+    try {
+      const result = await projectService.bulkDelete(selectedProjectIds);
+      const affected = result.deleted_projects ?? 0;
+      // Update local: remove dos dois buckets (delete pode vir de qualquer tab).
+      setProjects((prev) => prev.filter((p) => !selectedProjectIds.includes(String(p.id))));
+      setArchivedProjects((prev) => prev.filter((p) => !selectedProjectIds.includes(String(p.id))));
+      setDeleteDialogOpen(false);
+      setDeletePreview(null);
+      exitSelectionMode();
+      reportBulkResult('excluído(s)', affected, result.requested, result.blocked_system_projects);
+    } catch (err: any) {
+      setDeleteDialogOpen(false);
+      setAlertMessage(
+        err?.response?.data?.detail || 'Erro ao excluir projetos. Tente novamente.',
+      );
+      setAlertDialogOpen(true);
+    } finally {
+      setDeleteLoading(false);
+    }
+  };
 
   if (loading) {
     return (
@@ -995,8 +1182,160 @@ export default function Projects() {
             Criar Projeto
           </Button>
         </div>
-        
+
+        {/* Tabs (Em desenvolvimento / Arquivados) + busca + botão Selecionar */}
+        <div className="flex flex-col gap-[12px] sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-center gap-[8px] border-b border-[var(--color-border)]">
+            <Button
+              variant="ghost"
+              onClick={() => {
+                setArchiveTab('active');
+                exitSelectionMode();
+              }}
+              className={cn(
+                'rounded-none border-b-2 border-transparent px-[16px] py-[8px] h-auto',
+                archiveTab === 'active'
+                  ? 'border-[var(--color-primary)] text-[var(--color-primary)] font-semibold'
+                  : 'text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]',
+              )}
+            >
+              Em desenvolvimento ({activeCount})
+            </Button>
+            <Button
+              variant="ghost"
+              onClick={() => {
+                setArchiveTab('archived');
+                exitSelectionMode();
+              }}
+              className={cn(
+                'rounded-none border-b-2 border-transparent px-[16px] py-[8px] h-auto',
+                archiveTab === 'archived'
+                  ? 'border-[var(--color-primary)] text-[var(--color-primary)] font-semibold'
+                  : 'text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]',
+              )}
+            >
+              Arquivados ({archivedCount})
+            </Button>
+          </div>
+
+          <div className="flex flex-col items-stretch gap-[8px] sm:flex-row sm:items-center">
+            <div className="relative w-full sm:w-[260px]">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--color-muted-foreground)]" />
+              <Input
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Buscar projeto..."
+                className="pl-9"
+              />
+            </div>
+            {canManageProjects && (
+              <Button
+                type="button"
+                variant={projectSelectionMode ? 'default' : 'outline'}
+                onClick={() => {
+                  if (projectSelectionMode) exitSelectionMode();
+                  else setProjectSelectionMode(true);
+                }}
+              >
+                <CheckSquare className="h-4 w-4 mr-2" />
+                {projectSelectionMode ? 'Sair da seleção' : 'Selecionar projetos'}
+              </Button>
+            )}
+          </div>
+        </div>
+
         <div className="space-y-[24px]">
+          {/* Tab Arquivados: lista plana ordenada por arquivado_em desc.
+              Para essa tab, escondemos a categorização em sprint/planejamento/
+              concluídos (não faz sentido pra projetos fora de operação). */}
+          {archiveTab === 'archived' && (
+            <Card>
+              <CardHeader>
+                <CardTitle>
+                  {projetosNormais.length} {projetosNormais.length === 1 ? 'Projeto Arquivado' : 'Projetos Arquivados'}
+                </CardTitle>
+                <CardDescription>
+                  Projetos retirados de circulação. Cards e métricas dos arquivados
+                  não aparecem em telas operacionais (Kanban, Prioridades, Dashboard).
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                {projetosNormais.length === 0 ? (
+                  <p className="text-center py-[32px] text-[var(--color-muted-foreground)]">
+                    Nenhum projeto arquivado{searchQuery ? ' corresponde à busca' : ''}.
+                  </p>
+                ) : (
+                  <div className="grid gap-[16px] md:grid-cols-2 lg:grid-cols-3">
+                    {projetosNormais.map((project) => {
+                      const totalCards = project.cards_count ?? 0;
+                      const cardsEntregues = project.cards_entregues_count ?? 0;
+                      return (
+                        <Card
+                          key={project.id}
+                          className={cn(
+                            'cursor-pointer hover:shadow-md transition-shadow',
+                            projectSelectionMode && selectedProjectIds.includes(String(project.id)) &&
+                              'ring-2 ring-[var(--color-primary)] border-[var(--color-primary)]',
+                          )}
+                          onClick={() => {
+                            if (projectSelectionMode) {
+                              toggleProjectSelected(String(project.id));
+                            } else {
+                              navigate(ROUTES.projeto(String(project.id)));
+                            }
+                          }}
+                        >
+                          <CardHeader>
+                            <div className="flex items-start justify-between">
+                              <CardTitle className="text-lg">{project.nome}</CardTitle>
+                              <Badge variant="secondary" className="shrink-0">
+                                <Archive className="h-3 w-3 mr-1" />
+                                Arquivado
+                              </Badge>
+                            </div>
+                            {project.descricao && (
+                              <CardDescription className="mt-2">{project.descricao}</CardDescription>
+                            )}
+                          </CardHeader>
+                          <CardContent>
+                            <div className="space-y-2 text-sm text-[var(--color-muted-foreground)]">
+                              {project.arquivado_em && (
+                                <div className="flex items-center gap-2">
+                                  <Archive className="h-4 w-4" />
+                                  <span>
+                                    Arquivado em {formatDate(project.arquivado_em)}
+                                    {project.arquivado_por_name && ` por ${project.arquivado_por_name}`}
+                                  </span>
+                                </div>
+                              )}
+                              <div className="flex items-center gap-2">
+                                <FolderKanban className="h-4 w-4" />
+                                <span>{totalCards} cards total</span>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <CheckCircle2 className="h-4 w-4 text-green-500" />
+                                <span>{cardsEntregues} entregues</span>
+                              </div>
+                              {project.gerente_name && (
+                                <div className="flex items-center gap-2">
+                                  <UserIcon className="h-4 w-4" />
+                                  <span>Gerente: {project.gerente_name}</span>
+                                </div>
+                              )}
+                            </div>
+                          </CardContent>
+                        </Card>
+                      );
+                    })}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          )}
+
+          {/* As 3 seções categorizadas (em sprint / em planejamento / concluídos)
+              + Projetos Descartados ficam ESCONDIDAS quando estamos na tab Arquivados. */}
+          {archiveTab === 'active' && (<>
           {/* Projetos em Sprint */}
           <Card>
           <CardHeader>
@@ -1022,8 +1361,18 @@ export default function Projects() {
                   return (
                     <Card
                       key={project.id}
-                      className="cursor-pointer hover:shadow-md transition-shadow"
-                      onClick={() => navigate(ROUTES.projeto(String(project.id)))}
+                      className={cn(
+                        'cursor-pointer hover:shadow-md transition-shadow',
+                        projectSelectionMode && selectedProjectIds.includes(String(project.id)) &&
+                          'ring-2 ring-[var(--color-primary)] border-[var(--color-primary)]',
+                      )}
+                      onClick={() => {
+                        if (projectSelectionMode) {
+                          toggleProjectSelected(String(project.id));
+                        } else {
+                          navigate(ROUTES.projeto(String(project.id)));
+                        }
+                      }}
                     >
                       <CardHeader>
                         <div className="flex items-start justify-between">
@@ -1109,8 +1458,18 @@ export default function Projects() {
                   return (
                     <Card
                       key={project.id}
-                      className="cursor-pointer hover:shadow-md transition-shadow"
-                      onClick={() => navigate(ROUTES.projeto(String(project.id)))}
+                      className={cn(
+                        'cursor-pointer hover:shadow-md transition-shadow',
+                        projectSelectionMode && selectedProjectIds.includes(String(project.id)) &&
+                          'ring-2 ring-[var(--color-primary)] border-[var(--color-primary)]',
+                      )}
+                      onClick={() => {
+                        if (projectSelectionMode) {
+                          toggleProjectSelected(String(project.id));
+                        } else {
+                          navigate(ROUTES.projeto(String(project.id)));
+                        }
+                      }}
                     >
                       <CardHeader>
                         <div className="flex items-start justify-between">
@@ -1196,8 +1555,18 @@ export default function Projects() {
                   return (
                     <Card
                       key={project.id}
-                      className="cursor-pointer hover:shadow-md transition-shadow"
-                      onClick={() => navigate(ROUTES.projeto(String(project.id)))}
+                      className={cn(
+                        'cursor-pointer hover:shadow-md transition-shadow',
+                        projectSelectionMode && selectedProjectIds.includes(String(project.id)) &&
+                          'ring-2 ring-[var(--color-primary)] border-[var(--color-primary)]',
+                      )}
+                      onClick={() => {
+                        if (projectSelectionMode) {
+                          toggleProjectSelected(String(project.id));
+                        } else {
+                          navigate(ROUTES.projeto(String(project.id)));
+                        }
+                      }}
                     >
                       <CardHeader>
                         <div className="flex items-start justify-between">
@@ -1312,6 +1681,7 @@ export default function Projects() {
               </div>
             </div>
           )}
+          </>)}{/* fecha o `{archiveTab === 'active' && (<>` */}
         </div>
       </div>
 
@@ -2003,6 +2373,265 @@ export default function Projects() {
               }}
             >
               Entendi
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Barra inferior flutuante (mesmo padrão do kanban) */}
+      {selectedProjectIds.length > 0 && (
+        <div className="pointer-events-none fixed inset-x-0 bottom-6 z-40 flex justify-center px-4">
+          <div className="pointer-events-auto flex max-w-[min(100%,640px)] flex-wrap items-center justify-center gap-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-background)] px-5 py-3 shadow-lg">
+            <span className="text-sm font-medium text-[var(--color-foreground)]">
+              {selectedProjectIds.length} projeto(s) selecionado(s)
+            </span>
+            {archiveTab === 'active' ? (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setArchiveDialogOpen(true)}
+              >
+                <Archive className="h-4 w-4 mr-2" />
+                Arquivar
+              </Button>
+            ) : (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setUnarchiveDialogOpen(true)}
+              >
+                <ArchiveRestore className="h-4 w-4 mr-2" />
+                Desarquivar
+              </Button>
+            )}
+            <Button
+              type="button"
+              variant="destructive"
+              size="sm"
+              onClick={openDeletePreviewDialog}
+            >
+              <Trash2 className="h-4 w-4 mr-2" />
+              Excluir
+            </Button>
+            <Button type="button" variant="outline" size="sm" onClick={exitSelectionMode}>
+              Cancelar
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {/* Dialog: confirmar arquivamento em massa */}
+      <Dialog open={archiveDialogOpen} onOpenChange={setArchiveDialogOpen}>
+        <DialogContent onClose={() => setArchiveDialogOpen(false)}>
+          <DialogHeader>
+            <DialogTitle>Arquivar projetos selecionados</DialogTitle>
+            <DialogDescription>
+              {selectedProjectIds.length} projeto(s) serão arquivados. Eles saem
+              do Kanban, Prioridades, Dashboard e Métricas — mas os cards e
+              logs continuam preservados. Você pode desarquivar a qualquer
+              momento na aba "Arquivados".
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setArchiveDialogOpen(false)}
+              disabled={archiveLoading}
+            >
+              Voltar
+            </Button>
+            <Button
+              type="button"
+              variant="default"
+              onClick={() => void handleArchiveConfirm()}
+              disabled={archiveLoading}
+            >
+              {archiveLoading ? (
+                <>
+                  <Loader2 className="mr-[8px] h-[16px] w-[16px] animate-spin" />
+                  Arquivando...
+                </>
+              ) : (
+                <>
+                  <Archive className="h-4 w-4 mr-2" />
+                  Arquivar
+                </>
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Dialog: confirmar desarquivamento em massa */}
+      <Dialog open={unarchiveDialogOpen} onOpenChange={setUnarchiveDialogOpen}>
+        <DialogContent onClose={() => setUnarchiveDialogOpen(false)}>
+          <DialogHeader>
+            <DialogTitle>Desarquivar projetos selecionados</DialogTitle>
+            <DialogDescription>
+              {selectedProjectIds.length} projeto(s) voltarão para "Em
+              desenvolvimento" e seus cards reaparecerão no Kanban e demais
+              telas operacionais.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setUnarchiveDialogOpen(false)}
+              disabled={archiveLoading}
+            >
+              Voltar
+            </Button>
+            <Button
+              type="button"
+              variant="default"
+              onClick={() => void handleUnarchiveConfirm()}
+              disabled={archiveLoading}
+            >
+              {archiveLoading ? (
+                <>
+                  <Loader2 className="mr-[8px] h-[16px] w-[16px] animate-spin" />
+                  Desarquivando...
+                </>
+              ) : (
+                <>
+                  <ArchiveRestore className="h-4 w-4 mr-2" />
+                  Desarquivar
+                </>
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Dialog: confirmar exclusão em massa com preview de cards em jogo */}
+      <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+        <DialogContent
+          onClose={() => {
+            setDeleteDialogOpen(false);
+            setDeletePreview(null);
+          }}
+          className="max-w-[640px]"
+        >
+          <DialogHeader>
+            <DialogTitle>Excluir projetos selecionados</DialogTitle>
+            <DialogDescription>
+              Esta ação não pode ser desfeita. Cards, logs, comentários,
+              fixações — tudo será apagado em cascata.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="max-h-[400px] overflow-y-auto space-y-3">
+            {previewLoading ? (
+              <div className="flex items-center justify-center py-8">
+                <Loader2 className="h-6 w-6 animate-spin text-[var(--color-primary)]" />
+                <span className="ml-2 text-sm text-[var(--color-muted-foreground)]">
+                  Calculando impacto...
+                </span>
+              </div>
+            ) : deletePreview ? (
+              <>
+                {deletePreview.blocked_system_projects > 0 && (
+                  <div className="rounded-md border border-amber-300 bg-amber-50 dark:border-amber-900 dark:bg-amber-950/40 p-2 text-xs text-amber-900 dark:text-amber-200">
+                    {deletePreview.blocked_system_projects} projeto(s) interno(s) do
+                    sistema (ex.: "Sugestões", "Projetos Descartados") foram
+                    ignorado(s) e não serão excluído(s).
+                  </div>
+                )}
+                {deletePreview.projects.map((p) => {
+                  const totalEmJogo = p.cards_em_jogo_total ?? p.cards_em_jogo.length;
+                  const hiddenFromBackend = totalEmJogo - p.cards_em_jogo.length;
+                  const grouped = p.cards_em_jogo.reduce<Record<string, typeof p.cards_em_jogo>>((acc, c) => {
+                    const key = c.status_display || c.status;
+                    if (!acc[key]) acc[key] = [];
+                    acc[key].push(c);
+                    return acc;
+                  }, {});
+                  const groupOrder = Object.keys(grouped);
+                  const activeSprints = new Set(sprints.filter(s => !s.finalizada).map(s => s.id));
+                  const projectData = projects.find(proj => String(proj.id) === String(p.id));
+                  const isInActiveSprint = !!projectData && activeSprints.has(projectData.sprint);
+                  return (
+                    <div
+                      key={p.id}
+                      className="rounded-md border border-[var(--color-border)] p-3"
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="font-medium text-[var(--color-foreground)]">{p.nome}</span>
+                        <span className="text-xs text-[var(--color-muted-foreground)] shrink-0">
+                          {p.total_cards} card(s) total
+                        </span>
+                      </div>
+                      {isInActiveSprint && (
+                        <div className="mt-2 flex items-center gap-1.5 rounded-md border border-amber-300 bg-amber-50 dark:border-amber-900 dark:bg-amber-950/40 p-2 text-xs text-amber-900 dark:text-amber-200">
+                          <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                          Este projeto está na sprint ativa — cards em andamento serão excluídos.
+                        </div>
+                      )}
+                      {totalEmJogo > 0 && (
+                        <div className="mt-2 rounded-md border border-[var(--color-destructive)]/30 bg-[var(--color-destructive)]/10 p-3">
+                          <div className="space-y-2.5">
+                            {groupOrder.map((etapa) => (
+                              <div key={etapa}>
+                                <p className="text-xs font-semibold uppercase tracking-wide text-[var(--color-muted-foreground)]">
+                                  {etapa}
+                                </p>
+                                <ul className="mt-1 ml-4 list-disc text-sm text-[var(--color-foreground)]/90 space-y-0.5">
+                                  {grouped[etapa].map((c) => (
+                                    <li key={c.id}>
+                                      <span className="font-medium">{c.nome}</span>
+                                    </li>
+                                  ))}
+                                </ul>
+                              </div>
+                            ))}
+                            {hiddenFromBackend > 0 && (
+                              <p className="text-xs text-[var(--color-muted-foreground)] italic">
+                                + {hiddenFromBackend} outro(s) (lista resumida pelo servidor)…
+                              </p>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </>
+            ) : null}
+          </div>
+
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                setDeleteDialogOpen(false);
+                setDeletePreview(null);
+              }}
+              disabled={deleteLoading}
+            >
+              Voltar
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              onClick={() => void handleDeleteConfirm()}
+              disabled={deleteLoading || previewLoading}
+            >
+              {deleteLoading ? (
+                <>
+                  <Loader2 className="mr-[8px] h-[16px] w-[16px] animate-spin" />
+                  Excluindo...
+                </>
+              ) : (
+                <>
+                  <Trash2 className="h-4 w-4 mr-2" />
+                  Confirmar exclusão
+                </>
+              )}
             </Button>
           </DialogFooter>
         </DialogContent>
