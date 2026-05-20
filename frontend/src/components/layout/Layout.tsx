@@ -55,7 +55,7 @@ export default function Layout() {
   }
 
   return (
-    <div className="flex min-h-screen bg-[var(--color-background)]">
+    <div className="flex min-h-screen bg-app-mesh">
       <Sidebar />
 
       {/* Main content area - margem esquerda ajusta com o sidebar */}
@@ -66,7 +66,7 @@ export default function Layout() {
         )}
       >
         {/* Header - 64px (8 * 8) */}
-        <header className="sticky top-0 z-30 flex h-[64px] shrink-0 items-center border-b border-[var(--color-border)] bg-[var(--color-card)] px-[32px]">
+        <header className="sticky top-0 z-30 flex h-[64px] shrink-0 items-center border-header-gradient bg-[var(--color-card)] px-[32px]">
           {/* Coluna esquerda: título da página mãe */}
           <div className="flex items-center">
             <h1 className="text-lg font-semibold text-[var(--color-foreground)]">

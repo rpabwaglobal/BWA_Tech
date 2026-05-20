@@ -2,14 +2,14 @@
 
 @theme {
   /* === CORES - MODO CLARO (Material 3 inspirado) === */
-  --color-background: hsl(210 40% 98%);
-  --color-foreground: hsl(222 47% 11%);
+  --color-background: hsl(280 32% 97%);
+  --color-foreground: hsl(270 28% 13%);
 
   /* Superfícies em camadas (surface-0 é o próprio background) */
   --color-surface-0: hsl(210 40% 98%);
   --color-surface-1: hsl(0 0% 100%);
-  --color-surface-2: hsl(210 40% 97%);
-  --color-surface-3: hsl(210 40% 96%);
+  --color-surface-2: hsl(285 33% 97%);
+  --color-surface-3: hsl(285 28% 95%);
 
   --color-card: var(--color-surface-1);
   --color-card-foreground: var(--color-foreground);
@@ -19,23 +19,23 @@
   --color-popover: var(--color-surface-1);
   --color-popover-foreground: var(--color-foreground);
 
-  --color-primary: hsl(222 84% 56%);
-  --color-primary-foreground: hsl(210 40% 98%);
+  --color-primary: hsl(275 33% 45%);
+  --color-primary-foreground: hsl(0 0% 100%);
 
-  --color-secondary: hsl(210 40% 96%);
-  --color-secondary-foreground: hsl(222 47% 20%);
+  --color-secondary: hsl(285 33% 95%);
+  --color-secondary-foreground: hsl(270 28% 18%);
 
-  --color-muted: hsl(214 32% 94%);
-  --color-muted-foreground: hsl(215 16% 47%);
+  --color-muted: hsl(282 22% 93%);
+  --color-muted-foreground: hsl(270 10% 45%);
 
-  --color-accent: hsl(210 40% 96%);
-  --color-accent-foreground: hsl(222 47% 20%);
+  --color-accent: hsl(285 35% 93%);
+  --color-accent-foreground: hsl(270 28% 18%);
 
   --color-destructive: hsl(0 72% 51%);
   --color-destructive-foreground: hsl(210 40% 98%);
 
-  --color-border: hsl(214 32% 91%);
-  --color-input: hsl(214 32% 91%);
+  --color-border: hsl(285 22% 89%);
+  --color-input: hsl(285 22% 89%);
   --color-ring: var(--color-primary);
 
   /* Scrollbar (modo claro) */
@@ -62,44 +62,48 @@
   /* === SIDEBAR === */
   --sidebar-width: 256px;
   --sidebar-collapsed: 64px;
+
+  /* === MARCA BWA === */
+  --bwa-purple: #754c99;
+  --bwa-cyan:   #8fd0d7;
 }
 
 /* Tema escuro: aplicado quando a classe .dark estiver na raíz (html ou body) */
 .dark {
   /* Background quase preto com leve matiz azulada (Material 3) */
-  --color-background: hsl(222 47% 5%);
+  --color-background: hsl(270 28% 7%);
   --color-foreground: hsl(210 40% 96%);
 
-  --color-surface-0: hsl(222 47% 5%);
-  --color-surface-1: hsl(222 47% 8%);
-  --color-surface-2: hsl(222 47% 12%);
-  --color-surface-3: hsl(222 47% 16%);
+  --color-surface-0: hsl(270 28% 7%);
+  --color-surface-1: hsl(270 22% 11%);
+  --color-surface-2: hsl(270 22% 15%);
+  --color-surface-3: hsl(270 22% 19%);
 
   --color-card: var(--color-surface-1);
   --color-card-foreground: var(--color-foreground);
   /* Kanban: colunas usam muted/30 (~mesma faixa do surface-1); cards um degrau mais claros */
-  --color-kanban-card: hsl(222 28% 22%);
+  --color-kanban-card: hsl(270 16% 22%);
 
   --color-popover: var(--color-surface-2);
   --color-popover-foreground: var(--color-foreground);
 
-  --color-primary: hsl(222 84% 66%);
-  --color-primary-foreground: hsl(222 47% 10%);
+  --color-primary: hsl(275 50% 65%);
+  --color-primary-foreground: hsl(270 28% 10%);
 
-  --color-secondary: hsl(217 33% 17%);
+  --color-secondary: hsl(270 20% 18%);
   --color-secondary-foreground: hsl(210 40% 96%);
 
-  --color-muted: hsl(215 25% 16%);
-  --color-muted-foreground: hsl(215 20% 72%);
+  --color-muted: hsl(270 15% 17%);
+  --color-muted-foreground: hsl(270 8% 72%);
 
-  --color-accent: hsl(217 33% 20%);
+  --color-accent: hsl(270 20% 22%);
   --color-accent-foreground: hsl(210 40% 96%);
 
   --color-destructive: hsl(0 72% 60%);
   --color-destructive-foreground: hsl(210 40% 98%);
 
-  --color-border: hsl(215 25% 22%);
-  --color-input: hsl(215 25% 22%);
+  --color-border: hsl(270 15% 22%);
+  --color-input: hsl(270 15% 22%);
   --color-ring: var(--color-primary);
 
   /* Scrollbar (modo escuro) */
@@ -140,4 +144,34 @@
 
 ::-webkit-scrollbar-thumb:hover {
   background-color: var(--scrollbar-thumb-hover);
+}
+
+/* Separador do header da página — gradiente roxo → ciano */
+.border-header-gradient {
+  border-bottom: 3px solid transparent;
+  border-image: linear-gradient(to right, #754c99 0%, #8fd0d7 100%) 1;
+}
+
+/* Sidebar com gradiente roxo→ciano (variação F4) */
+.bg-sidebar-gradient {
+  background: linear-gradient(180deg, #754c99 0%, #6a6ab0 45%, #8fd0d7 100%);
+}
+.dark .bg-sidebar-gradient {
+  background: linear-gradient(180deg, #3a2557 0%, #2f3a5e 50%, #1f4a4e 100%);
+}
+
+/* Fundo "mesh" — duas manchas radiais bem suaves */
+.bg-app-mesh {
+  background-color: var(--color-background);
+  background-image:
+    radial-gradient(circle at 15% 0%,  #ecdef5 0%, transparent 50%),
+    radial-gradient(circle at 95% 100%, #d8edf0 0%, transparent 55%);
+  background-attachment: fixed;
+}
+.dark .bg-app-mesh {
+  background-color: var(--color-background);
+  background-image:
+    radial-gradient(circle at 15% 0%,   rgba(117, 76, 153, 0.10) 0%, transparent 50%),
+    radial-gradient(circle at 95% 100%, rgba(143, 208, 215, 0.08) 0%, transparent 55%);
+  background-attachment: fixed;
 }

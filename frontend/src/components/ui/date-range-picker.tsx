@@ -473,12 +473,12 @@ const DateRangePicker = React.forwardRef<HTMLInputElement, DateRangePickerProps>
                         day !== null && "hover:bg-[var(--color-accent)]",
                         // Data de hoje
                         isToday(day, currentMonth) && "bg-green-100 text-green-700 font-semibold",
-                        // Data de início (azul escuro)
-                        isStartDate(day, currentMonth) && "bg-blue-600 text-white font-semibold hover:bg-blue-700",
-                        // Data de fim (azul escuro)
-                        isEndDate(day, currentMonth) && !isStartDate(day, currentMonth) && "bg-blue-600 text-white font-semibold hover:bg-blue-700",
-                        // Datas no intervalo (azul claro)
-                        isInRange(day, currentMonth) && !isStartDate(day, currentMonth) && !isEndDate(day, currentMonth) && "bg-blue-100 text-blue-800",
+                        // Data de início (cor primária)
+                        isStartDate(day, currentMonth) && "bg-[var(--color-primary)] text-[var(--color-primary-foreground)] font-semibold hover:opacity-90",
+                        // Data de fim (cor primária)
+                        isEndDate(day, currentMonth) && !isStartDate(day, currentMonth) && "bg-[var(--color-primary)] text-[var(--color-primary-foreground)] font-semibold hover:opacity-90",
+                        // Datas no intervalo (cor primária suave)
+                        isInRange(day, currentMonth) && !isStartDate(day, currentMonth) && !isEndDate(day, currentMonth) && "bg-[var(--color-accent)] text-[var(--color-accent-foreground)]",
                         // Outras datas
                         !isStartDate(day, currentMonth) && !isEndDate(day, currentMonth) && !isToday(day, currentMonth) && !isInRange(day, currentMonth) && "text-[var(--color-foreground)]"
                       )}

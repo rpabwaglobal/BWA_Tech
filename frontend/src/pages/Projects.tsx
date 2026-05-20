@@ -2551,9 +2551,6 @@ export default function Projects() {
                     return acc;
                   }, {});
                   const groupOrder = Object.keys(grouped);
-                  const activeSprints = new Set(sprints.filter(s => !s.finalizada).map(s => s.id));
-                  const projectData = projects.find(proj => String(proj.id) === String(p.id));
-                  const isInActiveSprint = !!projectData && activeSprints.has(projectData.sprint);
                   return (
                     <div
                       key={p.id}
@@ -2565,10 +2562,10 @@ export default function Projects() {
                           {p.total_cards} card(s) total
                         </span>
                       </div>
-                      {isInActiveSprint && (
+                      {p.em_sprint_ativa && (
                         <div className="mt-2 flex items-center gap-1.5 rounded-md border border-amber-300 bg-amber-50 dark:border-amber-900 dark:bg-amber-950/40 p-2 text-xs text-amber-900 dark:text-amber-200">
                           <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
-                          Este projeto está na sprint ativa — cards em andamento serão excluídos.
+                          Este projeto está na sprint ativa{p.sprint_nome ? ` (${p.sprint_nome})` : ''} — cards em andamento serão excluídos.
                         </div>
                       )}
                       {totalEmJogo > 0 && (
@@ -2588,9 +2585,9 @@ export default function Projects() {
                                 </ul>
                               </div>
                             ))}
-                            {hiddenFromBackend > 0 && (
-                              <p className="text-xs text-[var(--color-muted-foreground)] italic">
-                                + {hiddenFromBackend} outro(s) (lista resumida pelo servidor)…
+                            {p.cards_em_jogo_truncated && (
+                              <p className="text-xs font-medium text-amber-700 dark:text-amber-300 italic">
+                                ⚠ Lista resumida pelo servidor: exibindo {p.cards_em_jogo.length} de {totalEmJogo} cards. Outros {hiddenFromBackend} serão excluídos mas não estão listados acima.
                               </p>
                             )}
                           </div>

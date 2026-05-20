@@ -28,9 +28,8 @@ export type Project = {
    * é passado explicitamente. */
   arquivado?: boolean;
   arquivado_em?: string | null;
-  // `number | string` — backend devolve int (PK auto), mas o frontend popula
-  // de update otimista com `user.id` que é stringificado em outros services.
-  arquivado_por?: number | string | null;
+  /** UUID do usuário que arquivou (FK para AUTH_USER_MODEL). */
+  arquivado_por?: string | null;
   arquivado_por_name?: string | null;
   cards_count?: number;
   cards_entregues_count?: number;
@@ -51,6 +50,10 @@ export type BulkDeletePreview = {
     id: number;
     nome: string;
     total_cards: number;
+    /** True se o projeto está atrelado a uma sprint não-finalizada.
+     * Vem do backend (`_sprint_is_active`) — frontend NÃO deve recomputar. */
+    em_sprint_ativa: boolean;
+    sprint_nome: string | null;
     /** Lista parcial — limitada a `_PREVIEW_CARDS_LIMIT` (100) pelo backend. */
     cards_em_jogo: Array<{
       id: string;

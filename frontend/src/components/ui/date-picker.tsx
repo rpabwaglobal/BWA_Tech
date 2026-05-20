@@ -241,7 +241,7 @@ const DatePicker = React.forwardRef<HTMLInputElement, DatePickerProps>(
                         day === null && "cursor-default",
                         day !== null && "hover:bg-[var(--color-accent)]",
                         isToday(day, currentMonth) && "bg-green-100 text-green-700 font-semibold",
-                        isSelected(day, currentMonth) && "bg-blue-600 text-white font-semibold hover:bg-blue-700",
+                        isSelected(day, currentMonth) && "bg-[var(--color-primary)] text-[var(--color-primary-foreground)] font-semibold hover:opacity-90",
                         !isSelected(day, currentMonth) &&
                           !isToday(day, currentMonth) &&
                           "text-[var(--color-foreground)]"

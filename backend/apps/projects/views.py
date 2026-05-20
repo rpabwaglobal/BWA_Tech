@@ -585,6 +585,8 @@ class ProjectViewSet(viewsets.ModelViewSet):
                 'id': p.id,
                 'nome': p.nome,
                 'total_cards': cards_total,
+                'em_sprint_ativa': sprint_active,
+                'sprint_nome': sprint.nome if sprint else None,
                 'cards_em_jogo': cards_em_jogo,
                 'cards_em_jogo_total': cards_em_jogo_total,
                 'cards_em_jogo_truncated': cards_em_jogo_total > len(cards_em_jogo),

@@ -3,7 +3,6 @@ import { useAuth } from '@/context/AuthContext';
 import { useSidebar } from '@/context/SidebarContext';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
-import { useTheme } from '@/context/ThemeContext';
 import {
   LayoutDashboard,
   Zap,
@@ -40,7 +39,6 @@ export default function Sidebar() {
   const { collapsed, toggle } = useSidebar();
   const location = useLocation();
   const { user, logout, profilePictureUrl } = useAuth();
-  const { theme } = useTheme();
 
   const getInitials = (name: string) => {
     return name.substring(0, 2).toUpperCase();
@@ -71,17 +69,17 @@ export default function Sidebar() {
   return (
     <aside
       className={cn(
-        "fixed left-0 top-0 z-40 h-screen border-r border-[var(--color-border)] bg-[var(--color-card)] transition-all duration-300",
+        "fixed left-0 top-0 z-40 h-screen border-r border-white/10 bg-sidebar-gradient transition-all duration-300",
         collapsed ? "w-[64px]" : "w-[256px]"
       )}
     >
       <div className="flex h-full flex-col">
         {/* Header - 64px (8 * 8) */}
-        <div className="flex h-[64px] items-center border-b border-[var(--color-border)] px-[16px]">
+        <div className="flex h-[64px] items-center border-b border-white/15 px-[16px]">
           {!collapsed && (
             <div className="flex-1 flex items-center justify-center">
               <img
-                src={theme === 'dark' ? '/assets/bwa-white.png' : '/assets/bwa-black.png'}
+                src="/assets/bwa-white.png"
                 alt="BWA Tech"
                 className="h-[28px] w-auto"
               />
@@ -91,7 +89,7 @@ export default function Sidebar() {
             variant="ghost"
             size="icon"
             onClick={toggle}
-            className={cn("h-[40px] w-[40px]", collapsed && "mx-auto")}
+            className={cn("h-[40px] w-[40px] text-white hover:bg-white/15 hover:text-white", collapsed && "mx-auto")}
           >
             {collapsed ? <ChevronRight className="h-[16px] w-[16px]" /> : <ChevronLeft className="h-[16px] w-[16px]" />}
           </Button>
@@ -110,8 +108,8 @@ export default function Sidebar() {
                   className={cn(
                     "flex items-center gap-[16px] rounded-[8px] px-[16px] py-[8px] text-sm font-medium transition-colors h-[40px]",
                     isActive
-                      ? "bg-[var(--color-primary)] text-[var(--color-primary-foreground)]"
-                      : "text-[var(--color-muted-foreground)] hover:bg-[var(--color-accent)] hover:text-[var(--color-foreground)]",
+                      ? "bg-white/22 text-white shadow-sm"
+                      : "text-white/80 hover:bg-white/10 hover:text-white",
                     collapsed && "justify-center px-[8px]"
                   )}
                   title={collapsed ? item.label : undefined}
@@ -128,8 +126,8 @@ export default function Sidebar() {
             className={cn(
               "flex items-center gap-[16px] rounded-[8px] px-[16px] py-[8px] text-sm font-medium transition-colors h-[40px] mt-auto",
               location.pathname === ROUTES.configuracoes
-                ? "bg-[var(--color-primary)] text-[var(--color-primary-foreground)]"
-                : "text-[var(--color-muted-foreground)] hover:bg-[var(--color-accent)] hover:text-[var(--color-foreground)]",
+                ? "bg-white/22 text-white shadow-sm"
+                : "text-white/80 hover:bg-white/10 hover:text-white",
               collapsed && "justify-center px-[8px]"
             )}
             title={collapsed ? 'Configurações' : undefined}
@@ -140,26 +138,26 @@ export default function Sidebar() {
         </nav>
 
         {/* User */}
-        <div className="border-t border-[var(--color-border)] p-[16px]">
+        <div className="border-t border-white/20 p-[16px]">
           <div className={cn("flex items-center gap-[16px]", collapsed && "justify-center")}>
-            <Avatar className="h-[40px] w-[40px]">
+            <Avatar className="h-[40px] w-[40px] ring-2 ring-white/30">
               {profilePictureUrl && <AvatarImage src={profilePictureUrl} alt="" />}
-              <AvatarFallback className="text-sm">
+              <AvatarFallback className="text-sm bg-white/90 text-[#3a2557]">
                 {user ? getInitials(user.username) : 'U'}
               </AvatarFallback>
             </Avatar>
             {!collapsed && (
               <div className="flex-1 min-w-0">
-                <p className="truncate text-sm font-medium text-[var(--color-foreground)]">
+                <p className="truncate text-sm font-semibold text-white drop-shadow-sm">
                   {formatUserName(user)}
                 </p>
-                <p className="truncate text-xs text-[var(--color-muted-foreground)]">
+                <p className="truncate text-xs text-white/75">
                   {user?.role_display}
                 </p>
               </div>
             )}
             {!collapsed && (
-              <Button variant="ghost" size="icon" onClick={logout} className="h-[40px] w-[40px]">
+              <Button variant="ghost" size="icon" onClick={logout} className="h-[40px] w-[40px] text-white hover:bg-white/15 hover:text-white">
                 <LogOut className="h-[16px] w-[16px]" />
               </Button>
             )}
