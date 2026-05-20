@@ -5,9 +5,9 @@ import { useTheme } from '../context/ThemeContext';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Card, CardContent, CardDescription, CardHeader } from '@/components/ui/card';
 import { Eye, EyeOff, Loader2 } from 'lucide-react';
 import { ROUTES } from '../routes';
+import LoginDemo from '@/components/login-demo/LoginDemo';
 
 export default function Login() {
   const [email, setEmail] = useState('');
@@ -33,13 +33,11 @@ export default function Login() {
       navigate(ROUTES.painel);
     } catch (err: any) {
       const status = err.response?.status;
-      // Mensagem genérica para evitar enumeração de usuários
       if (status === 429) {
         setError('Muitas tentativas. Aguarde alguns minutos e tente novamente.');
       } else {
         setError('Credenciais inválidas. Tente novamente.');
       }
-      // Detalhe vai apenas para o console (ajuda debug sem vazar para UI)
       if (import.meta.env.DEV) console.debug('[Login] failed', status);
     } finally {
       setLoading(false);
@@ -47,19 +45,25 @@ export default function Login() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-[var(--color-background)] p-[var(--space-2)]">
-      <Card className="w-full max-w-[400px]">
-        <CardHeader className="space-y-[var(--space-1)] p-[var(--space-3)] pb-0 text-center">
-          <img
-            src={theme === 'dark' ? '/assets/bwa-tech-white.png' : '/assets/bwa-tech-black.png'}
-            alt="BWA Tech"
-            className="h-8 mx-auto"
-          />
-          <CardDescription>
-            Gerenciador de Projetos
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="p-[var(--space-3)]">
+    <div className="min-h-screen grid lg:grid-cols-3 bg-app-mesh">
+      {/* Painel esquerdo (2/3): animação demo */}
+      <div className="hidden lg:flex lg:col-span-2 items-center justify-center bg-sidebar-gradient relative overflow-hidden">
+        <LoginDemo />
+      </div>
+
+      {/* Painel direito (1/3): formulário direto sobre o fundo, sem Card */}
+      <div className="flex items-center justify-center px-[24px] py-[48px] lg:col-span-1">
+        <div className="w-full max-w-[340px] space-y-[var(--space-3)]">
+          {/* Logo + subtítulo */}
+          <div className="text-center space-y-[var(--space-1)]">
+            <img
+              src={theme === 'dark' ? '/assets/bwa-tech-white.png' : '/assets/bwa-tech-black.png'}
+              alt="BWA Tech"
+              className="h-10 mx-auto"
+            />
+            <p className="text-sm text-[var(--color-muted-foreground)]">Gerenciador de Projetos</p>
+          </div>
+
           <form onSubmit={handleSubmit} className="space-y-[var(--space-2)]">
             <div className="space-y-[var(--space-1)]">
               <Label htmlFor="email">E-mail</Label>
@@ -132,15 +136,15 @@ export default function Login() {
               )}
             </Button>
 
-            <p className="text-center text-sm text-muted-foreground mt-[var(--space-2)]">
+            <p className="text-center text-sm text-[var(--color-muted-foreground)] mt-[var(--space-2)]">
               Não tem conta?{' '}
               <Link to={ROUTES.cadastro} className="text-[var(--color-primary)] font-medium hover:underline">
                 Criar conta
               </Link>
             </p>
           </form>
-        </CardContent>
-      </Card>
+        </div>
+      </div>
     </div>
   );
 }
