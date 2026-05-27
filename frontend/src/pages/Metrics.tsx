@@ -320,12 +320,15 @@ export default function Metrics() {
   const [onTimeListTab, setOnTimeListTab] = useState<'onTime' | 'late'>('onTime');
   // Modal compartilhado entre os 3 gráficos de barras (Cards por Usuário,
   // Leaderboard, Cycle Time). Clique na barra → mostra a lista de cards do
-  // usuário, já filtrada pelo escopo daquele gráfico.
+  // usuário, já filtrada pelo escopo daquele gráfico, com tabs "No prazo" e
+  // "Fora do prazo" iguais às do modal de Consistência.
   const [chartCardsModal, setChartCardsModal] = useState<{
     title: string;
     description: string;
-    cards: CardType[];
+    onTimeCards: CardType[];
+    lateCards: CardType[];
   } | null>(null);
+  const [chartCardsTab, setChartCardsTab] = useState<'onTime' | 'late'>('onTime');
   const [onTimeViewCardOpen, setOnTimeViewCardOpen] = useState(false);
   const [onTimeViewCardLoading, setOnTimeViewCardLoading] = useState(false);
   const [onTimeViewSelectedCard, setOnTimeViewSelectedCard] = useState<CardType | null>(null);
@@ -934,10 +937,27 @@ export default function Metrics() {
     setOnTimeListTab(onTimeListModalRow.onTimeCards.length > 0 ? 'onTime' : 'late');
   }, [onTimeListModalUserId, onTimeListModalRow]);
 
-  /** Abre o modal compartilhado dos gráficos com a lista de cards do usuário. */
+  /** Abre o modal compartilhado dos gráficos com a lista de cards do usuário.
+   * Separa em onTimeCards/lateCards baseado em finalizado_em <= data_fim. */
   const openChartCardsModal = useCallback(
     (title: string, description: string, cards: CardType[]) => {
-      setChartCardsModal({ title, description, cards });
+      const onTimeCards: CardType[] = [];
+      const lateCards: CardType[] = [];
+      for (const card of cards) {
+        if (!card.data_fim || !card.finalizado_em) {
+          // Sem deadline ou sem data de conclusão real: trata como "no prazo"
+          // por convenção (não temos dados pra dizer o contrário).
+          onTimeCards.push(card);
+          continue;
+        }
+        const scheduledEnd = new Date(card.data_fim).getTime();
+        const completedAt = new Date(card.finalizado_em).getTime();
+        if (completedAt <= scheduledEnd) onTimeCards.push(card);
+        else lateCards.push(card);
+      }
+      setChartCardsModal({ title, description, onTimeCards, lateCards });
+      // Aba inicial: prefere "No prazo" se houver, senão cai pra "Fora do prazo".
+      setChartCardsTab(onTimeCards.length > 0 ? 'onTime' : 'late');
     },
     [],
   );
@@ -2763,7 +2783,7 @@ export default function Metrics() {
       </Dialog>
 
       {/* Modal compartilhado entre os 3 gráficos de barras (clique numa barra
-          → lista de cards do usuário). */}
+          → lista de cards do usuário). Mesmas tabs do modal de Consistência. */}
       <Dialog
         open={chartCardsModal != null}
         onOpenChange={(open) => {
@@ -2779,42 +2799,81 @@ export default function Metrics() {
             <DialogTitle>{chartCardsModal?.title ?? 'Cards entregues'}</DialogTitle>
             <DialogDescription>
               {chartCardsModal
-                ? `${chartCardsModal.description} · ${chartCardsModal.cards.length} card(s)`
+                ? `${chartCardsModal.description} · ${chartCardsModal.onTimeCards.length + chartCardsModal.lateCards.length} card(s)`
                 : ''}
             </DialogDescription>
           </DialogHeader>
           {chartCardsModal && (
-            <div className="mt-2 flex min-h-0 flex-1 flex-col">
-              <div className="min-h-0 max-h-[min(60vh,520px)] flex-1 overflow-y-auto pr-1 pt-1">
-                {chartCardsModal.cards.length === 0 ? (
-                  <p className="text-sm text-[var(--color-muted-foreground)]">
-                    Nenhum card neste filtro.
-                  </p>
-                ) : (
-                  <ul className="space-y-2">
-                    {[...chartCardsModal.cards].sort(sortCardsByDeliveryDesc).map((card) => {
-                      // Variant calculado: card é "no prazo" se finalizado_em <= data_fim.
-                      const scheduledEnd = card.data_fim ? new Date(card.data_fim).getTime() : null;
-                      const completedAt = card.finalizado_em
-                        ? new Date(card.finalizado_em).getTime()
-                        : null;
-                      const variant: 'onTime' | 'late' =
-                        scheduledEnd != null && completedAt != null && completedAt > scheduledEnd
-                          ? 'late'
-                          : 'onTime';
-                      return (
+            <div className="mt-2 flex min-h-0 flex-1 flex-col gap-0">
+              <div className="flex gap-[8px] border-b border-[var(--color-border)]">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  disabled={chartCardsModal.onTimeCards.length === 0}
+                  onClick={() => setChartCardsTab('onTime')}
+                  className={cn(
+                    'rounded-none border-b-2 border-transparent px-[16px] py-[8px] h-auto',
+                    chartCardsTab === 'onTime'
+                      ? 'border-[var(--color-primary)] text-[var(--color-primary)] font-semibold'
+                      : 'text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]',
+                  )}
+                >
+                  No prazo ({chartCardsModal.onTimeCards.length})
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  disabled={chartCardsModal.lateCards.length === 0}
+                  onClick={() => setChartCardsTab('late')}
+                  className={cn(
+                    'rounded-none border-b-2 border-transparent px-[16px] py-[8px] h-auto',
+                    chartCardsTab === 'late'
+                      ? 'border-[var(--color-primary)] text-[var(--color-primary)] font-semibold'
+                      : 'text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]',
+                  )}
+                >
+                  Fora do prazo ({chartCardsModal.lateCards.length})
+                </Button>
+              </div>
+              <div className="min-h-0 max-h-[min(60vh,520px)] flex-1 overflow-y-auto pr-1 pt-3">
+                {chartCardsTab === 'onTime' ? (
+                  chartCardsModal.onTimeCards.length > 0 ? (
+                    <ul className="space-y-2">
+                      {[...chartCardsModal.onTimeCards].sort(sortCardsByDeliveryDesc).map((card) => (
                         <MetricsDeliveredCardRow
                           key={card.id}
                           card={card}
-                          variant={variant}
+                          variant="onTime"
                           onSelect={(id) => {
                             setChartCardsModal(null);
                             void openConsistencyCardFromMetrics(id);
                           }}
                         />
-                      );
-                    })}
+                      ))}
+                    </ul>
+                  ) : (
+                    <p className="text-sm text-[var(--color-muted-foreground)]">
+                      Nenhum card no prazo neste filtro.
+                    </p>
+                  )
+                ) : chartCardsModal.lateCards.length > 0 ? (
+                  <ul className="space-y-2">
+                    {[...chartCardsModal.lateCards].sort(sortCardsByDeliveryDesc).map((card) => (
+                      <MetricsDeliveredCardRow
+                        key={card.id}
+                        card={card}
+                        variant="late"
+                        onSelect={(id) => {
+                          setChartCardsModal(null);
+                          void openConsistencyCardFromMetrics(id);
+                        }}
+                      />
+                    ))}
                   </ul>
+                ) : (
+                  <p className="text-sm text-[var(--color-muted-foreground)]">
+                    Nenhum card fora do prazo neste filtro.
+                  </p>
                 )}
               </div>
               <DialogFooter className="mt-0 shrink-0 border-t border-[var(--color-border)] pt-4">
