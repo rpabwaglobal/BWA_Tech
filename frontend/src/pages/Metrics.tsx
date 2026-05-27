@@ -2405,8 +2405,8 @@ export default function Metrics() {
             Cycle Time médio
           </CardTitle>
           <CardDescription>
-            Tempo médio entre o início do desenvolvimento (data_inicio) e a conclusão real do
-            card (finalizado_em). Cards sem uma das duas datas são ignorados.
+            Tempo médio entre o início do desenvolvimento e a conclusão real do card.
+            Cards sem uma das duas datas são ignorados.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -2431,7 +2431,12 @@ export default function Metrics() {
 
               {/* Tabela por área */}
               <div>
-                <h4 className="mb-2 text-sm font-semibold text-[var(--color-foreground)]">Por área</h4>
+                <h4 className="mb-2 text-sm font-semibold text-[var(--color-foreground)]">
+                  Por área —{' '}
+                  <span className="font-normal text-[var(--color-muted-foreground)]">
+                    dias por card (em média)
+                  </span>
+                </h4>
                 {cycleTimeData.perArea.length === 0 ? (
                   <p className="text-xs text-[var(--color-muted-foreground)]">Sem dados.</p>
                 ) : (
