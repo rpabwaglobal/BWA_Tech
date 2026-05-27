@@ -2422,7 +2422,7 @@ export default function Metrics() {
                   Média geral
                 </p>
                 <p className="mt-1 text-3xl font-bold text-[var(--color-foreground)]">
-                  {cycleTimeData.overall} <span className="text-base font-normal text-[var(--color-muted-foreground)]">dia{cycleTimeData.overall === 1 ? '' : 's'}</span>
+                  {cycleTimeData.overall} <span className="text-base font-normal text-[var(--color-muted-foreground)]">{cycleTimeData.overall === 1 ? 'Dia' : 'Dias'}</span>
                 </p>
                 <p className="text-xs text-[var(--color-muted-foreground)]">
                   {cycleTimeData.overallCount} card{cycleTimeData.overallCount === 1 ? '' : 's'} considerado{cycleTimeData.overallCount === 1 ? '' : 's'}
