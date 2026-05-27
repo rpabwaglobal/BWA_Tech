@@ -2760,15 +2760,39 @@ export default function Metrics() {
                 </CardHeader>
                 <CardContent className="pt-0">
                   {projectStats.mostCards ? (
-                    <div className="text-sm space-y-0.5">
-                      <p className="font-semibold text-[var(--color-foreground)]">
+                    <div className="text-sm space-y-1">
+                      <p className="font-semibold text-[var(--color-foreground)] truncate">
                         {projectStats.mostCards.project.nome}
                       </p>
-                      <p className="text-[var(--color-muted-foreground)]">
-                        Total: {projectStats.mostCards.stats.total} • Entregues:{' '}
-                        {projectStats.mostCards.stats.delivered} • Inviabilizados:{' '}
-                        {projectStats.mostCards.stats.inviabilizados}
+                      <p className="text-2xl font-bold text-[var(--color-foreground)] leading-none">
+                        {projectStats.mostCards.stats.total}
+                        <span className="text-sm font-normal text-[var(--color-muted-foreground)]">
+                          {' '}card{projectStats.mostCards.stats.total === 1 ? '' : 's'}
+                        </span>
                       </p>
+                      <div className="flex flex-wrap gap-1.5 pt-1">
+                        <Badge className="border-green-600/40 bg-green-500/15 text-green-800 dark:text-green-400 text-[10px]">
+                          {projectStats.mostCards.stats.delivered} entregue
+                          {projectStats.mostCards.stats.delivered === 1 ? '' : 's'}
+                        </Badge>
+                        {projectStats.mostCards.stats.inviabilizados > 0 && (
+                          <Badge className="border-red-600/40 bg-red-500/15 text-red-800 dark:text-red-400 text-[10px]">
+                            {projectStats.mostCards.stats.inviabilizados} inviabilizado
+                            {projectStats.mostCards.stats.inviabilizados === 1 ? '' : 's'}
+                          </Badge>
+                        )}
+                        {(() => {
+                          const aberto =
+                            projectStats.mostCards.stats.total -
+                            projectStats.mostCards.stats.delivered -
+                            projectStats.mostCards.stats.inviabilizados;
+                          return aberto > 0 ? (
+                            <Badge variant="outline" className="text-[10px]">
+                              {aberto} em aberto
+                            </Badge>
+                          ) : null;
+                        })()}
+                      </div>
                     </div>
                   ) : (
                     <p className="text-sm text-[var(--color-muted-foreground)]">Sem cards associados.</p>
@@ -2784,11 +2808,22 @@ export default function Metrics() {
                 </CardHeader>
                 <CardContent className="pt-0">
                   {projectStats.recurrent && projectStats.recurrent.sprintCount > 1 ? (
-                    <div className="text-sm space-y-0.5">
-                      <p className="font-semibold text-[var(--color-foreground)]">
-                        {projectStats.recurrent.name}
+                    <div className="text-sm space-y-1">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <p className="font-semibold text-[var(--color-foreground)] truncate">
+                          {projectStats.recurrent.name}
+                        </p>
+                        <Badge className="border-[var(--color-primary)]/40 bg-[var(--color-primary)]/15 text-[var(--color-primary)] text-[10px]">
+                          Recorrente
+                        </Badge>
+                      </div>
+                      <p className="text-2xl font-bold text-[var(--color-foreground)] leading-none">
+                        {projectStats.recurrent.sprintCount}
+                        <span className="text-sm font-normal text-[var(--color-muted-foreground)]">
+                          {' '}sprint{projectStats.recurrent.sprintCount === 1 ? '' : 's'}
+                        </span>
                       </p>
-                      <p className="text-[var(--color-muted-foreground)]">
+                      <p className="text-xs text-[var(--color-muted-foreground)]">
                         Apareceu em {projectStats.recurrent.sprintCount} sprints diferentes.
                       </p>
                     </div>
