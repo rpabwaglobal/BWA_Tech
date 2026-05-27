@@ -22,6 +22,12 @@ from dotenv import load_dotenv
 BASE_DIR = Path(__file__).resolve().parent.parent
 _dotenv_override = os.getenv('DOTENV_OVERRIDE', 'true').lower() not in ('0', 'false', 'no')
 load_dotenv(BASE_DIR / '.env', override=_dotenv_override, encoding="utf-8-sig")
+# Em DEV o `python manage.py runserver` precisa também ler o .env da RAIZ do
+# repo (BWA_Tech/.env), onde ficam REDIS_PASSWORD, CELERY_BROKER_URL e demais
+# valores compartilhados entre serviços do docker-compose. NÃO sobrescreve o
+# backend/.env (carregado acima): apenas preenche variáveis ausentes.
+# Em prod, esse .env é injetado pelo Compose via `env_file` e este load é no-op.
+load_dotenv(BASE_DIR.parent / '.env', override=False, encoding="utf-8-sig")
 
 
 # Quick-start development settings - unsuitable for production
@@ -49,6 +55,19 @@ ALLOWED_HOSTS = [h.strip() for h in os.getenv('ALLOWED_HOSTS', 'localhost,127.0.
 
 # Atrás de Traefik/nginx com TLS — define BEHIND_HTTPS_PROXY=true no .env (docker-compose)
 _BEHIND_HTTPS_PROXY = os.getenv('BEHIND_HTTPS_PROXY', '').strip().lower() in ('true', '1', 'yes')
+
+# Dev local roda Django nativo no host — não tem proxy reverso na frente.
+# Se o hostname `redis` (interno do compose) não resolve, estamos fora do
+# compose: força BEHIND_HTTPS_PROXY=False, mesmo que o .env raiz (compartilhado
+# com prod) tenha True. Sem isso, SECURE_SSL_REDIRECT redireciona HTTP→HTTPS
+# local quebrando preflight CORS (logins via http://localhost:5173 falham).
+if _BEHIND_HTTPS_PROXY:
+    import socket as _socket
+    try:
+        _socket.gethostbyname('redis')
+    except _socket.gaierror:
+        _BEHIND_HTTPS_PROXY = False
+
 if _BEHIND_HTTPS_PROXY:
     SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
     USE_X_FORWARDED_HOST = True
@@ -241,20 +260,29 @@ _dev_origins = [
     "http://127.0.0.1:5175",
 ]
 _env_origins = [o.strip() for o in os.getenv('CORS_ALLOWED_ORIGINS', '').split(',') if o.strip()]
-# Em DEBUG inclui origens de dev. Produção HTTPS exige _env_origins.
-if DEBUG:
+# Em DEBUG OU rodando fora do compose (dev local) inclui origens de dev.
+# `_BEHIND_HTTPS_PROXY` aqui já foi reavaliado acima — se está True, é prod
+# real (atrás de Traefik). Senão é dev local mesmo com DEBUG=False herdado
+# do .env raiz.
+_IS_DEV_RUNTIME = DEBUG or not _BEHIND_HTTPS_PROXY
+if _IS_DEV_RUNTIME:
     CORS_ALLOWED_ORIGINS = list(dict.fromkeys(_dev_origins + _env_origins))
 else:
-    if _BEHIND_HTTPS_PROXY and not _env_origins:
+    if not _env_origins:
         raise ImproperlyConfigured(
             'CORS_ALLOWED_ORIGINS é obrigatório em produção (BEHIND_HTTPS_PROXY=true). '
             'Defina no .env: CORS_ALLOWED_ORIGINS=https://tech.bwa.global'
         )
-    # Fallback dev/staging sem TLS: usa env se presente, senão dev origins
-    CORS_ALLOWED_ORIGINS = list(dict.fromkeys(_env_origins or _dev_origins))
+    CORS_ALLOWED_ORIGINS = list(dict.fromkeys(_env_origins))
 
 CORS_ALLOW_CREDENTIALS = True
 CORS_EXPOSE_HEADERS = ['Content-Type', 'Authorization']
+# Cache de preflight CORS no browser. Em dev manter baixo (60s) porque o
+# browser cacheia decisões "negativas" também — uma vez que o backend
+# respondeu sem header CORS (ex.: redirect 301 antes de algum fix), o navegador
+# bloqueia requests por 24h sem refazer preflight. Em prod, 24h é OK (origem é
+# estável). Reaproveita o mesmo flag `_IS_DEV_RUNTIME` calculado acima.
+CORS_PREFLIGHT_MAX_AGE = 60 if _IS_DEV_RUNTIME else 86400
 
 # CSRF configuration (em produção incluir origens HTTPS do domínio)
 CSRF_TRUSTED_ORIGINS = [o.strip() for o in os.getenv('CSRF_TRUSTED_ORIGINS', '').split(',') if o.strip()] or [
@@ -310,6 +338,15 @@ if os.getenv('CHANNEL_LAYER_BACKEND', '').strip().lower() == 'redis':
     _rh = os.getenv('CHANNEL_REDIS_HOST', os.getenv('REDIS_HOST', '127.0.0.1')).strip()
     _rp = int(os.getenv('CHANNEL_REDIS_PORT', os.getenv('REDIS_PORT', '6379')).strip() or '6379')
     _rpw = os.getenv('REDIS_PASSWORD', '').strip()
+    # Dev local: hostname `redis` do compose não resolve fora dele. Tenta
+    # resolver — se falha, força 127.0.0.1 (requer docker-compose.override.yml
+    # de dev expondo a porta). Em prod resolve e mantém o hostname interno.
+    if _rh == 'redis':
+        import socket as _socket
+        try:
+            _socket.gethostbyname('redis')
+        except _socket.gaierror:
+            _rh = '127.0.0.1'
     # channels_redis aceita URL como host. Se senha existe, embute-a; caso contrário tupla (host, port).
     if _rpw:
         _hosts = [f'redis://:{_rpw}@{_rh}:{_rp}/0']
@@ -332,6 +369,18 @@ else:
 # Usar Redis se disponível, caso contrário usar broker em memória para desenvolvimento
 CELERY_BROKER_URL = os.getenv('CELERY_BROKER_URL', 'redis://127.0.0.1:6379/0')
 CELERY_RESULT_BACKEND = os.getenv('CELERY_RESULT_BACKEND', 'redis://127.0.0.1:6379/0')
+# Quando o processo Django roda NATIVO no host (dev local), o hostname `redis`
+# do docker-compose não resolve via DNS. Heurística: tenta resolver — se
+# falha, assume dev e reescreve pra 127.0.0.1 (que precisa do redis container
+# expondo a porta via docker-compose.override.yml de dev). Em prod, o backend
+# roda dentro do compose e `redis` resolve normalmente — URL fica intacta.
+if '@redis:' in CELERY_BROKER_URL or '@redis:' in CELERY_RESULT_BACKEND:
+    import socket
+    try:
+        socket.gethostbyname('redis')
+    except socket.gaierror:
+        CELERY_BROKER_URL = CELERY_BROKER_URL.replace('@redis:', '@127.0.0.1:')
+        CELERY_RESULT_BACKEND = CELERY_RESULT_BACKEND.replace('@redis:', '@127.0.0.1:')
 CELERY_ACCEPT_CONTENT = ['json']
 CELERY_TASK_SERIALIZER = 'json'
 CELERY_RESULT_SERIALIZER = 'json'
@@ -344,6 +393,12 @@ CELERY_BROKER_TRANSPORT_OPTIONS = {
     'socket_connect_timeout': 3,
     'socket_timeout': 3,
 }
+
+# Modo síncrono pra desenvolvimento sem worker. Quando True, .delay() roda
+# inline na request (sem fila/broker). Útil em dev local Windows onde subir
+# o worker é mais trabalhoso. NUNCA usar em produção (bloqueia request).
+CELERY_TASK_ALWAYS_EAGER = os.getenv('CELERY_TASK_ALWAYS_EAGER', 'False').lower() in ('1', 'true', 'yes')
+CELERY_TASK_EAGER_PROPAGATES = CELERY_TASK_ALWAYS_EAGER
 
 # Beat schedule (só funciona com Celery Beat rodando)
 from celery.schedules import crontab

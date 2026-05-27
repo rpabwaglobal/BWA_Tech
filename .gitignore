@@ -65,3 +65,6 @@ backups/
 backend/dump_banco_prod/
 *.dump
 *.dump.gz
+
+# DEV local override do docker-compose (expõe Redis pra worker nativo)
+docker-compose.override.yml
