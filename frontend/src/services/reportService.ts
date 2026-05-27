@@ -120,6 +120,35 @@ export const reportService = {
     const base = api.defaults.baseURL ?? '';
     return `${base}/reports/${id}/preview/`;
   },
+
+  /** Preview JSON paginado pra formatos tabulares (XLSX/CSV).
+   * Não cria job persistido — retorna a janela `[offset, offset+limit]`.
+   * Cliente faz infinite scroll incrementando `offset`. Cada chamada
+   * re-roda `fetch_data` no backend (sem cache de página). */
+  async previewTable(input: {
+    type: ReportType;
+    filters?: Record<string, unknown>;
+    limit?: number;
+    offset?: number;
+  }): Promise<ReportTablePreview> {
+    const response = await api.post<ReportTablePreview>('/reports/preview-table/', {
+      type: input.type,
+      filters: input.filters ?? {},
+      limit: input.limit,
+      offset: input.offset,
+    });
+    return response.data;
+  },
+};
+
+export type ReportTablePreviewColumn = { key: string; label: string };
+export type ReportTablePreview = {
+  columns: ReportTablePreviewColumn[];
+  rows: Array<Record<string, unknown>>;
+  total: number;
+  offset: number;
+  limit: number;
+  has_more: boolean;
 };
 
 /**

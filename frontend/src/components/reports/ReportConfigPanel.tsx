@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { isAxiosError } from 'axios';
 import {
   AlertTriangle, Download, Eye, FileText, Filter, Info, Loader2,
@@ -15,6 +15,7 @@ import {
   reportService,
   type ReportFormat, type ReportJob,
 } from '@/services/reportService';
+import ReportTablePreviewDialog from '@/components/reports/ReportTablePreviewDialog';
 import { sprintService, type Sprint } from '@/services/sprintService';
 import { projectService, type Project } from '@/services/projectService';
 import { userService, type User } from '@/services/userService';
@@ -247,6 +248,40 @@ export default function ReportConfigPanel({
       setSubmitting(false);
     }
   };
+
+  // ── Preview tabular (XLSX/CSV) — paginado ──────────────────────────────
+  // Dialog gerencia sua própria paginação via callback `fetchPage`. Painel
+  // só decide ABRIR (com formato) e fornece o callback bound nos filtros.
+  const [tablePreview, setTablePreview] = useState<{
+    open: boolean;
+    format: 'xlsx' | 'csv';
+    // Snapshot dos filtros no momento da abertura — congela o que o
+    // backend usa em TODAS as páginas, mesmo se o user mexer enquanto
+    // o modal está aberto.
+    filtersSnapshot: Record<string, unknown>;
+  }>({ open: false, format: 'xlsx', filtersSnapshot: {} });
+
+  const handlePreviewTable = (fmt: 'xlsx' | 'csv') => {
+    const err = validate();
+    if (err) { setError(err); return; }
+    setError(null);
+    setTablePreview({
+      open: true,
+      format: fmt,
+      filtersSnapshot: serializeFilters(filters),
+    });
+  };
+
+  const fetchPreviewPage = useCallback(
+    (offset: number, limit: number) =>
+      reportService.previewTable({
+        type: report.id,
+        filters: tablePreview.filtersSnapshot,
+        offset,
+        limit,
+      }),
+    [report.id, tablePreview.filtersSnapshot],
+  );
 
   const handleCancelJob = async () => {
     if (!activeJob) return;
@@ -584,10 +619,23 @@ export default function ReportConfigPanel({
             <Button
               type="button"
               variant="outline"
-              onClick={() => { void handleSubmit('pdf'); }}
-              disabled={previewDisabled || isGenerating || submitting}
+              onClick={() => {
+                if (format === 'pdf') {
+                  void handleSubmit('pdf');
+                } else if (format === 'xlsx' || format === 'csv') {
+                  void handlePreviewTable(format);
+                }
+                // DOCX: botão fica desabilitado (sem preview disponível).
+              }}
+              disabled={previewDisabled || isGenerating || submitting || format === 'docx'}
               className="shrink-0"
-              title="Gera em PDF e abre o preview (sem alterar o formato selecionado)"
+              title={
+                format === 'docx'
+                  ? 'Pré-visualização indisponível para DOCX — baixe pra ver.'
+                  : format === 'pdf'
+                    ? 'Gera em PDF e abre o preview'
+                    : 'Mostra as primeiras 100 linhas como tabela (não gera o arquivo)'
+              }
             >
               <Eye className="mr-[6px] h-[14px] w-[14px]" /> Pré-visualizar
             </Button>
@@ -613,6 +661,20 @@ export default function ReportConfigPanel({
           </Button>
         </div>
       </footer>
+
+      <ReportTablePreviewDialog
+        open={tablePreview.open}
+        title={`${report.title} — preview ${tablePreview.format.toUpperCase()}`}
+        format={tablePreview.format}
+        fetchPage={fetchPreviewPage}
+        onGenerate={() => {
+          // Fecha o preview e dispara o fluxo de geração real com o mesmo
+          // formato selecionado pelo usuário.
+          setTablePreview((prev) => ({ ...prev, open: false }));
+          void handleSubmit(tablePreview.format);
+        }}
+        onClose={() => setTablePreview((prev) => ({ ...prev, open: false }))}
+      />
     </section>
   );
 }

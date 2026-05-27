@@ -3,7 +3,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Button } from '@/components/ui/button';
 import { Download, Loader2 } from 'lucide-react';
 import api from '@/services/api';
-import type { ReportJob } from '@/services/reportService';
+import { reportService, type ReportJob } from '@/services/reportService';
 
 export type ReportPreviewDialogProps = {
   open: boolean;
@@ -100,6 +100,11 @@ export default function ReportPreviewDialog({ open, job, onClose }: ReportPrevie
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
+    // Política de retenção: arquivo é descartado após o download. PDF reusa
+    // o blob local (não passa por /download/), então o servidor não detecta
+    // o "fim do stream" — frontend precisa avisar com DELETE explícito.
+    // Fire-and-forget: se falhar, cleanup periódico (futuro) pega o órfão.
+    void reportService.cancel(job.id).catch(() => undefined);
   };
 
   return (

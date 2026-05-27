@@ -15,15 +15,19 @@ em vez de duplicar.
 """
 from __future__ import annotations
 
+import logging
 import mimetypes
 import os
 
-from django.http import FileResponse, Http404
+from django.http import FileResponse, Http404, StreamingHttpResponse
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
+logger = logging.getLogger(__name__)
+
+from .generators import resolve as resolve_generator
 from .models import ReportJob
 from .serializers import ReportJobCreateSerializer, ReportJobSerializer
 from .tasks import generate_report
@@ -107,9 +111,14 @@ class ReportJobViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['get'], url_path='download')
     def download(self, request, pk=None):
-        """Baixa o arquivo (Content-Disposition: attachment)."""
+        """Baixa o arquivo (Content-Disposition: attachment).
+
+        Auto-deleta o ReportJob (+ arquivo) APÓS o stream completar com
+        sucesso. Cliente nem precisa avisar. Se o cliente desconectar
+        no meio, o arquivo fica e o cleanup periódico (futuro) pega.
+        """
         job = self.get_object()
-        return _serve_file(job, as_attachment=True)
+        return _serve_file_and_delete_on_success(job)
 
     @action(detail=True, methods=['get'], url_path='preview')
     def preview(self, request, pk=None):
@@ -120,6 +129,162 @@ class ReportJobViewSet(viewsets.ModelViewSet):
         """
         job = self.get_object()
         return _serve_file(job, as_attachment=False)
+
+    @action(detail=False, methods=['post'], url_path='preview-table')
+    def preview_table(self, request):
+        """Preview JSON paginado p/ formatos tabulares (XLSX/CSV).
+
+        Não cria ReportJob persistido — instancia o gerador num job efêmero,
+        roda `fetch_data` + `table_rows` e devolve uma janela `[offset, +limit]`
+        em JSON. `set_progress` vira no-op em job sem pk (ver BaseReport).
+
+        Body: `{ type, filters?, limit?: 100, offset?: 0 }`. Cliente pode
+        pedir páginas seguintes incrementando `offset`. Cada call re-roda
+        `fetch_data` (sem cache) — barato porque as listas vivem em memória.
+
+        Retorna 422 se o gerador não suporta formato tabular (sem colunas).
+        """
+        type_id = request.data.get('type')
+        filters = request.data.get('filters') or {}
+        try:
+            limit = int(request.data.get('limit') or 100)
+        except (TypeError, ValueError):
+            limit = 100
+        limit = max(1, min(limit, 1000))
+        try:
+            offset = int(request.data.get('offset') or 0)
+        except (TypeError, ValueError):
+            offset = 0
+        offset = max(0, offset)
+
+        if not isinstance(type_id, str) or not type_id:
+            return Response(
+                {'detail': 'Campo "type" é obrigatório.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if not isinstance(filters, dict):
+            return Response(
+                {'detail': 'Campo "filters" precisa ser objeto.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            generator_cls = resolve_generator(type_id)
+        except KeyError as exc:
+            return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Job efêmero (NÃO salvo). set_progress vira no-op por causa do pk None.
+        ephemeral = ReportJob(
+            user=request.user,
+            type=type_id,
+            format=ReportJob.Format.CSV,  # qualquer um tabular — só pra satisfazer o schema
+            filters=filters,
+            include_header=True,
+        )
+        generator = generator_cls(ephemeral)
+
+        columns = generator.table_columns()
+        if not columns:
+            return Response(
+                {
+                    'detail': (
+                        f'O relatório "{type_id}" não tem formato tabular — '
+                        'use preview em PDF.'
+                    ),
+                },
+                status=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            )
+
+        try:
+            data = generator.fetch_data()
+            all_rows = list(generator.table_rows(data))
+        except Exception as exc:  # noqa: BLE001 — superfície curta pro user
+            return Response(
+                {'detail': f'Falha ao preparar preview: {exc}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+        total = len(all_rows)
+        page = all_rows[offset:offset + limit]
+        has_more = (offset + len(page)) < total
+
+        return Response(
+            {
+                'columns': [{'key': c.key, 'label': c.label} for c in columns],
+                'rows': page,
+                'total': total,
+                'offset': offset,
+                'limit': limit,
+                'has_more': has_more,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+def _serve_file_and_delete_on_success(job: ReportJob) -> StreamingHttpResponse:
+    """Stream do arquivo + delete do ReportJob (e arquivo do storage) ao
+    completar a transferência.
+
+    Detecção de "completou": conta bytes enviados; se >= file_size ao final
+    do generator, é seguro deletar. Se o cliente desconectar no meio
+    (GeneratorExit é propagado), o arquivo FICA — pra futuras tentativas.
+
+    Não usa FileResponse porque a gente quer controle do ciclo de vida do
+    handle e hook de "fim de stream" — StreamingHttpResponse com generator
+    custom faz isso de forma confiável.
+    """
+    if job.status != ReportJob.Status.COMPLETED or not job.file:
+        raise Http404('Arquivo do relatório não disponível.')
+
+    filename = os.path.basename(job.file.name)
+    content_type = mimetypes.guess_type(filename)[0] or 'application/octet-stream'
+
+    # Cache locais — depois do delete o job some, então pegamos tudo antes.
+    file_obj = job.file.open('rb')
+    try:
+        file_size = file_obj.seek(0, 2)
+        file_obj.seek(0)
+    except Exception:
+        file_obj.close()
+        raise
+
+    job_id = job.id
+    file_storage = job.file.storage
+    file_name = job.file.name
+    sent = [0]
+    chunk_size = 64 * 1024
+
+    def _generator():
+        try:
+            while True:
+                chunk = file_obj.read(chunk_size)
+                if not chunk:
+                    break
+                sent[0] += len(chunk)
+                yield chunk
+        finally:
+            file_obj.close()
+            # Só apaga se transferiu TUDO. Cliente desconectado no meio
+            # vira GeneratorExit no yield e cai aqui com sent < file_size.
+            if sent[0] >= file_size:
+                try:
+                    # Deleta o registro primeiro pra não deixar job órfão
+                    # apontando pra arquivo inexistente.
+                    ReportJob.objects.filter(pk=job_id).delete()
+                    file_storage.delete(file_name)
+                except Exception as exc:  # noqa: BLE001 — best-effort cleanup
+                    logger.warning(
+                        'Falha ao limpar ReportJob #%s após download: %s',
+                        job_id, exc,
+                    )
+
+    response = StreamingHttpResponse(_generator(), content_type=content_type)
+    response['Content-Length'] = str(file_size)
+    # Padrão "BWATech - <Título> - DD-MM-YYYY HH-MM.<fmt>" já vem no nome
+    # do arquivo (ver BaseReport.filename); só repete no Content-Disposition.
+    safe_name = filename.replace('"', '')
+    response['Content-Disposition'] = f'attachment; filename="{safe_name}"'
+    return response
 
 
 def _serve_file(job: ReportJob, *, as_attachment: bool) -> FileResponse:

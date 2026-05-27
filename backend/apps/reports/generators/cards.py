@@ -2,8 +2,12 @@
 Relatório de Cards.
 
 Filtros opcionais (todos via job.filters):
-- sprint_id, project_id, status, area, tipo, responsavel_id, prioridade
-- period_start, period_end (filtra por finalizado_em OU data_fim)
+- sprint_ids (lista) OU sprint_id (single, legado): filtra por sprint(s)
+- project_id, status, area, tipo, responsavel_id, prioridade
+- period_start, period_end (filtra por created_at)
+
+`sprint_ids`/`period` são mutuamente exclusivos no frontend, mas o backend
+aceita ambos defensivamente (interseção, se vierem juntos).
 
 Exporta:
 - PDF/DOCX: tabela estilizada com badges de status/prioridade
@@ -48,9 +52,17 @@ class Report(BaseReport):
             .order_by('-finalizado_em', '-created_at')
         )
 
-        sprint_id = self.filters.get('sprint_id')
-        if sprint_id:
-            qs = qs.filter(projeto__sprint_id=sprint_id)
+        # Aceita sprint_ids (lista, preferencial) e sprint_id (legado).
+        sprint_ids = _coerce_int_list(self.filters.get('sprint_ids'))
+        if not sprint_ids:
+            single = self.filters.get('sprint_id')
+            if single not in (None, ''):
+                try:
+                    sprint_ids = [int(single)]
+                except (TypeError, ValueError):
+                    sprint_ids = []
+        if sprint_ids:
+            qs = qs.filter(projeto__sprint_id__in=sprint_ids)
         project_id = self.filters.get('project_id')
         if project_id:
             qs = qs.filter(projeto_id=project_id)
@@ -86,10 +98,16 @@ class Report(BaseReport):
     def filters_display(self, data: Any) -> list[FilterDisplay]:
         out: list[FilterDisplay] = []
         f = self.filters
-        if f.get('sprint_id'):
-            sp = Sprint.objects.filter(pk=f['sprint_id']).first()
-            if sp:
-                out.append(FilterDisplay('Sprint', sp.nome))
+        sprint_ids = _coerce_int_list(f.get('sprint_ids'))
+        if not sprint_ids and f.get('sprint_id') not in (None, ''):
+            try:
+                sprint_ids = [int(f['sprint_id'])]
+            except (TypeError, ValueError):
+                sprint_ids = []
+        if sprint_ids:
+            names = list(Sprint.objects.filter(id__in=sprint_ids).values_list('nome', flat=True))
+            label = ', '.join(names) if names else ', '.join(f'#{i}' for i in sprint_ids)
+            out.append(FilterDisplay('Sprint(s)', label))
         if f.get('project_id'):
             pr = Project.objects.filter(pk=f['project_id']).first()
             if pr:
@@ -160,3 +178,18 @@ def _to_naive(dt):
     if timezone.is_aware(dt):
         return timezone.localtime(dt).replace(tzinfo=None)
     return dt
+
+
+def _coerce_int_list(raw: Any) -> list[int]:
+    """Aceita lista/tupla ou valor único e devolve list[int] (filtra
+    elementos não-int). Útil pra normalizar filtros vindos do JSON."""
+    if raw in (None, ''):
+        return []
+    candidates = raw if isinstance(raw, (list, tuple)) else [raw]
+    out: list[int] = []
+    for v in candidates:
+        try:
+            out.append(int(v))
+        except (TypeError, ValueError):
+            continue
+    return out

@@ -64,7 +64,9 @@ const REPORT_DEFS: ReportDef[] = [
     title: 'Cards',
     description: 'Todos os cards filtráveis por sprint, projeto, status, área, tipo, prioridade e responsável.',
     category: 'Operacional',
-    filters: ['sprint', 'project', 'status', 'area', 'tipo', 'prioridade', 'responsavel', 'period'],
+    filters: ['sprints_multi', 'period', 'project', 'status', 'area', 'tipo', 'prioridade', 'responsavel'],
+    // Sprints OU Período (mutex), demais filtros independentes.
+    exclusiveFilters: [['sprints_multi', 'period']],
   },
   {
     id: 'sprint',

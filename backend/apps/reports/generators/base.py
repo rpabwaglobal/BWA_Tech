@@ -88,7 +88,13 @@ class BaseReport:
     # ─────────────────── helpers ───────────────────
 
     def set_progress(self, value: int, message: str = '') -> None:
-        """Atualiza progresso no DB (consumido pelo polling do frontend)."""
+        """Atualiza progresso no DB (consumido pelo polling do frontend).
+
+        No-op quando o job não foi salvo (modo preview tabular — usa instância
+        efêmera só pra rodar `fetch_data` + `table_rows`).
+        """
+        if not self.job.pk:
+            return
         value = max(0, min(100, int(value)))
         self.job.progress = value
         if message:
