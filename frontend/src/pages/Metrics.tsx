@@ -22,7 +22,8 @@ import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Cell } from 'recharts';
 import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from '@/components/ui/chart';
 import {
   cardService,
-  type Card as CardType,
+  type Card as FullCardType,
+  type CardForMetrics,
   CARD_AREAS,
   CARD_TYPES,
   CARD_PRIORITIES,
@@ -34,6 +35,21 @@ import { projectService, type Project } from '@/services/projectService';
 import { useAuth } from '@/context/AuthContext';
 import { cn } from '@/lib/utils';
 import { ROUTES } from '@/routes';
+import { cachedFetch } from '@/lib/cachedFetch';
+
+/** Alias usado em todo o módulo. Slim para todos os cálculos de métricas
+ * (sem nested), com campos suficientes para o modal de drill-down. */
+type CardType = CardForMetrics;
+
+/** TTL do cache SWR: 60s. */
+const METRICS_CACHE_TTL_MS = 60_000;
+const METRICS_CACHE_KEY = 'metrics:bundle:v1';
+type MetricsBundle = {
+  cards: CardForMetrics[];
+  sprints: Sprint[];
+  users: User[];
+  projects: Project[];
+};
 
 const CLOSED_STATUS = 'finalizado';
 
@@ -136,12 +152,12 @@ function isSpecialProjectName(value?: string | null): boolean {
   return n === 'suporte' || n === 'sugestoes' || n === 'projetos descartados';
 }
 
-/** ID da sprint do card para filtros (string), mesmo se `sprints` no cliente não tiver essa entrada. */
+/** ID da sprint do card. Lê o campo denormalizado `sprint` do CardForMetrics
+ * (que vem direto do projeto_detail no backend) com fallback para o lookup
+ * de projects no client. */
 function resolveCardSprintId(card: CardType, projects: Project[]): string | null {
-  const fromNested =
-    card.projeto_detail?.sprint_detail?.id ?? card.projeto_detail?.sprint;
-  if (fromNested != null && String(fromNested).trim() !== '') {
-    return String(fromNested);
+  if (card.sprint != null && String(card.sprint).trim() !== '') {
+    return String(card.sprint);
   }
   const p = projects.find((pr) => String(pr.id) === String(card.projeto));
   if (p?.sprint != null && String(p.sprint).trim() !== '') {
@@ -160,11 +176,9 @@ function getCardDeliveryDate(card: CardType): Date | null {
 }
 
 /** True se o projeto do card é "sistêmico" (Suporte / Sugestões / Descartados).
- * Usa a flag `is_system` do backend, com fallback pro nome em projetos
- * antigos que ainda não receberam a migração. */
+ * Usa a flag denormalizada `projeto_is_system` que vem direto do endpoint slim. */
 function isSystemProject(card: CardType): boolean {
-  if (card.projeto_detail?.is_system === true) return true;
-  return isSpecialProjectName(card.projeto_detail?.nome);
+  return card.projeto_is_system === true;
 }
 
 function formatConsistencyDateTime(value?: string | null): string {
@@ -233,8 +247,8 @@ function MetricsDeliveredCardRow({
           <span className="font-medium text-[var(--color-foreground)]">{card.nome}</span>
           {badge}
         </div>
-        {card.projeto_detail?.nome && (
-          <p className="mt-1 text-xs text-[var(--color-muted-foreground)]">Projeto: {card.projeto_detail.nome}</p>
+        {card.projeto_nome && (
+          <p className="mt-1 text-xs text-[var(--color-muted-foreground)]">Projeto: {card.projeto_nome}</p>
         )}
         <dl className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-xs sm:grid-cols-4">
           <div>
@@ -331,7 +345,10 @@ export default function Metrics() {
   const [chartCardsTab, setChartCardsTab] = useState<'onTime' | 'late'>('onTime');
   const [onTimeViewCardOpen, setOnTimeViewCardOpen] = useState(false);
   const [onTimeViewCardLoading, setOnTimeViewCardLoading] = useState(false);
-  const [onTimeViewSelectedCard, setOnTimeViewSelectedCard] = useState<CardType | null>(null);
+  // Recebe o Card COMPLETO (FullCardType) vindo de cardService.getById ao
+  // clicar num card específico no modal. O slim CardForMetrics não tem
+  // descricao, links, complexidade etc. — necessários no editor.
+  const [onTimeViewSelectedCard, setOnTimeViewSelectedCard] = useState<FullCardType | null>(null);
   const [onTimeViewCardForm, setOnTimeViewCardForm] = useState(() => ({ ...EMPTY_METRICS_CARD_FORM }));
 
   const [onTimeScope, setOnTimeScope] = useState<'sprint' | 'year' | 'month' | 'interval' | 'users'>('year');
@@ -354,28 +371,63 @@ export default function Metrics() {
 
   useEffect(() => {
     let cancelled = false;
-    (async () => {
+
+    const applyBundle = (bundle: MetricsBundle) => {
+      if (cancelled) return;
+      setCards(bundle.cards);
+      setSprints(
+        [...bundle.sprints].sort(
+          (a, b) => new Date(b.data_inicio).getTime() - new Date(a.data_inicio).getTime(),
+        ),
+      );
+      setUsers(bundle.users);
+      setProjects(bundle.projects);
+      if (bundle.sprints.length && !leaderboardSprint) setLeaderboardSprint(bundle.sprints[0].id);
+      if (bundle.sprints.length && !onTimeSprint) setOnTimeSprint(bundle.sprints[0].id);
+    };
+
+    const fetchAll = async (): Promise<MetricsBundle> => {
+      const [cardsRes, sprintsRes, usersRes, projectsRes] = await Promise.all([
+        cardService.getForMetrics(),
+        sprintService.getAll(),
+        userService.getAll(),
+        projectService.getAll(),
+      ]);
+      return { cards: cardsRes, sprints: sprintsRes, users: usersRes, projects: projectsRes };
+    };
+
+    // SWR: se há cache (mesmo stale), pinta a tela imediatamente. Se não há,
+    // mantém spinner. Em paralelo, sempre revalida em background.
+    const { cached, fresh, revalidate } = cachedFetch<MetricsBundle>(
+      METRICS_CACHE_KEY,
+      fetchAll,
+      METRICS_CACHE_TTL_MS,
+    );
+
+    if (cached) {
+      applyBundle(cached);
+      setLoading(false);
+    } else {
       setLoading(true);
-      try {
-        const [cardsRes, sprintsRes, usersRes, projectsRes] = await Promise.all([
-          cardService.getAll(),
-          sprintService.getAll(),
-          userService.getAll(),
-          projectService.getAll(),
-        ]);
-        if (!cancelled) {
-          setCards(cardsRes);
-          setSprints(sprintsRes.sort((a, b) => new Date(b.data_inicio).getTime() - new Date(a.data_inicio).getTime()));
-          setUsers(usersRes);
-          setProjects(projectsRes);
-          if (sprintsRes.length && !leaderboardSprint) setLeaderboardSprint(sprintsRes[0].id);
-          if (sprintsRes.length && !onTimeSprint) setOnTimeSprint(sprintsRes[0].id);
-        }
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    })();
-    return () => { cancelled = true; };
+    }
+
+    if (!fresh && revalidate) {
+      revalidate
+        .then((bundle) => {
+          if (cancelled) return;
+          applyBundle(bundle);
+        })
+        .catch(() => {
+          // Falha de rede: mantém o cache antigo se houver, senão libera spinner.
+        })
+        .finally(() => {
+          if (!cancelled) setLoading(false);
+        });
+    }
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const projectToSprint = useMemo(() => {
@@ -397,25 +449,9 @@ export default function Metrics() {
   }, [projects]);
 
   const getSprintForCard = (card: CardType): Sprint | null => {
-    const nested = card.projeto_detail?.sprint_detail;
-    if (nested?.id != null && String(nested.id).trim() !== '') {
-      const match = sprints.find((s) => String(s.id) === String(nested.id));
-      if (match) return match;
-      return {
-        id: String(nested.id),
-        nome: nested.nome ?? '',
-        data_inicio: nested.data_inicio,
-        fechamento_em: nested.fechamento_em,
-        duracao_dias: nested.duracao_dias ?? 0,
-        supervisor: nested.supervisor ?? '',
-        finalizada: nested.finalizada,
-        data_fim: nested.data_fim,
-        supervisor_name: nested.supervisor_name,
-      };
-    }
-    const sprintFk = card.projeto_detail?.sprint;
-    if (sprintFk != null && String(sprintFk).trim() !== '') {
-      const match = sprints.find((s) => String(s.id) === String(sprintFk));
+    // CardForMetrics traz a sprint denormalizada via select_related.
+    if (card.sprint != null && String(card.sprint).trim() !== '') {
+      const match = sprints.find((s) => String(s.id) === String(card.sprint));
       if (match) return match;
     }
     return projectToSprint.get(String(card.projeto)) ?? null;

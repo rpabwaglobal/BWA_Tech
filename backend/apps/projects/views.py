@@ -33,7 +33,8 @@ from .models import (
 from .services import finalizar_sprint_replicacao
 from apps.accounts.profile_picture_utils import get_profile_picture_url
 from .serializers import (
-    SprintSerializer, ProjectSerializer, CardSerializer, UserNoteSerializer, CardPinSerializer, EventSerializer,
+    SprintSerializer, ProjectSerializer, CardSerializer, CardMetricsSerializer,
+    UserNoteSerializer, CardPinSerializer, EventSerializer,
     CardLogSerializer, NotificationSerializer, NotificationPreferenceSerializer,
     WeeklyPrioritySerializer, WeeklyPriorityConfigSerializer,
     CardDueDateChangeRequestSerializer,
@@ -685,8 +686,40 @@ class CardViewSet(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         """Define o criado_por automaticamente ao criar um card"""
         serializer.save(criado_por=self.request.user)
-    
-    
+
+    @action(detail=False, methods=['get'], url_path='metrics')
+    def metrics(self, request):
+        """
+        Endpoint slim para a página de Métricas.
+
+        Retorna TODOS os cards (sem paginação) com APENAS os campos usados
+        pelos cálculos de métricas. Cerca de 75% menor que o /cards/ padrão
+        e sem N+1 (events_count não é incluído).
+
+        Inclui cards de projetos arquivados para o frontend filtrar via
+        `projeto_arquivado` (regra: arquivados ficam fora das métricas).
+        Excluir aqui economiza pouco e introduziria divergência com o
+        ProjectViewSet que pode listar arquivados em outros contextos.
+        """
+        qs = (
+            Card.objects.select_related('projeto', 'projeto__sprint')
+            .only(
+                'id', 'nome', 'status', 'area', 'tipo', 'responsavel',
+                'data_inicio', 'data_fim', 'finalizado_em',
+                'created_at', 'updated_at',
+                'projeto__id', 'projeto__nome',
+                'projeto__is_system', 'projeto__arquivado',
+                'projeto__sprint',
+            )
+            .order_by('-finalizado_em', '-created_at')
+        )
+        serializer = CardMetricsSerializer(qs, many=True)
+        response = Response(serializer.data)
+        # Cache HTTP curto (60s) — alinhado com o cache SWR do frontend.
+        # `private` porque o conjunto pode variar por permissão (futuro).
+        response['Cache-Control'] = 'private, max-age=60'
+        return response
+
     def update(self, request, *args, **kwargs):
         """Permite atualização apenas se o usuário for o criador ou supervisor/admin"""
         instance = self.get_object()

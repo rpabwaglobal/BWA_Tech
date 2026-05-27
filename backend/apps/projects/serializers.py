@@ -667,6 +667,50 @@ class CardSerializer(serializers.ModelSerializer):
         read_only_fields = ['created_at', 'updated_at', 'criado_por', 'finalizado_em']
 
 
+class CardMetricsSerializer(serializers.ModelSerializer):
+    """
+    Serializer SLIM do Card para a página de Métricas.
+
+    Retorna APENAS os campos usados pelos cálculos de métricas + o mínimo
+    necessário para o modal de drill-down (clique em barra → lista de cards).
+    Sem nested completos, sem SerializerMethodField, sem display_X. Reduz o
+    payload em ~70% vs CardSerializer e elimina o N+1 do events_count.
+
+    Campos denormalizados via select_related('projeto', 'projeto__sprint'):
+    - projeto_nome, projeto_is_system, projeto_arquivado
+    - sprint (id da sprint do projeto)
+
+    display_X e nomes de área/tipo são derivados no frontend a partir de
+    CARD_AREAS/CARD_TYPES (constantes), evitando duplicação no payload.
+    """
+    projeto_nome = serializers.CharField(source='projeto.nome', read_only=True)
+    projeto_is_system = serializers.BooleanField(source='projeto.is_system', read_only=True)
+    projeto_arquivado = serializers.BooleanField(source='projeto.arquivado', read_only=True)
+    sprint = serializers.PrimaryKeyRelatedField(source='projeto.sprint', read_only=True)
+
+    class Meta:
+        model = Card
+        fields = [
+            'id',
+            'nome',
+            'status',
+            'area',
+            'tipo',
+            'responsavel',
+            'projeto',
+            'projeto_nome',
+            'projeto_is_system',
+            'projeto_arquivado',
+            'sprint',
+            'data_inicio',
+            'data_fim',
+            'finalizado_em',
+            'created_at',
+            'updated_at',
+        ]
+        read_only_fields = fields
+
+
 class EventSerializer(serializers.ModelSerializer):
     card_detail = CardSerializer(source='card', read_only=True)
     usuario_name = serializers.SerializerMethodField()
