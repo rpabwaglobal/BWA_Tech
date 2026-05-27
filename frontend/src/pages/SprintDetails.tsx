@@ -155,6 +155,14 @@ export default function SprintDetails() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [cards, setCards] = useState<CardType[]>([]);
 
+  /** Invalida o cache SWR desta sprint + o cache de métricas globais.
+   * Chamar SEMPRE que um card é criado/editado/movido/excluído (local ou
+   * via WebSocket). Evita que a próxima visita à página mostre dados velhos. */
+  const invalidateCardCaches = useCallback(() => {
+    if (sprintId) invalidateCache(`sprint-bundle:${sprintId}`);
+    invalidateCache('metrics:bundle:v1');
+  }, [sprintId]);
+
   // Real-time: outros usuários movendo cards aparecem aqui sem F5.
   // Backend só dispara broadcast se a sprint estiver em andamento.
   const handleCardMovedRealtime = useCallback(
@@ -166,8 +174,10 @@ export default function SprintDetails() {
           String(c.id) === String(evt.card_id) ? { ...c, status: evt.new_status as CardType['status'] } : c
         )
       );
+      // Outro usuário moveu → cache local fica defasado.
+      invalidateCardCaches();
     },
-    [user?.id]
+    [user?.id, invalidateCardCaches]
   );
 
   useSprintKanbanWebSocket({
@@ -1331,6 +1341,8 @@ export default function SprintDetails() {
               : card,
           ),
         );
+        // Invalida cache para próxima visita refletir a edição.
+        invalidateCardCaches();
         
         // Registrar log de alteração se houver mudanças
         if (changes.length > 0) {
@@ -1352,7 +1364,10 @@ export default function SprintDetails() {
           responsavel_name: newCard.responsavel_name ?? (newCard.responsavel ? users.find(u => u.id === newCard.responsavel)?.first_name : undefined),
         };
         setCards((prevCards) => [...prevCards, cardWithUser]);
-        
+
+        // Invalida cache para próxima visita já mostrar o novo card.
+        invalidateCardCaches();
+
         // Log de criação é criado automaticamente pelo backend
         // Atualizar trigger para recarregar logs em tempo real
         setLogsRefreshTrigger(prev => prev + 1);
@@ -1440,6 +1455,8 @@ export default function SprintDetails() {
       await cardService.delete(cardToDelete.id);
       // Remover o card da lista local sem recarregar tudo
       setCards((prevCards) => prevCards.filter((card) => card.id !== cardToDelete.id));
+      // Invalida cache para próxima visita.
+      invalidateCardCaches();
       setDeleteCardDialogOpen(false);
       setCardToDelete(null);
       if (editingCard?.id === cardToDelete.id || (cardId && String(cardToDelete.id) === String(cardId))) {
