@@ -28,7 +28,8 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { sprintService } from '@/services/sprintService';
+import { sprintService, type SprintBundle } from '@/services/sprintService';
+import { cachedFetch, invalidateCache } from '@/lib/cachedFetch';
 import { projectService } from '@/services/projectService';
 import { cardService, CARD_AREAS, CARD_TYPES, CARD_PRIORITIES, CARD_STATUSES } from '@/services/cardService';
 import { userService } from '@/services/userService';
@@ -482,72 +483,88 @@ export default function SprintDetails() {
     }
   }, [showPriorityColorsOnCards]);
 
-  const loadData = async () => {
-    if (!sprintId) return;
-    setLoading(true);
-    try {
-      const [sprintData, sprintProjects, usersData] = await Promise.all([
-        sprintService.getById(sprintId),
-        projectService.getBySprint(sprintId),
-        userService.getAll(),
-      ]);
+  /** Aplica um SprintBundle ao estado. Compartilhado entre carga inicial,
+   * revalidação SWR e reloads forçados. */
+  const applySprintBundle = (bundle: SprintBundle) => {
+    setSprint(bundle.sprint);
+    setProjects(bundle.projects);
+    setCards(bundle.cards);
 
-      setSprint(sprintData);
-      setProjects(sprintProjects);
-      setUsers(usersData);
-
-      // Buscar cards apenas dos projetos da sprint (evita carregar o sistema inteiro)
-      const cardsPerProject = await Promise.all(
-        sprintProjects.map((p) => cardService.getByProject(String(p.id)).catch(() => [])),
-      );
-      const cardsData = cardsPerProject.flat();
-      setCards(cardsData);
-
-      // Carregar configurações de Kanban por projeto (para respeitar etapas configuradas)
-      try {
-        const configs = await Promise.all(
-          sprintProjects.map(async (p) => {
-            try {
-              const cfg = await projectService.getKanbanConfig(p.id);
-              const apiStages = cfg?.stages;
-              if (Array.isArray(apiStages) && apiStages.length) {
-                const normalized: ProjectStageConfig[] = apiStages.map((s: any) => ({
-                  id: s.key,
-                  label: s.label,
-                  is_terminal: !!s.is_terminal,
-                  requires_required_data: !!s.requires_required_data,
-                }));
-                return { projectId: p.id, stages: normalized };
-              }
-            } catch (e) {
-              // fallback individual
-            }
-            return { projectId: p.id, stages: DEFAULT_SPRINT_STAGE_CONFIGS };
-          }),
-        );
-
-        const map: Record<string, ProjectStageConfig[]> = {};
-        configs.forEach((c) => {
-          map[String(c.projectId)] = c.stages;
-        });
-        setProjectKanbanStagesByProjectId(map);
-      } catch (e) {
-        setProjectKanbanStagesByProjectId({});
+    // Normaliza kanban_configs (record indexado por project_id) para o
+    // formato do estado local (ProjectStageConfig[]).
+    const map: Record<string, ProjectStageConfig[]> = {};
+    for (const project of bundle.projects) {
+      const pid = String(project.id);
+      const apiStages = bundle.kanban_configs?.[pid];
+      if (Array.isArray(apiStages) && apiStages.length) {
+        map[pid] = apiStages.map((s) => ({
+          id: s.key,
+          label: s.label,
+          is_terminal: !!s.is_terminal,
+          requires_required_data: !!s.requires_required_data,
+        }));
+      } else {
+        map[pid] = DEFAULT_SPRINT_STAGE_CONFIGS;
       }
-
-      // Initialize sprint form data if editing
-      setSprintFormData({
-        nome: sprintData.nome,
-        data_inicio: fechamentoIsoToDatetimeLocal(sprintData.data_inicio),
-        fechamento_em: fechamentoIsoToDatetimeLocal(sprintData.fechamento_em),
-      });
-
-    } catch (error) {
-      console.error('Erro ao carregar dados da sprint:', error);
-      setSprint(null);
-    } finally {
-      setLoading(false);
     }
+    setProjectKanbanStagesByProjectId(map);
+
+    setSprintFormData({
+      nome: bundle.sprint.nome,
+      data_inicio: fechamentoIsoToDatetimeLocal(bundle.sprint.data_inicio),
+      fechamento_em: fechamentoIsoToDatetimeLocal(bundle.sprint.fechamento_em),
+    });
+  };
+
+  const loadData = async (options?: { force?: boolean }) => {
+    if (!sprintId) return;
+
+    const cacheKey = `sprint-bundle:${sprintId}`;
+    const TTL_MS = 60_000; // 60s SWR
+
+    // Após mutações (criar/editar/excluir card), `force: true` garante que
+    // ignoramos o cache e re-buscamos do server.
+    if (options?.force) {
+      invalidateCache(cacheKey);
+    }
+
+    // SWR: usa cache (mesmo stale) se houver, e revalida em background.
+    // `users` não vem no bundle — vai paralelo, também cacheado.
+    const fetchBundle = () => sprintService.getBundle(sprintId);
+    const { cached, fresh, revalidate } = cachedFetch<SprintBundle>(
+      cacheKey,
+      fetchBundle,
+      TTL_MS,
+    );
+
+    if (cached) {
+      applySprintBundle(cached);
+      setLoading(false);
+    } else {
+      setLoading(true);
+    }
+
+    // Users carregam em paralelo (não estão no bundle pra manter o endpoint
+    // focado; userService.getAll() é leve e o frontend tende a ter cache).
+    const usersPromise = userService
+      .getAll()
+      .then((u) => setUsers(u))
+      .catch(() => undefined);
+
+    const revalidatePromise = revalidate ?? (fresh ? Promise.resolve(cached!) : null);
+    if (revalidatePromise) {
+      revalidatePromise
+        .then((bundle) => applySprintBundle(bundle))
+        .catch((error) => {
+          console.error('Erro ao carregar bundle da sprint:', error);
+          if (!cached) setSprint(null);
+        })
+        .finally(() => {
+          setLoading(false);
+        });
+    }
+
+    await usersPromise;
   };
 
   const getProjectsForSprint = (sprintId: string) => {
@@ -749,7 +766,7 @@ export default function SprintDetails() {
         });
       }
       setProjectDialogOpen(false);
-      loadData();
+      void loadData({ force: true });
     } catch (err: any) {
       const errorData = err.response?.data;
       let errorMessage = 'Erro ao salvar projeto';
@@ -793,7 +810,7 @@ export default function SprintDetails() {
       await projectService.delete(projectToDelete.id);
       setDeleteProjectDialogOpen(false);
       setProjectToDelete(null);
-      loadData();
+      void loadData({ force: true });
     } catch (error) {
       console.error('Erro ao excluir projeto:', error);
     } finally {
@@ -1479,7 +1496,7 @@ export default function SprintDetails() {
         fechamento_em: fechamentoIso,
       });
       setSprintDialogOpen(false);
-      loadData();
+      void loadData({ force: true });
     } catch (err: any) {
       const errorData = err.response?.data;
       let errorMessage = 'Erro ao salvar sprint';
@@ -1536,7 +1553,7 @@ export default function SprintDetails() {
     try {
       await sprintService.finalizar(sprint.id);
       setFinalizarDialogOpen(false);
-      loadData();
+      void loadData({ force: true });
     } catch (err: any) {
       const detail = err.response?.data?.detail;
       setFinalizarError(typeof detail === 'string' ? detail : 'Erro ao finalizar sprint.');
@@ -3596,7 +3613,7 @@ export default function SprintDetails() {
               onOpenChange={setDueDateRequestOpen}
               preselectedCardId={editingCard?.id || null}
               onCreated={() => {
-                void loadData();
+                void loadData({ force: true });
               }}
             />
 

@@ -306,10 +306,18 @@ class CardSerializer(serializers.ModelSerializer):
     prioridade_display = serializers.CharField(source='get_prioridade_display', read_only=True)
     area_display = serializers.CharField(source='get_area_display', read_only=True)
     tipo_display = serializers.CharField(source='get_tipo_display', read_only=True)
-    # `source='events.count'` falha: .count no RelatedManager é método, não int.
+    # Anotado no queryset via Count('events') — evita N+1 (uma query por card).
+    # Fallback `obj.events.count()` apenas quando o objeto não vier do queryset
+    # anotado (ex.: testes ou criação manual em scripts).
     events_count = serializers.SerializerMethodField()
 
     def get_events_count(self, obj):
+        # Quando o queryset usa .annotate(events_count=Count('events')),
+        # o atributo já existe no objeto. Verificação explícita pra não
+        # confundir 0 (falsy mas válido) com ausência do atributo.
+        annotated = getattr(obj, 'events_count', None)
+        if annotated is not None:
+            return annotated
         return obj.events.count()
 
     # Permite status que existam em `KanbanStage` (novo sistema), mantendo compatibilidade
@@ -665,6 +673,63 @@ class CardSerializer(serializers.ModelSerializer):
                  'complexidade_selected_items', 'complexidade_selected_development', 'complexidade_custom_items',
                  'card_comment', 'links', 'events_count', 'created_at', 'updated_at']
         read_only_fields = ['created_at', 'updated_at', 'criado_por', 'finalizado_em']
+
+
+class CardKanbanSerializer(serializers.ModelSerializer):
+    """
+    Serializer otimizado pra renderizar cards no KANBAN da SprintDetails.
+
+    Diferenças vs CardSerializer:
+    - Sem `projeto_detail` aninhado (a página já tem a lista de projects).
+      Economiza ~70% do tamanho de cada card e elimina queries de cards.count
+      do ProjectSerializer aninhado (chamado 1x por card).
+    - Sem campos `criado_por_*` (Kanban não exibe quem criou — evita 2 leituras
+      filesystem por card pra checar profile picture).
+    - `events_count` lido via annotation (sem N+1).
+
+    Mantém todos os campos visuais do Kanban: nome, descrição, badges (área/
+    tipo/prioridade/status display), responsável + foto, datas, complexidade,
+    links, comentário.
+    """
+    area_display = serializers.CharField(source='get_area_display', read_only=True)
+    tipo_display = serializers.CharField(source='get_tipo_display', read_only=True)
+    status_display = serializers.CharField(source='get_status_display', read_only=True)
+    prioridade_display = serializers.CharField(source='get_prioridade_display', read_only=True)
+    responsavel_name = serializers.SerializerMethodField()
+    responsavel_role = serializers.SerializerMethodField()
+    responsavel_profile_picture_url = serializers.SerializerMethodField()
+    events_count = serializers.SerializerMethodField()
+
+    def get_responsavel_name(self, obj):
+        return format_user_name(obj.responsavel) if obj.responsavel_id else None
+
+    def get_responsavel_role(self, obj):
+        return obj.responsavel.role if obj.responsavel_id else None
+
+    def get_responsavel_profile_picture_url(self, obj):
+        return get_profile_picture_url(obj.responsavel, request=self.context.get('request'))
+
+    def get_events_count(self, obj):
+        annotated = getattr(obj, 'events_count', None)
+        if annotated is not None:
+            return annotated
+        return obj.events.count()
+
+    class Meta:
+        model = Card
+        fields = [
+            'id', 'nome', 'descricao', 'script_url', 'projeto',
+            'area', 'area_display', 'tipo', 'tipo_display',
+            'responsavel', 'responsavel_name', 'responsavel_role',
+            'responsavel_profile_picture_url',
+            'status', 'status_display', 'prioridade', 'prioridade_display',
+            'data_inicio', 'data_fim', 'finalizado_em',
+            'complexidade_selected_items', 'complexidade_selected_development',
+            'complexidade_custom_items',
+            'card_comment', 'links', 'events_count',
+            'created_at', 'updated_at',
+        ]
+        read_only_fields = fields
 
 
 class CardMetricsSerializer(serializers.ModelSerializer):

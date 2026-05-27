@@ -1,4 +1,6 @@
 import api, { fetchAllPaginated } from './api';
+import type { Card as FullCard } from './cardService';
+import type { Project } from './projectService';
 
 export type Sprint = {
   id: string; // UUID
@@ -39,6 +41,29 @@ export type SprintCreate = {
   supervisor: string; // UUID
 };
 
+/** Etapa do Kanban dentro de uma config de projeto. */
+export type KanbanStageConfig = {
+  key: string;
+  label: string;
+  order: number;
+  is_terminal: boolean;
+  requires_required_data: boolean;
+};
+
+/**
+ * Payload agregado de uma sprint para a página SprintDetails.
+ * Retornado por GET /sprints/<id>/bundle/ em UMA request — substitui
+ * 1+1+N+N requests anteriores (sprint + projects + cards/projeto + kanban-config/projeto).
+ */
+export type SprintBundle = {
+  sprint: Sprint;
+  projects: Project[];
+  /** Cards de TODOS os projetos da sprint, já com responsavel_name/role/picture. */
+  cards: FullCard[];
+  /** Configs de Kanban indexadas por project_id. */
+  kanban_configs: Record<string, KanbanStageConfig[]>;
+};
+
 export const sprintService = {
   async getAll(): Promise<Sprint[]> {
     return fetchAllPaginated<Sprint>('/sprints/');
@@ -65,6 +90,17 @@ export const sprintService = {
 
   async finalizar(id: string): Promise<SprintFinalizarResponse> {
     const response = await api.post<SprintFinalizarResponse>(`/sprints/${id}/finalizar/`);
+    return response.data;
+  },
+
+  /**
+   * Endpoint agregado: retorna sprint + projects + cards + kanban_configs
+   * em UMA request única. Substitui múltiplas chamadas paginadas que a
+   * SprintDetails fazia (1 sprint + 1 projects + N cards/proj + N kanban-config).
+   * Backend usa CardKanbanSerializer (slim) + queries otimizadas.
+   */
+  async getBundle(id: string): Promise<SprintBundle> {
+    const response = await api.get<SprintBundle>(`/sprints/${id}/bundle/`);
     return response.data;
   },
 };

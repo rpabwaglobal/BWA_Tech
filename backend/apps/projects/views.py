@@ -33,7 +33,8 @@ from .models import (
 from .services import finalizar_sprint_replicacao
 from apps.accounts.profile_picture_utils import get_profile_picture_url
 from .serializers import (
-    SprintSerializer, ProjectSerializer, CardSerializer, CardMetricsSerializer,
+    SprintSerializer, ProjectSerializer, CardSerializer, CardKanbanSerializer,
+    CardMetricsSerializer,
     UserNoteSerializer, CardPinSerializer, EventSerializer,
     CardLogSerializer, NotificationSerializer, NotificationPreferenceSerializer,
     WeeklyPrioritySerializer, WeeklyPriorityConfigSerializer,
@@ -111,6 +112,96 @@ class SprintViewSet(viewsets.ModelViewSet):
                 ),
             )
         )
+
+    @action(detail=True, methods=['get'], url_path='bundle')
+    def bundle(self, request, pk=None):
+        """
+        Endpoint agregado da SprintDetails: retorna em UMA request tudo que a
+        página precisa carregar de início — sprint + projects + cards (de
+        todos os projetos da sprint) + kanban_configs (por projeto).
+
+        Antes: 1 (sprint) + 1 (projects) + N (cards/projeto) + N (kanban-config/projeto)
+              = 2 + 2*N requests, paginação interna torna pior.
+        Depois: 1 request, sem paginação, queries otimizadas.
+
+        Cache HTTP curto (30s) alinhado com SWR do frontend.
+        """
+        sprint = self.get_object()
+        # Projetos não-arquivados da sprint, com contagens já anotadas
+        # (espelham as do ProjectViewSet).
+        projects = (
+            Project.objects.filter(sprint=sprint, arquivado=False)
+            .select_related('sprint')
+            .annotate(
+                cards_entregues_count=Count(
+                    'cards',
+                    filter=Q(cards__status='finalizado') & Q(cards__finalizado_em__isnull=False),
+                ),
+                cards_em_desenvolvimento_count=Count(
+                    'cards', filter=Q(cards__status='em_desenvolvimento'),
+                ),
+            )
+            .order_by('id')
+        )
+        project_ids = list(projects.values_list('id', flat=True))
+
+        # Todos os cards dos projetos da sprint — single query com select_related
+        # e annotate(events_count) (evita N+1 do SerializerMethodField).
+        cards = (
+            Card.objects.filter(projeto_id__in=project_ids)
+            .select_related('projeto', 'projeto__sprint', 'responsavel', 'criado_por')
+            .annotate(events_count=Count('events'))
+            .order_by('projeto_id', 'id')
+        )
+
+        # Kanban configs por projeto. Pré-popula configs default em projetos
+        # legados (igual ProjectViewSet.kanban_config). Em uma única query
+        # com select_related stage.
+        for project in projects:
+            self._ensure_project_default_kanban_config_for_bundle(project)
+
+        configs = (
+            ProjectKanbanStageConfig.objects.filter(project_id__in=project_ids)
+            .select_related('stage')
+            .order_by('project_id', 'order', 'stage__key')
+        )
+        kanban_configs: dict[int, list[dict]] = {pid: [] for pid in project_ids}
+        for cfg in configs:
+            kanban_configs[cfg.project_id].append({
+                'key': cfg.stage.key,
+                'label': cfg.stage.label,
+                'order': cfg.order,
+                'is_terminal': cfg.stage.is_terminal,
+                'requires_required_data': cfg.stage.requires_required_data,
+            })
+
+        payload = {
+            'sprint': SprintSerializer(self.get_queryset().get(pk=sprint.pk)).data,
+            'projects': ProjectSerializer(projects, many=True).data,
+            'cards': CardKanbanSerializer(cards, many=True, context={'request': request}).data,
+            'kanban_configs': kanban_configs,
+        }
+        response = Response(payload)
+        response['Cache-Control'] = 'private, max-age=30'
+        return response
+
+    def _ensure_project_default_kanban_config_for_bundle(self, project):
+        """Cópia local do _ensure_project_default_kanban_config do ProjectViewSet.
+        Mantida aqui para evitar acoplamento entre viewsets — o método original
+        é privado e idempotente (no-op se já há configs)."""
+        if ProjectKanbanStageConfig.objects.filter(project=project).exists():
+            return
+        default_stage_keys_order = [
+            'a_desenvolver', 'em_desenvolvimento', 'parado_pendencias',
+            'em_homologacao', 'finalizado', 'inviabilizado',
+        ]
+        for idx, stage_key in enumerate(default_stage_keys_order):
+            stage = KanbanStage.objects.filter(key=stage_key).first()
+            if not stage:
+                continue
+            ProjectKanbanStageConfig.objects.get_or_create(
+                project=project, stage=stage, defaults={'order': idx},
+            )
 
     @action(detail=True, methods=['post'], url_path='finalizar')
     def finalizar(self, request, pk=None):
@@ -667,7 +758,7 @@ class CardViewSet(viewsets.ModelViewSet):
         """Aplica filtros de permissão baseados no usuário"""
         queryset = Card.objects.select_related(
             'projeto', 'projeto__sprint', 'criado_por', 'responsavel'
-        )
+        ).annotate(events_count=Count('events'))
         # Cards de projetos arquivados somem do app inteiro em queries
         # genéricas (Kanban global, Prioridades). EXCEÇÃO: quando o cliente
         # filtra explicitamente por `?projeto=<id>` ou pede um card específico
