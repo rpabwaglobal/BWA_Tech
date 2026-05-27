@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Avatar, AvatarImage, AvatarFallback } from '@/components/ui/avatar';
+import { FilterSelect } from '@/components/ui/filter-select';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -1504,31 +1505,27 @@ export default function Metrics() {
             Filtre por sprint e/ou tipo de card
           </CardDescription>
           <div className="flex flex-wrap items-center gap-4 pt-2">
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 min-w-[220px]">
               <label className="text-sm text-[var(--color-foreground)] shrink-0">Sprint</label>
-              <select
-                className="h-9 rounded-md border border-[var(--color-input)] bg-[var(--color-background)] px-3 text-sm"
+              <FilterSelect
+                className="min-w-[180px]"
+                placeholder="Todas"
+                searchPlaceholder="Buscar sprint..."
+                options={sprints.map((s) => ({ value: String(s.id), label: s.nome }))}
                 value={cardsSprintFilter}
-                onChange={(e) => setCardsSprintFilter(e.target.value)}
-              >
-                <option value="">Todos</option>
-                {sprints.map((s) => (
-                  <option key={s.id} value={s.id}>{s.nome}</option>
-                ))}
-              </select>
+                onChange={setCardsSprintFilter}
+              />
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 min-w-[220px]">
               <label className="text-sm text-[var(--color-foreground)] shrink-0">Tipo</label>
-              <select
-                className="h-9 rounded-md border border-[var(--color-input)] bg-[var(--color-background)] px-3 text-sm"
+              <FilterSelect
+                className="min-w-[180px]"
+                placeholder="Todos"
+                searchPlaceholder="Buscar tipo..."
+                options={CARD_TYPES.map((t) => ({ value: t.value, label: t.label }))}
                 value={cardsTypeFilter}
-                onChange={(e) => setCardsTypeFilter(e.target.value)}
-              >
-                <option value="">Todos</option>
-                {CARD_TYPES.map((t) => (
-                  <option key={t.value} value={t.value}>{t.label}</option>
-                ))}
-              </select>
+                onChange={setCardsTypeFilter}
+              />
             </div>
           </div>
         </CardHeader>
@@ -1621,62 +1618,66 @@ export default function Metrics() {
             Por sprint, ano, mês, intervalo ou por usuários selecionados
           </CardDescription>
           <div className="flex flex-wrap gap-4 pt-2">
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 min-w-[220px]">
               <label className="text-sm">Escopo:</label>
-              <select
-                className="h-9 rounded-md border border-[var(--color-input)] bg-[var(--color-background)] px-3 text-sm"
+              <FilterSelect
+                className="min-w-[160px]"
+                clearable={false}
+                placeholder="Escopo"
+                searchPlaceholder="Buscar escopo..."
+                options={[
+                  { value: 'sprint', label: 'Por sprint' },
+                  { value: 'year', label: 'Por ano' },
+                  { value: 'month', label: 'Por mês' },
+                  { value: 'interval', label: 'Por intervalo' },
+                  { value: 'users', label: 'Por usuários' },
+                ]}
                 value={leaderboardScope}
-                onChange={(e) => setLeaderboardScope(e.target.value as 'sprint' | 'year' | 'month' | 'interval' | 'users')}
-              >
-                <option value="sprint">Por sprint</option>
-                <option value="year">Por ano</option>
-                <option value="month">Por mês</option>
-                <option value="interval">Por intervalo</option>
-                <option value="users">Por usuários</option>
-              </select>
+                onChange={(v) => setLeaderboardScope(v as 'sprint' | 'year' | 'month' | 'interval' | 'users')}
+              />
             </div>
             {leaderboardScope === 'sprint' && (
-              <select
-                className="h-9 rounded-md border border-[var(--color-input)] bg-[var(--color-background)] px-3 text-sm"
+              <FilterSelect
+                className="min-w-[200px]"
+                clearable={false}
+                placeholder="Sprint"
+                searchPlaceholder="Buscar sprint..."
+                options={sprints.map((s) => ({ value: String(s.id), label: s.nome }))}
                 value={leaderboardSprint}
-                onChange={(e) => setLeaderboardSprint(e.target.value)}
-              >
-                {sprints.map((s) => (
-                  <option key={s.id} value={s.id}>{s.nome}</option>
-                ))}
-              </select>
+                onChange={setLeaderboardSprint}
+              />
             )}
             {leaderboardScope === 'year' && (
-              <select
-                className="h-9 rounded-md border border-[var(--color-input)] bg-[var(--color-background)] px-3 text-sm"
-                value={leaderboardYear}
-                onChange={(e) => setLeaderboardYear(Number(e.target.value))}
-              >
-                {years.map((y) => (
-                  <option key={y} value={y}>{y}</option>
-                ))}
-              </select>
+              <FilterSelect
+                className="min-w-[120px]"
+                clearable={false}
+                placeholder="Ano"
+                searchPlaceholder="Buscar ano..."
+                options={years.map((y) => ({ value: String(y), label: String(y) }))}
+                value={String(leaderboardYear)}
+                onChange={(v) => setLeaderboardYear(Number(v))}
+              />
             )}
             {leaderboardScope === 'month' && (
               <>
-                <select
-                  className="h-9 rounded-md border border-[var(--color-input)] bg-[var(--color-background)] px-3 text-sm"
-                  value={leaderboardMonth}
-                  onChange={(e) => setLeaderboardMonth(Number(e.target.value))}
-                >
-                  {MONTH_NAMES.map((label, i) => (
-                    <option key={i} value={i + 1}>{label}</option>
-                  ))}
-                </select>
-                <select
-                  className="h-9 rounded-md border border-[var(--color-input)] bg-[var(--color-background)] px-3 text-sm"
-                  value={leaderboardMonthYear}
-                  onChange={(e) => setLeaderboardMonthYear(Number(e.target.value))}
-                >
-                  {years.map((y) => (
-                    <option key={y} value={y}>{y}</option>
-                  ))}
-                </select>
+                <FilterSelect
+                  className="min-w-[160px]"
+                  clearable={false}
+                  placeholder="Mês"
+                  searchPlaceholder="Buscar mês..."
+                  options={MONTH_NAMES.map((label, i) => ({ value: String(i + 1), label }))}
+                  value={String(leaderboardMonth)}
+                  onChange={(v) => setLeaderboardMonth(Number(v))}
+                />
+                <FilterSelect
+                  className="min-w-[120px]"
+                  clearable={false}
+                  placeholder="Ano"
+                  searchPlaceholder="Buscar ano..."
+                  options={years.map((y) => ({ value: String(y), label: String(y) }))}
+                  value={String(leaderboardMonthYear)}
+                  onChange={(v) => setLeaderboardMonthYear(Number(v))}
+                />
               </>
             )}
             {leaderboardScope === 'interval' && (
@@ -1788,17 +1789,21 @@ export default function Metrics() {
               </div>
             )}
             {leaderboardScope !== 'users' && (
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 min-w-[200px]">
                 <label className="text-sm">Exibir:</label>
-                <select
-                  className="h-9 rounded-md border border-[var(--color-input)] bg-[var(--color-background)] px-3 text-sm"
+                <FilterSelect
+                  className="min-w-[160px]"
+                  clearable={false}
+                  placeholder="Exibir"
+                  searchPlaceholder="Buscar opção..."
+                  options={[
+                    { value: 'top5', label: 'Top 5' },
+                    { value: 'top3', label: 'Top 3' },
+                    { value: 'all', label: 'Todos os usuários' },
+                  ]}
                   value={leaderboardLimit}
-                  onChange={(e) => setLeaderboardLimit(e.target.value as 'top5' | 'top3' | 'all')}
-                >
-                  <option value="top5">Top 5</option>
-                  <option value="top3">Top 3</option>
-                  <option value="all">Todos os usuários</option>
-                </select>
+                  onChange={(v) => setLeaderboardLimit(v as 'top5' | 'top3' | 'all')}
+                />
               </div>
             )}
           </div>
@@ -2082,62 +2087,66 @@ export default function Metrics() {
               </CardDescription>
             </div>
             <div className="flex flex-wrap gap-4 pt-2">
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 min-w-[220px]">
                 <label className="text-sm">Escopo:</label>
-                <select
-                  className="h-9 rounded-md border border-[var(--color-input)] bg-[var(--color-background)] px-3 text-sm"
+                <FilterSelect
+                  className="min-w-[160px]"
+                  clearable={false}
+                  placeholder="Escopo"
+                  searchPlaceholder="Buscar escopo..."
+                  options={[
+                    { value: 'sprint', label: 'Por sprint' },
+                    { value: 'year', label: 'Por ano' },
+                    { value: 'month', label: 'Por mês' },
+                    { value: 'interval', label: 'Por intervalo' },
+                    { value: 'users', label: 'Por usuários' },
+                  ]}
                   value={onTimeScope}
-                  onChange={(e) => setOnTimeScope(e.target.value as 'sprint' | 'year' | 'month' | 'interval' | 'users')}
-                >
-                  <option value="sprint">Por sprint</option>
-                  <option value="year">Por ano</option>
-                  <option value="month">Por mês</option>
-                  <option value="interval">Por intervalo</option>
-                  <option value="users">Por usuários</option>
-                </select>
+                  onChange={(v) => setOnTimeScope(v as 'sprint' | 'year' | 'month' | 'interval' | 'users')}
+                />
               </div>
               {onTimeScope === 'sprint' && (
-                <select
-                  className="h-9 rounded-md border border-[var(--color-input)] bg-[var(--color-background)] px-3 text-sm"
+                <FilterSelect
+                  className="min-w-[200px]"
+                  clearable={false}
+                  placeholder="Sprint"
+                  searchPlaceholder="Buscar sprint..."
+                  options={sprints.map((s) => ({ value: String(s.id), label: s.nome }))}
                   value={onTimeSprint}
-                  onChange={(e) => setOnTimeSprint(e.target.value)}
-                >
-                  {sprints.map((s) => (
-                    <option key={s.id} value={s.id}>{s.nome}</option>
-                  ))}
-                </select>
+                  onChange={setOnTimeSprint}
+                />
               )}
               {onTimeScope === 'year' && (
-                <select
-                  className="h-9 rounded-md border border-[var(--color-input)] bg-[var(--color-background)] px-3 text-sm"
-                  value={onTimeYear}
-                  onChange={(e) => setOnTimeYear(Number(e.target.value))}
-                >
-                  {years.map((y) => (
-                    <option key={y} value={y}>{y}</option>
-                  ))}
-                </select>
+                <FilterSelect
+                  className="min-w-[120px]"
+                  clearable={false}
+                  placeholder="Ano"
+                  searchPlaceholder="Buscar ano..."
+                  options={years.map((y) => ({ value: String(y), label: String(y) }))}
+                  value={String(onTimeYear)}
+                  onChange={(v) => setOnTimeYear(Number(v))}
+                />
               )}
               {onTimeScope === 'month' && (
                 <>
-                  <select
-                    className="h-9 rounded-md border border-[var(--color-input)] bg-[var(--color-background)] px-3 text-sm"
-                    value={onTimeMonth}
-                    onChange={(e) => setOnTimeMonth(Number(e.target.value))}
-                  >
-                    {MONTH_NAMES.map((label, i) => (
-                      <option key={i} value={i + 1}>{label}</option>
-                    ))}
-                  </select>
-                  <select
-                    className="h-9 rounded-md border border-[var(--color-input)] bg-[var(--color-background)] px-3 text-sm"
-                    value={onTimeMonthYear}
-                    onChange={(e) => setOnTimeMonthYear(Number(e.target.value))}
-                  >
-                    {years.map((y) => (
-                      <option key={y} value={y}>{y}</option>
-                    ))}
-                  </select>
+                  <FilterSelect
+                    className="min-w-[160px]"
+                    clearable={false}
+                    placeholder="Mês"
+                    searchPlaceholder="Buscar mês..."
+                    options={MONTH_NAMES.map((label, i) => ({ value: String(i + 1), label }))}
+                    value={String(onTimeMonth)}
+                    onChange={(v) => setOnTimeMonth(Number(v))}
+                  />
+                  <FilterSelect
+                    className="min-w-[120px]"
+                    clearable={false}
+                    placeholder="Ano"
+                    searchPlaceholder="Buscar ano..."
+                    options={years.map((y) => ({ value: String(y), label: String(y) }))}
+                    value={String(onTimeMonthYear)}
+                    onChange={(v) => setOnTimeMonthYear(Number(v))}
+                  />
                 </>
               )}
               {onTimeScope === 'interval' && (
@@ -2596,31 +2605,31 @@ export default function Metrics() {
             Duração, volume de cards e recorrência em sprints. Filtre por ano ou por período.
           </CardDescription>
           <div className="flex flex-wrap items-center gap-4 pt-2">
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 min-w-[220px]">
               <label className="text-sm">Filtrar por:</label>
-              <select
-                className="h-9 rounded-md border border-[var(--color-input)] bg-[var(--color-background)] px-3 text-sm"
+              <FilterSelect
+                className="min-w-[160px]"
+                clearable={false}
+                placeholder="Filtrar por"
+                searchPlaceholder="Buscar..."
+                options={[
+                  { value: 'year', label: 'Por ano' },
+                  { value: 'interval', label: 'Por período' },
+                ]}
                 value={projectMetricsFilter}
-                onChange={(e) =>
-                  setProjectMetricsFilter(e.target.value as 'year' | 'interval')
-                }
-              >
-                <option value="year">Por ano</option>
-                <option value="interval">Por período</option>
-              </select>
+                onChange={(v) => setProjectMetricsFilter(v as 'year' | 'interval')}
+              />
             </div>
             {projectMetricsFilter === 'year' && (
-              <select
-                className="h-9 rounded-md border border-[var(--color-input)] bg-[var(--color-background)] px-3 text-sm"
-                value={projectMetricsYear}
-                onChange={(e) => setProjectMetricsYear(Number(e.target.value))}
-              >
-                {projectYears.map((y) => (
-                  <option key={y} value={y}>
-                    {y}
-                  </option>
-                ))}
-              </select>
+              <FilterSelect
+                className="min-w-[120px]"
+                clearable={false}
+                placeholder="Ano"
+                searchPlaceholder="Buscar ano..."
+                options={projectYears.map((y) => ({ value: String(y), label: String(y) }))}
+                value={String(projectMetricsYear)}
+                onChange={(v) => setProjectMetricsYear(Number(v))}
+              />
             )}
             {projectMetricsFilter === 'interval' && (
               <>

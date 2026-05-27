@@ -17,6 +17,15 @@ type FilterSelectProps = {
   onChange: (value: string) => void;
   placeholder?: string;
   disabled?: boolean;
+  /** Quando true, mostra um X que limpa a seleção (envia '' no onChange).
+   * Default true. Setar false em campos cuja seleção é sempre obrigatória
+   * (ex.: escopo, ano, mês). */
+  clearable?: boolean;
+  /** Largura do componente. Default 'w-full' — para usar dentro de wrappers
+   * de largura fixa, passar `'min-w-[180px]'` ou similar. */
+  className?: string;
+  /** Placeholder do campo de busca. Default "Buscar...". */
+  searchPlaceholder?: string;
 };
 
 export function FilterSelect({
@@ -25,6 +34,9 @@ export function FilterSelect({
   onChange,
   placeholder = 'Selecione...',
   disabled = false,
+  clearable = true,
+  className = 'w-full',
+  searchPlaceholder = 'Buscar...',
 }: FilterSelectProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -32,6 +44,9 @@ export function FilterSelect({
   const searchInputRef = useRef<HTMLInputElement>(null);
 
   const selectedOption = options.find((opt) => opt.value === value) || null;
+  // Mostra o slot de role só se ALGUMA opção tiver role definido — evita
+  // padding esquerdo "vazio" em filtros que não envolvem usuários.
+  const anyHasRole = options.some((o) => !!o.role);
 
   const filteredOptions = options.filter((opt) => {
     if (!searchQuery.trim()) return true;
@@ -80,7 +95,7 @@ export function FilterSelect({
   };
 
   return (
-    <div ref={containerRef} className="relative w-full">
+    <div ref={containerRef} className={`relative ${className}`}>
       <button
         type="button"
         onClick={() => !disabled && setIsOpen(!isOpen)}
@@ -102,7 +117,7 @@ export function FilterSelect({
           )}
         </div>
         <div className="flex items-center gap-1 ml-2">
-          {selectedOption && !disabled && value !== '' && (
+          {clearable && selectedOption && !disabled && value !== '' && (
             <X
               className="h-4 w-4 text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]"
               onClick={handleClear}
@@ -121,7 +136,7 @@ export function FilterSelect({
               <Input
                 ref={searchInputRef}
                 type="text"
-                placeholder="Buscar..."
+                placeholder={searchPlaceholder}
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 className="pl-8 h-9"
@@ -148,13 +163,15 @@ export function FilterSelect({
                       isSelected ? 'bg-[var(--color-accent)]' : ''
                     }`}
                   >
-                    {opt.role ? (
-                      <Badge className={`${getRoleColor(opt.role)} w-[64px] shrink-0 justify-center text-[10px]`}>
-                        {getRoleLabel(opt.role)}
-                      </Badge>
-                    ) : (
-                      <span className="w-[64px] shrink-0" aria-hidden />
-                    )}
+                    {anyHasRole ? (
+                      opt.role ? (
+                        <Badge className={`${getRoleColor(opt.role)} w-[64px] shrink-0 justify-center text-[10px]`}>
+                          {getRoleLabel(opt.role)}
+                        </Badge>
+                      ) : (
+                        <span className="w-[64px] shrink-0" aria-hidden />
+                      )
+                    ) : null}
                     <span className="min-w-0 truncate">{opt.label}</span>
                   </button>
                 );
