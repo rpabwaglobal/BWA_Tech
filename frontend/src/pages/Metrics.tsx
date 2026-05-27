@@ -17,7 +17,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { BarChart3, Trophy, Flame, Target, Loader2, FolderKanban, ChevronDown, ChevronRight, Search } from 'lucide-react';
+import { BarChart3, Trophy, Flame, Target, Loader2, FolderKanban, ChevronDown, ChevronRight, Search, Timer, Gauge, Layers } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Cell } from 'recharts';
 import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from '@/components/ui/chart';
 import {
@@ -129,6 +129,8 @@ function normalizeProjectName(value?: string | null): string {
     .trim();
 }
 
+/** Compatibilidade: usado em alguns lugares antigos. Preferir `is_system` do
+ * backend quando dispon\u00edvel (mais robusto a renomea\u00e7\u00f5es). */
 function isSpecialProjectName(value?: string | null): boolean {
   const n = normalizeProjectName(value);
   return n === 'suporte' || n === 'sugestoes' || n === 'projetos descartados';
@@ -148,12 +150,21 @@ function resolveCardSprintId(card: CardType, projects: Project[]): string | null
   return null;
 }
 
-/** Quando o card foi de fato entregue (finalizado): finalizado_em ou, em último caso, updated_at. */
+/** Quando o card foi de fato entregue. SEMPRE `finalizado_em` — a data e hora
+ * em que o usuário arrastou o card para "Concluído". NÃO usar `updated_at`
+ * como fallback (edições posteriores ao card mascarariam a data real). */
 function getCardDeliveryDate(card: CardType): Date | null {
-  const raw = card.finalizado_em || card.updated_at;
-  if (!raw) return null;
-  const d = new Date(raw);
+  if (!card.finalizado_em) return null;
+  const d = new Date(card.finalizado_em);
   return Number.isNaN(d.getTime()) ? null : d;
+}
+
+/** True se o projeto do card é "sistêmico" (Suporte / Sugestões / Descartados).
+ * Usa a flag `is_system` do backend, com fallback pro nome em projetos
+ * antigos que ainda não receberam a migração. */
+function isSystemProject(card: CardType): boolean {
+  if (card.projeto_detail?.is_system === true) return true;
+  return isSpecialProjectName(card.projeto_detail?.nome);
 }
 
 function formatConsistencyDateTime(value?: string | null): string {
@@ -359,7 +370,7 @@ export default function Metrics() {
   const projectToSprint = useMemo(() => {
     const map = new Map<string, Sprint>();
     for (const p of projects) {
-      if (isSpecialProjectName(p.nome)) continue;
+      if (p.is_system || isSpecialProjectName(p.nome)) continue;
       const s = sprints.find((sp) => String(sp.id) === String(p.sprint));
       if (s) map.set(String(p.id), s);
     }
@@ -369,7 +380,7 @@ export default function Metrics() {
   const visibleProjectIds = useMemo(() => {
     return new Set(
       projects
-        .filter((p) => !isSpecialProjectName(p.nome))
+        .filter((p) => !(p.is_system || isSpecialProjectName(p.nome)))
         .map((p) => String(p.id)),
     );
   }, [projects]);
@@ -399,29 +410,39 @@ export default function Metrics() {
     return projectToSprint.get(String(card.projeto)) ?? null;
   };
 
+  /** Cards que contam como "entregues" nas métricas:
+   * - status='finalizado' (inviabilizado NUNCA conta)
+   * - finalizado_em preenchido (data/hora real da entrega)
+   * - data_fim preenchida (deadline necessária pra calcular atraso)
+   * - projeto não-sistêmico (Suporte/Sugestões/Descartados)
+   * - projeto não-arquivado (controlado via visibleProjectIds)
+   */
   const closedCards = useMemo(() => {
     return cards.filter((c) => {
-      if (c.status !== CLOSED_STATUS || !c.data_fim) return false;
-
-      const nameFromDetail = c.projeto_detail?.nome;
-      if (nameFromDetail && isSpecialProjectName(nameFromDetail)) return false;
-
+      if (c.status !== CLOSED_STATUS) return false;
+      if (!c.finalizado_em) return false;
+      if (!c.data_fim) return false;
+      if (isSystemProject(c)) return false;
       return visibleProjectIds.has(String(c.projeto));
     });
   }, [cards, visibleProjectIds]);
 
+  /** Em qual dia da sprint o card foi entregue de fato (usa finalizado_em). */
   const getDayOfSprint = (card: CardType): { sprint: Sprint; day: number } | null => {
     const sprint = getSprintForCard(card);
-    if (!sprint || !card.data_fim) return null;
+    const delivery = getCardDeliveryDate(card);
+    if (!sprint || !delivery) return null;
     const start = new Date(sprint.data_inicio).setHours(0, 0, 0, 0);
-    const end = new Date(card.data_fim).setHours(0, 0, 0, 0);
+    const end = new Date(delivery).setHours(0, 0, 0, 0);
     const day = Math.floor((end - start) / (24 * 60 * 60 * 1000)) + 1;
     if (day < 1 || day > sprint.duracao_dias) return null;
     return { sprint, day };
   };
 
   const cardsPerUserData = useMemo(() => {
-    let list = closedCards;
+    // Cards sem responsável NÃO entram nas métricas por pessoa (regra de
+    // negócio definida com o usuário). Aparecem apenas em contadores totais.
+    let list = closedCards.filter((c) => c.responsavel != null && c.responsavel !== '');
     if (cardsSprintFilter) {
       const want = String(cardsSprintFilter);
       list = list.filter((c) => resolveCardSprintId(c, projects) === want);
@@ -431,14 +452,14 @@ export default function Metrics() {
     }
     const byUser = new Map<string, number>();
     for (const c of list) {
-      const uid = c.responsavel ?? 'sem_responsavel';
+      const uid = c.responsavel!;
       byUser.set(uid, (byUser.get(uid) ?? 0) + 1);
     }
     const entriesFromCards = Array.from(byUser.entries()).map(([userId, count]) => {
       const user = users.find((u) => u.id === userId) ?? { id: userId, username: userId, email: '', first_name: '', last_name: '', role: '', role_display: '', profile_picture_url: null as string | null };
       return {
         userId,
-        name: userId === 'sem_responsavel' ? 'Sem responsável' : getShortDisplayName(user),
+        name: getShortDisplayName(user),
         role: user.role ?? '',
         profile_picture_url: user.profile_picture_url ?? null,
         count,
@@ -454,11 +475,7 @@ export default function Metrics() {
         profile_picture_url: u.profile_picture_url ?? null,
         count: 0,
       }));
-    const semResponsavel = entriesFromCards.find((e) => e.userId === 'sem_responsavel');
-    const withCount = [...entriesFromCards.filter((e) => e.userId !== 'sem_responsavel'), ...allUsersWithZero];
-    const result = [...withCount.sort((a, b) => b.count - a.count)];
-    if (semResponsavel) result.push(semResponsavel);
-    return result;
+    return [...entriesFromCards, ...allUsersWithZero].sort((a, b) => b.count - a.count);
   }, [closedCards, cardsSprintFilter, cardsTypeFilter, users, projects]);
 
   const heatmapData = useMemo(() => {
@@ -615,25 +632,35 @@ export default function Metrics() {
   };
 
   const leaderboardData = useMemo(() => {
+    // Cards sem responsável são ignorados no leaderboard.
     let list = closedCards.filter((c) => c.responsavel != null && c.responsavel !== '');
+    // Filtros temporais usam SEMPRE a data real de entrega (finalizado_em),
+    // não a data agendada (data_fim). Um card entregue em janeiro com prazo
+    // dezembro precisa aparecer em janeiro.
     if (leaderboardScope === 'sprint' && leaderboardSprint) {
       const want = String(leaderboardSprint);
       list = list.filter((c) => resolveCardSprintId(c, projects) === want);
     } else if (leaderboardScope === 'year') {
-      list = list.filter((c) => c.data_fim && new Date(c.data_fim).getFullYear() === leaderboardYear);
+      list = list.filter((c) => {
+        const d = getCardDeliveryDate(c);
+        return d != null && d.getFullYear() === leaderboardYear;
+      });
     } else if (leaderboardScope === 'month') {
-      list = list.filter(
-        (c) =>
-          c.data_fim &&
-          new Date(c.data_fim).getFullYear() === leaderboardMonthYear &&
-          new Date(c.data_fim).getMonth() + 1 === leaderboardMonth
-      );
+      list = list.filter((c) => {
+        const d = getCardDeliveryDate(c);
+        return (
+          d != null &&
+          d.getFullYear() === leaderboardMonthYear &&
+          d.getMonth() + 1 === leaderboardMonth
+        );
+      });
     } else if (leaderboardScope === 'interval' && leaderboardStartDate && leaderboardEndDate) {
       const start = new Date(leaderboardStartDate).setHours(0, 0, 0, 0);
       const end = new Date(leaderboardEndDate).setHours(23, 59, 59, 999);
       list = list.filter((c) => {
-        if (!c.data_fim) return false;
-        const t = new Date(c.data_fim).getTime();
+        const d = getCardDeliveryDate(c);
+        if (!d) return false;
+        const t = d.getTime();
         return t >= start && t <= end;
       });
     }
@@ -761,14 +788,14 @@ export default function Metrics() {
       { total: number; onTime: number; onTimeCards: CardType[]; lateCards: CardType[] }
     >();
     for (const card of closedCardsForOnTime) {
-      if (!getSprintForCard(card) || !card.data_fim || !card.responsavel) continue;
+      // Precisa de sprint (escopo), data_fim (deadline), responsavel e
+      // finalizado_em (data real de entrega). closedCards já filtra os
+      // três últimos — esta checagem é defesa adicional.
+      if (!getSprintForCard(card) || !card.data_fim || !card.responsavel || !card.finalizado_em) continue;
       const uid = String(card.responsavel);
       const scheduledEnd = new Date(card.data_fim).getTime();
-      const completedAt = card.finalizado_em
-        ? new Date(card.finalizado_em).getTime()
-        : card.updated_at
-          ? new Date(card.updated_at).getTime()
-          : scheduledEnd;
+      const completedAt = new Date(card.finalizado_em).getTime();
+      // No prazo se a data real de conclusão NÃO passou do prazo agendado.
       const isOnTime = completedAt <= scheduledEnd;
       const cur = byUser.get(uid) ?? { total: 0, onTime: 0, onTimeCards: [], lateCards: [] };
       cur.total += 1;
@@ -926,7 +953,11 @@ export default function Metrics() {
         : new Date(projectMetricsEndDate).setHours(23, 59, 59, 999);
 
     const cardInPeriod = (card: CardType): boolean => {
+      // Para cards finalizados, comparamos com a data real de entrega
+      // (finalizado_em). Para cards em andamento, usamos data_fim ou
+      // data_inicio para verificar se o card "existe" no período.
       const t =
+        toTime(card.finalizado_em) ??
         toTime(card.data_fim) ??
         toTime(card.data_inicio) ??
         toTime((card as CardType & { created_at?: string }).created_at);
@@ -962,6 +993,8 @@ export default function Metrics() {
     >();
 
     for (const card of cards) {
+      // Excluir cards de projetos sistêmicos das métricas de projeto.
+      if (isSystemProject(card)) continue;
       if (!cardInPeriod(card)) continue;
       const pid = card.projeto;
       const stats =
@@ -971,7 +1004,9 @@ export default function Metrics() {
           inviabilizados: 0,
         };
       stats.total += 1;
-      if (card.status === CLOSED_STATUS) stats.delivered += 1;
+      // Entregue = finalizado COM finalizado_em preenchido.
+      // Inviabilizado NUNCA conta como entregue (regra de negócio).
+      if (card.status === CLOSED_STATUS && card.finalizado_em) stats.delivered += 1;
       if (card.status === 'inviabilizado') stats.inviabilizados += 1;
       cardCounts.set(pid, stats);
     }
@@ -988,6 +1023,9 @@ export default function Metrics() {
       | null = null;
 
     for (const project of projects) {
+      // Excluir projetos sistêmicos das métricas (regra de negócio).
+      if (project.is_system || isSpecialProjectName(project.nome)) continue;
+
       const startTime =
         toTime(project.data_inicio_desenvolvimento) ??
         toTime(project.data_criacao) ??
@@ -1025,6 +1063,8 @@ export default function Metrics() {
 
     const byName = new Map<string, { name: string; sprintIds: Set<string> }>();
     for (const project of projects) {
+      // Excluir sistêmicos do cálculo de recorrência.
+      if (project.is_system || isSpecialProjectName(project.nome)) continue;
       if (!project.sprint || !sprintIdsInPeriod.has(project.sprint)) continue;
       const key = (project.nome || '').trim().toLowerCase() || project.id;
       const entry =
@@ -1066,6 +1106,125 @@ export default function Metrics() {
     projectMetricsStartDate,
     projectMetricsEndDate,
   ]);
+
+  /** Cycle time médio = média de (finalizado_em - data_inicio) em dias.
+   * Geral, por usuário e por área. Considera apenas cards com ambas datas. */
+  const cycleTimeData = useMemo(() => {
+    const msPerDay = 24 * 60 * 60 * 1000;
+    type Bucket = { sumDays: number; count: number };
+    const overall: Bucket = { sumDays: 0, count: 0 };
+    const byUser = new Map<string, Bucket>();
+    const byArea = new Map<string, Bucket>();
+
+    for (const card of closedCards) {
+      if (!card.data_inicio || !card.finalizado_em) continue;
+      const start = new Date(card.data_inicio).getTime();
+      const end = new Date(card.finalizado_em).getTime();
+      if (Number.isNaN(start) || Number.isNaN(end) || end < start) continue;
+      const days = (end - start) / msPerDay;
+      overall.sumDays += days;
+      overall.count += 1;
+      if (card.responsavel) {
+        const cur = byUser.get(card.responsavel) ?? { sumDays: 0, count: 0 };
+        cur.sumDays += days;
+        cur.count += 1;
+        byUser.set(card.responsavel, cur);
+      }
+      const area = card.area || 'desconhecida';
+      const curA = byArea.get(area) ?? { sumDays: 0, count: 0 };
+      curA.sumDays += days;
+      curA.count += 1;
+      byArea.set(area, curA);
+    }
+
+    const fmt = (b: Bucket): number =>
+      b.count > 0 ? Math.round((b.sumDays / b.count) * 10) / 10 : 0;
+
+    const perUser = Array.from(byUser.entries())
+      .map(([userId, b]) => {
+        const user = users.find((u) => u.id === userId);
+        return {
+          userId,
+          name: user ? getShortDisplayName(user) : userId,
+          role: user?.role ?? '',
+          profile_picture_url: user?.profile_picture_url ?? null,
+          avgDays: fmt(b),
+          count: b.count,
+        };
+      })
+      .sort((a, b) => a.avgDays - b.avgDays); // mais rápido primeiro
+
+    const perArea = Array.from(byArea.entries())
+      .map(([area, b]) => {
+        const meta = CARD_AREAS.find((a) => a.value === area);
+        return {
+          area,
+          label: meta?.label ?? area,
+          avgDays: fmt(b),
+          count: b.count,
+        };
+      })
+      .sort((a, b) => a.avgDays - b.avgDays);
+
+    return {
+      overall: fmt(overall),
+      overallCount: overall.count,
+      perUser,
+      perArea,
+    };
+  }, [closedCards, users]);
+
+  /** Throughput = cards finalizados / duração da sprint. Por sprint, todas. */
+  const throughputData = useMemo(() => {
+    const cardsBySprint = new Map<string, number>();
+    for (const card of closedCards) {
+      const sprint = getSprintForCard(card);
+      if (!sprint) continue;
+      cardsBySprint.set(sprint.id, (cardsBySprint.get(sprint.id) ?? 0) + 1);
+    }
+    return sprints
+      .map((s) => {
+        const delivered = cardsBySprint.get(s.id) ?? 0;
+        const days = Math.max(1, s.duracao_dias || 1);
+        return {
+          sprintId: s.id,
+          name: s.nome,
+          delivered,
+          days,
+          throughput: Math.round((delivered / days) * 100) / 100,
+          finalizada: !!s.finalizada,
+        };
+      })
+      // Ordena por data de início (mais recente primeiro).
+      .sort((a, b) => {
+        const sa = sprints.find((s) => s.id === a.sprintId);
+        const sb = sprints.find((s) => s.id === b.sprintId);
+        const ta = sa ? new Date(sa.data_inicio).getTime() : 0;
+        const tb = sb ? new Date(sb.data_inicio).getTime() : 0;
+        return tb - ta;
+      });
+  }, [closedCards, sprints]);
+
+  /** Volume por área = quantidade de cards finalizados por categoria técnica. */
+  const volumeByAreaData = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const card of closedCards) {
+      const area = card.area || 'desconhecida';
+      counts.set(area, (counts.get(area) ?? 0) + 1);
+    }
+    const total = Array.from(counts.values()).reduce((a, b) => a + b, 0);
+    return Array.from(counts.entries())
+      .map(([area, count]) => {
+        const meta = CARD_AREAS.find((a) => a.value === area);
+        return {
+          area,
+          label: meta?.label ?? area,
+          count,
+          pct: total > 0 ? Math.round((count / total) * 1000) / 10 : 0,
+        };
+      })
+      .sort((a, b) => b.count - a.count);
+  }, [closedCards]);
 
   const years = useMemo(() => {
     const set = new Set<number>();
@@ -1974,6 +2133,242 @@ export default function Metrics() {
           </div>
           {onTimeTableFiltered.length === 0 && (
             <p className="text-sm text-[var(--color-muted-foreground)] py-4">Nenhum dado de entrega no prazo</p>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Cycle Time médio */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Timer className="h-5 w-5" />
+            Cycle Time médio
+          </CardTitle>
+          <CardDescription>
+            Tempo médio entre o início do desenvolvimento (data_inicio) e a conclusão real do
+            card (finalizado_em). Cards sem uma das duas datas são ignorados.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {cycleTimeData.overallCount === 0 ? (
+            <p className="text-sm text-[var(--color-muted-foreground)]">
+              Sem dados suficientes — nenhum card finalizado possui ambas data_inicio e finalizado_em.
+            </p>
+          ) : (
+            <div className="space-y-4">
+              {/* Card grande de média geral */}
+              <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-muted)]/30 p-4">
+                <p className="text-xs uppercase tracking-wide text-[var(--color-muted-foreground)]">
+                  Média geral
+                </p>
+                <p className="mt-1 text-3xl font-bold text-[var(--color-foreground)]">
+                  {cycleTimeData.overall} <span className="text-base font-normal text-[var(--color-muted-foreground)]">dia{cycleTimeData.overall === 1 ? '' : 's'}</span>
+                </p>
+                <p className="text-xs text-[var(--color-muted-foreground)]">
+                  {cycleTimeData.overallCount} card{cycleTimeData.overallCount === 1 ? '' : 's'} considerado{cycleTimeData.overallCount === 1 ? '' : 's'}
+                </p>
+              </div>
+
+              {/* Tabela por área */}
+              <div>
+                <h4 className="mb-2 text-sm font-semibold text-[var(--color-foreground)]">Por área</h4>
+                {cycleTimeData.perArea.length === 0 ? (
+                  <p className="text-xs text-[var(--color-muted-foreground)]">Sem dados.</p>
+                ) : (
+                  <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
+                    {cycleTimeData.perArea.map((a) => (
+                      <div
+                        key={a.area}
+                        className="rounded-md border border-[var(--color-border)] p-3"
+                      >
+                        <p className="text-xs uppercase tracking-wide text-[var(--color-muted-foreground)] truncate">
+                          {a.label}
+                        </p>
+                        <p className="mt-1 text-lg font-bold text-[var(--color-foreground)]">
+                          {a.avgDays}d
+                        </p>
+                        <p className="text-[10px] text-[var(--color-muted-foreground)]">
+                          {a.count} card{a.count === 1 ? '' : 's'}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Tabela por usuário */}
+              <div>
+                <h4 className="mb-2 text-sm font-semibold text-[var(--color-foreground)]">
+                  Por usuário (mais rápido → mais lento)
+                </h4>
+                {cycleTimeData.perUser.length === 0 ? (
+                  <p className="text-xs text-[var(--color-muted-foreground)]">Sem dados.</p>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead className="border-b border-[var(--color-border)] text-left text-xs uppercase tracking-wide text-[var(--color-muted-foreground)]">
+                        <tr>
+                          <th className="px-3 py-2">Usuário</th>
+                          <th className="px-3 py-2 text-right">Cards</th>
+                          <th className="px-3 py-2 text-right">Média (dias)</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {cycleTimeData.perUser.map((u) => (
+                          <tr key={u.userId} className="border-b border-[var(--color-border)] last:border-0">
+                            <td className="px-3 py-2">
+                              <div className="flex items-center gap-2">
+                                <Avatar className="h-6 w-6">
+                                  {u.profile_picture_url && <AvatarImage src={u.profile_picture_url} alt="" />}
+                                  <AvatarFallback className="text-[10px]">
+                                    {u.name.slice(0, 2).toUpperCase()}
+                                  </AvatarFallback>
+                                </Avatar>
+                                <span>{u.name}</span>
+                                {u.role && (
+                                  <Badge variant="outline" className="text-[10px]">
+                                    {getRoleLabel(u.role)}
+                                  </Badge>
+                                )}
+                              </div>
+                            </td>
+                            <td className="px-3 py-2 text-right text-[var(--color-muted-foreground)]">
+                              {u.count}
+                            </td>
+                            <td className="px-3 py-2 text-right font-bold text-[var(--color-foreground)]">
+                              {u.avgDays}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Throughput por sprint */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Gauge className="h-5 w-5" />
+            Throughput por sprint
+          </CardTitle>
+          <CardDescription>
+            Velocidade da equipe = cards finalizados ÷ duração da sprint (em dias).
+            Sprints ordenadas pela mais recente.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {throughputData.length === 0 ? (
+            <p className="text-sm text-[var(--color-muted-foreground)]">
+              Nenhuma sprint registrada.
+            </p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className="border-b border-[var(--color-border)] text-left text-xs uppercase tracking-wide text-[var(--color-muted-foreground)]">
+                  <tr>
+                    <th className="px-3 py-2">Sprint</th>
+                    <th className="px-3 py-2 text-right">Entregues</th>
+                    <th className="px-3 py-2 text-right">Duração</th>
+                    <th className="px-3 py-2 text-right">Cards/dia</th>
+                    <th className="px-3 py-2">Visual</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(() => {
+                    const maxThroughput = Math.max(
+                      ...throughputData.map((t) => t.throughput),
+                      0.01,
+                    );
+                    return throughputData.map((t) => {
+                      const pctWidth = Math.round((t.throughput / maxThroughput) * 100);
+                      return (
+                        <tr key={t.sprintId} className="border-b border-[var(--color-border)] last:border-0">
+                          <td className="px-3 py-2">
+                            <div className="flex items-center gap-2">
+                              <span className="font-medium text-[var(--color-foreground)]">{t.name}</span>
+                              {!t.finalizada && (
+                                <Badge className="border-green-600/40 bg-green-500/15 text-green-800 dark:text-green-400 text-[10px]">
+                                  Ativa
+                                </Badge>
+                              )}
+                            </div>
+                          </td>
+                          <td className="px-3 py-2 text-right text-[var(--color-muted-foreground)]">
+                            {t.delivered}
+                          </td>
+                          <td className="px-3 py-2 text-right text-[var(--color-muted-foreground)]">
+                            {t.days}d
+                          </td>
+                          <td className="px-3 py-2 text-right font-bold text-[var(--color-foreground)]">
+                            {t.throughput}
+                          </td>
+                          <td className="px-3 py-2">
+                            <div className="h-2 w-full overflow-hidden rounded-full bg-[var(--color-muted)]">
+                              <div
+                                className="h-full bg-[var(--color-primary)]"
+                                style={{ width: `${pctWidth}%` }}
+                              />
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    });
+                  })()}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Volume por Área */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Layers className="h-5 w-5" />
+            Volume por área
+          </CardTitle>
+          <CardDescription>
+            Distribuição dos cards finalizados por categoria técnica (frontend, backend, RPA, etc.).
+            Útil para planejamento de equipe e foco.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {volumeByAreaData.length === 0 ? (
+            <p className="text-sm text-[var(--color-muted-foreground)]">
+              Nenhum card finalizado.
+            </p>
+          ) : (
+            <div className="space-y-2">
+              {(() => {
+                const maxCount = Math.max(...volumeByAreaData.map((a) => a.count), 1);
+                return volumeByAreaData.map((a) => {
+                  const pctWidth = Math.round((a.count / maxCount) * 100);
+                  return (
+                    <div key={a.area}>
+                      <div className="flex items-center justify-between gap-2 text-sm">
+                        <span className="font-medium text-[var(--color-foreground)]">{a.label}</span>
+                        <span className="text-xs text-[var(--color-muted-foreground)]">
+                          {a.count} card{a.count === 1 ? '' : 's'} · {a.pct}%
+                        </span>
+                      </div>
+                      <div className="mt-1 h-2 w-full overflow-hidden rounded-full bg-[var(--color-muted)]">
+                        <div
+                          className="h-full bg-[var(--color-primary)]"
+                          style={{ width: `${pctWidth}%` }}
+                        />
+                      </div>
+                    </div>
+                  );
+                });
+              })()}
+            </div>
           )}
         </CardContent>
       </Card>

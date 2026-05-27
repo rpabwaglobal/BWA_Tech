@@ -149,6 +149,15 @@ class Project(models.Model):
         blank=True,
         verbose_name='Arquivado por',
     )
+    # Projeto "sistêmico" (Suporte, Sugestões, Projetos Descartados).
+    # Excluído de métricas, dashboards e bulk-archive/delete.
+    # Substitui o hardcoding por nome no frontend.
+    is_system = models.BooleanField(
+        default=False,
+        db_index=True,
+        verbose_name='Projeto Sistêmico',
+        help_text='Projetos sistêmicos (Suporte, Sugestões, Projetos Descartados) são excluídos de métricas e operações em massa.',
+    )
     created_at = models.DateTimeField(auto_now_add=True, verbose_name='Data de Criação')
     updated_at = models.DateTimeField(auto_now=True, verbose_name='Data de Atualização')
 

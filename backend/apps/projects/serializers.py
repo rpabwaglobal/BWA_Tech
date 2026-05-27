@@ -51,6 +51,7 @@ class SprintSerializer(serializers.ModelSerializer):
     projects_count = serializers.IntegerField(source='projects.count', read_only=True)
     cards_total = serializers.IntegerField(read_only=True)
     cards_finalizados = serializers.IntegerField(read_only=True)
+    cards_inviabilizados = serializers.IntegerField(read_only=True)
     cards_em_andamento = serializers.IntegerField(read_only=True)
     cards_em_atraso = serializers.IntegerField(read_only=True)
     cards_entregues_atrasados = serializers.IntegerField(read_only=True)
@@ -112,7 +113,8 @@ class SprintSerializer(serializers.ModelSerializer):
         model = Sprint
         fields = ['id', 'nome', 'data_inicio', 'fechamento_em', 'data_fim', 'duracao_dias',
                  'supervisor', 'supervisor_name', 'projects_count',
-                 'cards_total', 'cards_finalizados', 'cards_em_andamento', 'cards_em_atraso',
+                 'cards_total', 'cards_finalizados', 'cards_inviabilizados',
+                 'cards_em_andamento', 'cards_em_atraso',
                  'cards_entregues_atrasados', 'cards_abertos_atrasados',
                  'finalizada', 'created_at', 'updated_at']
         read_only_fields = [
@@ -175,13 +177,17 @@ class ProjectSerializer(serializers.ModelSerializer):
                  'data_inicio_desenvolvimento', 'data_entrega', 'data_homologacao',
                  'data_adiamento_solicitada', 'nova_data_prevista', 'adiamento_aprovado',
                  'arquivado', 'arquivado_em', 'arquivado_por', 'arquivado_por_name',
+                 'is_system',
                  'cards_count', 'cards_entregues_count', 'cards_em_desenvolvimento_count',
                  'created_at', 'updated_at']
         # `arquivado_em` e `arquivado_por` SÃO preenchidos pelo backend nas actions
         # archive/unarchive. O campo `arquivado` é também read-only para clientes —
         # mudanças passam pelas actions dedicadas (permitem audit + permission check).
+        # `is_system` é gerenciado pelo backend (migração + futura action admin) —
+        # nunca editável via API pública para evitar marcar projetos arbitrários.
         read_only_fields = ['created_at', 'updated_at', 'data_criacao',
-                            'arquivado', 'arquivado_em', 'arquivado_por', 'arquivado_por_name']
+                            'arquivado', 'arquivado_em', 'arquivado_por', 'arquivado_por_name',
+                            'is_system']
 
 
 class UserNoteItemSerializer(serializers.ModelSerializer):

@@ -23,6 +23,9 @@ export type Project = {
   data_adiamento_solicitada?: string | null;
   nova_data_prevista?: string | null;
   adiamento_aprovado?: boolean;
+  /** Projeto sistêmico (Suporte, Sugestões, Projetos Descartados).
+   * Read-only; excluído de métricas e operações em massa. */
+  is_system?: boolean;
   /** Arquivamento (soft delete reversível). Default false. Backend filtra
    * automaticamente arquivados em todos endpoints exceto quando `?arquivado=true`
    * é passado explicitamente. */

@@ -53,42 +53,59 @@ class SprintViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         hoje = timezone.localdate()
-        # Cards de projetos arquivados ficam DE FORA de todas as métricas
-        # agregadas da sprint — mantém a coerência com o filtro de CardViewSet.
-        not_archived = Q(projects__arquivado=False)
+        # Métricas agregadas excluem cards de projetos arquivados E sistêmicos
+        # (Suporte/Sugestões/Descartados). Garante coerência com o frontend de
+        # Métricas e com o CardViewSet.
+        not_excluded = Q(projects__arquivado=False) & Q(projects__is_system=False)
+        # Critério de atraso (alinhado com Metrics.tsx):
+        # - Aberto atrasado: data_fim < hoje E status não-terminal
+        # - Entregue atrasado: finalizado_em > data_fim (do próprio card)
+        # NÃO comparamos com sprint.fechamento_em — a fonte de verdade é
+        # `data_fim` do card. Inviabilizado nunca conta como entrega.
         return (
             Sprint.objects.all()
             .annotate(
-                cards_total=Count('projects__cards', filter=not_archived),
+                cards_total=Count('projects__cards', filter=not_excluded),
                 cards_finalizados=Count(
                     'projects__cards',
-                    filter=not_archived & Q(projects__cards__status='finalizado'),
+                    filter=not_excluded
+                    & Q(projects__cards__status='finalizado')
+                    & Q(projects__cards__finalizado_em__isnull=False),
+                ),
+                cards_inviabilizados=Count(
+                    'projects__cards',
+                    filter=not_excluded & Q(projects__cards__status='inviabilizado'),
                 ),
                 cards_em_andamento=Count(
                     'projects__cards',
-                    filter=not_archived & Q(projects__cards__status__in=['em_desenvolvimento', 'em_homologacao']),
+                    filter=not_excluded
+                    & Q(projects__cards__status__in=['em_desenvolvimento', 'em_homologacao']),
                 ),
                 cards_em_atraso=Count(
                     'projects__cards',
-                    filter=not_archived & (
+                    filter=not_excluded & (
                         (
                             Q(projects__cards__data_fim__date__lt=hoje)
                             & ~Q(projects__cards__status__in=['finalizado', 'inviabilizado'])
                         )
                         | (
                             Q(projects__cards__status='finalizado')
-                            & Q(projects__cards__data_fim__gt=F('fechamento_em'))
+                            & Q(projects__cards__finalizado_em__isnull=False)
+                            & Q(projects__cards__finalizado_em__gt=F('projects__cards__data_fim'))
                         )
                     ),
                 ),
                 cards_entregues_atrasados=Count(
                     'projects__cards',
-                    filter=not_archived & Q(projects__cards__status='finalizado')
-                    & Q(projects__cards__data_fim__gt=F('fechamento_em')),
+                    filter=not_excluded
+                    & Q(projects__cards__status='finalizado')
+                    & Q(projects__cards__finalizado_em__isnull=False)
+                    & Q(projects__cards__finalizado_em__gt=F('projects__cards__data_fim')),
                 ),
                 cards_abertos_atrasados=Count(
                     'projects__cards',
-                    filter=not_archived & Q(projects__cards__data_fim__date__lt=hoje)
+                    filter=not_excluded
+                    & Q(projects__cards__data_fim__date__lt=hoje)
                     & ~Q(projects__cards__status__in=['finalizado', 'inviabilizado']),
                 ),
             )
@@ -134,12 +151,14 @@ class ProjectViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         # Contagens agregadas para evitar download de cards no frontend.
+        # `cards_entregues_count` NÃO inclui inviabilizado (regra de negócio:
+        # inviabilizado é cancelamento, não entrega).
         qs = (
             Project.objects.all()
             .annotate(
                 cards_entregues_count=Count(
                     'cards',
-                    filter=Q(cards__status__in=['finalizado', 'inviabilizado']),
+                    filter=Q(cards__status='finalizado') & Q(cards__finalizado_em__isnull=False),
                 ),
                 cards_em_desenvolvimento_count=Count(
                     'cards',
@@ -414,11 +433,6 @@ class ProjectViewSet(viewsets.ModelViewSet):
     # Regra: apenas supervisor/admin podem arquivar, desarquivar ou excluir
     # projetos. Espelha o padrão existente de `_is_supervisor_editor`.
 
-    # Projetos especiais do sistema que NUNCA devem ser arquivados/excluídos
-    # via API — o frontend nem mostra eles em `projetosNormais`, mas um cliente
-    # malicioso poderia tentar via curl. Defesa em profundidade aqui.
-    _SYSTEM_PROJECT_NAMES = ('Sugestões', 'Projetos Descartados')
-
     # Limite máximo de cards "em jogo" listados por projeto no preview de
     # exclusão. Acima disso, o JSON cresceria demais e o modal ficaria lento.
     _PREVIEW_CARDS_LIMIT = 100
@@ -457,15 +471,16 @@ class ProjectViewSet(viewsets.ModelViewSet):
         return ids, None
 
     def _safe_ids(self, ids):
-        """Remove IDs de projetos sistêmicos (Sugestões, Descartados, etc.) do
-        conjunto. Retorna (safe_ids, blocked_count).
+        """Remove IDs de projetos sistêmicos (is_system=True) do conjunto.
+        Retorna (safe_ids, blocked_count).
 
         Defesa server-side: o frontend já omite esses, mas garantimos aqui pra
-        clientes API diretos."""
+        clientes API diretos. Usa a flag `is_system` (verdade canônica)
+        em vez de comparar nome — robusto contra renomeações."""
         if not ids:
             return [], 0
         blocked_ids = set(
-            Project.objects.filter(id__in=ids, nome__in=self._SYSTEM_PROJECT_NAMES)
+            Project.objects.filter(id__in=ids, is_system=True)
             .values_list('id', flat=True)
         )
         safe = [i for i in ids if i not in blocked_ids]
@@ -479,7 +494,7 @@ class ProjectViewSet(viewsets.ModelViewSet):
         if forbidden:
             return forbidden
         instance = self.get_object()
-        if instance.nome in self._SYSTEM_PROJECT_NAMES:
+        if instance.is_system:
             return Response(
                 {'detail': f'O projeto "{instance.nome}" é interno do sistema e não pode ser excluído.'},
                 status=status.HTTP_400_BAD_REQUEST,

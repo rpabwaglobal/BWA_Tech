@@ -22,6 +22,9 @@ export type ProjectDetail = {
   desenvolvedor_name?: string;
   status: string;
   status_display?: string;
+  /** Projeto sistêmico (Suporte, Sugestões, Projetos Descartados).
+   * Quando true, deve ser excluído de métricas e operações em massa. */
+  is_system?: boolean;
 };
 
 export type CardLink = {
