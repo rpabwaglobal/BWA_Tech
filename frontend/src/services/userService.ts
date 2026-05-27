@@ -1,7 +1,10 @@
 import api, { fetchAllPaginated } from './api';
 
 export type User = {
-  id: string; // UUID
+  /** PK do user (bigint no Django). DRF serializa como número.
+   * Tratado como `string | number` em comparações — SEMPRE normalize com
+   * `String()` em find/get para evitar mismatches. */
+  id: string | number;
   username: string;
   email: string;
   first_name: string;

@@ -318,6 +318,14 @@ export default function Metrics() {
   const navigate = useNavigate();
   const [onTimeListModalUserId, setOnTimeListModalUserId] = useState<string | null>(null);
   const [onTimeListTab, setOnTimeListTab] = useState<'onTime' | 'late'>('onTime');
+  // Modal compartilhado entre os 3 gráficos de barras (Cards por Usuário,
+  // Leaderboard, Cycle Time). Clique na barra → mostra a lista de cards do
+  // usuário, já filtrada pelo escopo daquele gráfico.
+  const [chartCardsModal, setChartCardsModal] = useState<{
+    title: string;
+    description: string;
+    cards: CardType[];
+  } | null>(null);
   const [onTimeViewCardOpen, setOnTimeViewCardOpen] = useState(false);
   const [onTimeViewCardLoading, setOnTimeViewCardLoading] = useState(false);
   const [onTimeViewSelectedCard, setOnTimeViewSelectedCard] = useState<CardType | null>(null);
@@ -450,16 +458,17 @@ export default function Metrics() {
     if (cardsTypeFilter) {
       list = list.filter((c) => c.tipo === cardsTypeFilter);
     }
+    // Normalizar chaves para String() — User.id vem como bigint do backend.
     const byUser = new Map<string, number>();
     for (const c of list) {
-      const uid = c.responsavel!;
+      const uid = String(c.responsavel!);
       byUser.set(uid, (byUser.get(uid) ?? 0) + 1);
     }
     const entriesFromCards = Array.from(byUser.entries()).map(([userId, count]) => {
-      const user = users.find((u) => u.id === userId) ?? { id: userId, username: userId, email: '', first_name: '', last_name: '', role: '', role_display: '', profile_picture_url: null as string | null };
+      const user = users.find((u) => String(u.id) === userId) ?? { id: userId, username: userId, email: '', first_name: '', last_name: '', role: '', role_display: '', profile_picture_url: null as string | null };
       return {
         userId,
-        name: getShortDisplayName(user),
+        name: getShortDisplayName(user as User),
         role: user.role ?? '',
         profile_picture_url: user.profile_picture_url ?? null,
         count,
@@ -467,9 +476,9 @@ export default function Metrics() {
     });
     const userIdsFromCards = new Set(entriesFromCards.map((e) => e.userId));
     const allUsersWithZero = users
-      .filter((u) => !userIdsFromCards.has(u.id))
+      .filter((u) => !userIdsFromCards.has(String(u.id)))
       .map((u) => ({
-        userId: u.id,
+        userId: String(u.id),
         name: getShortDisplayName(u),
         role: u.role ?? '',
         profile_picture_url: u.profile_picture_url ?? null,
@@ -664,9 +673,12 @@ export default function Metrics() {
         return t >= start && t <= end;
       });
     }
+    // IMPORTANTE: o backend devolve User.id como bigint (number), mas o type
+    // TS declara string. Para evitar mismatches em `find`/`get`, normalizamos
+    // tudo para String() nas chaves e comparações.
     const byUser = new Map<string, number>();
     for (const c of list) {
-      const uid = c.responsavel!;
+      const uid = String(c.responsavel!);
       byUser.set(uid, (byUser.get(uid) ?? 0) + 1);
     }
     const isUsersScope = leaderboardScope === 'users';
@@ -688,26 +700,27 @@ export default function Metrics() {
     let result: { userId: string; name: string; count: number; role: string; profile_picture_url: string | null }[];
     if (scopeUsers) {
       result = scopeUsers.map((userId) => {
-        const user = users.find((u) => u.id === userId);
+        const uid = String(userId);
+        const user = users.find((u) => String(u.id) === uid);
         return {
-          userId,
-          name: user ? getShortDisplayName(user) : userId,
-          count: byUser.get(userId) ?? 0,
+          userId: uid,
+          name: user ? getShortDisplayName(user) : uid,
+          count: byUser.get(uid) ?? 0,
           role: user?.role ?? '',
           profile_picture_url: user?.profile_picture_url ?? null,
         };
       });
     } else if (isAll) {
       result = users.map((user) => ({
-        userId: user.id,
+        userId: String(user.id),
         name: getShortDisplayName(user),
-        count: byUser.get(user.id) ?? 0,
+        count: byUser.get(String(user.id)) ?? 0,
         role: user.role ?? '',
         profile_picture_url: user.profile_picture_url ?? null,
       }));
     } else {
       result = Array.from(byUser.entries()).map(([userId, count]) => {
-        const user = users.find((u) => u.id === userId);
+        const user = users.find((u) => String(u.id) === userId);
         return {
           userId,
           name: user ? getShortDisplayName(user) : userId,
@@ -821,7 +834,7 @@ export default function Metrics() {
       };
       const { total, onTime, onTimeCards, lateCards } = stats;
       const late = total - onTime;
-      const user = users.find((u) => String(u.id) === uid) ?? users.find((u) => u.id === userId) ?? { id: userId, username: String(userId), email: '', first_name: '', last_name: '', role: '', role_display: '', profile_picture_url: null };
+      const user = users.find((u) => String(u.id) === uid) ?? { id: uid, username: uid, email: '', first_name: '', last_name: '', role: '', role_display: '', profile_picture_url: null };
       return {
         userId,
         name: getShortDisplayName(user),
@@ -920,6 +933,115 @@ export default function Metrics() {
     if (!onTimeListModalRow) return;
     setOnTimeListTab(onTimeListModalRow.onTimeCards.length > 0 ? 'onTime' : 'late');
   }, [onTimeListModalUserId, onTimeListModalRow]);
+
+  /** Abre o modal compartilhado dos gráficos com a lista de cards do usuário. */
+  const openChartCardsModal = useCallback(
+    (title: string, description: string, cards: CardType[]) => {
+      setChartCardsModal({ title, description, cards });
+    },
+    [],
+  );
+
+  /** Click numa barra do "Cards por Usuário" → mostra cards desse usuário
+   * já filtrados por sprint/tipo (filtros do próprio gráfico). */
+  const handleCardsPerUserBarClick = useCallback(
+    (entry: { userId: string; name: string }) => {
+      if (!entry?.userId) return;
+      const uid = String(entry.userId);
+      let list = closedCards.filter((c) => String(c.responsavel ?? '') === uid);
+      const descParts: string[] = [];
+      if (cardsSprintFilter) {
+        const want = String(cardsSprintFilter);
+        list = list.filter((c) => resolveCardSprintId(c, projects) === want);
+        const sp = sprints.find((s) => String(s.id) === want);
+        if (sp) descParts.push(`Sprint: ${sp.nome}`);
+      }
+      if (cardsTypeFilter) {
+        list = list.filter((c) => c.tipo === cardsTypeFilter);
+        const meta = CARD_TYPES.find((t) => t.value === cardsTypeFilter);
+        descParts.push(`Tipo: ${meta?.label ?? cardsTypeFilter}`);
+      }
+      const description = `${entry.name}${descParts.length ? ' · ' + descParts.join(' · ') : ''}`;
+      openChartCardsModal('Cards entregues', description, list);
+    },
+    [closedCards, cardsSprintFilter, cardsTypeFilter, projects, sprints, openChartCardsModal],
+  );
+
+  /** Click numa barra do Leaderboard → cards do usuário no escopo atual
+   * (sprint/year/month/interval/users). */
+  const handleLeaderboardBarClick = useCallback(
+    (entry: { userId: string; name: string }) => {
+      if (!entry?.userId) return;
+      const uid = String(entry.userId);
+      let list = closedCards.filter((c) => String(c.responsavel ?? '') === uid);
+      let scopeLabel = '';
+      if (leaderboardScope === 'sprint' && leaderboardSprint) {
+        const want = String(leaderboardSprint);
+        list = list.filter((c) => resolveCardSprintId(c, projects) === want);
+        const sp = sprints.find((s) => String(s.id) === want);
+        scopeLabel = `Sprint: ${sp?.nome ?? want}`;
+      } else if (leaderboardScope === 'year') {
+        list = list.filter((c) => {
+          const d = getCardDeliveryDate(c);
+          return d != null && d.getFullYear() === leaderboardYear;
+        });
+        scopeLabel = `Ano: ${leaderboardYear}`;
+      } else if (leaderboardScope === 'month') {
+        list = list.filter((c) => {
+          const d = getCardDeliveryDate(c);
+          return (
+            d != null &&
+            d.getFullYear() === leaderboardMonthYear &&
+            d.getMonth() + 1 === leaderboardMonth
+          );
+        });
+        scopeLabel = `${MONTH_NAMES[leaderboardMonth - 1]}/${leaderboardMonthYear}`;
+      } else if (leaderboardScope === 'interval' && leaderboardStartDate && leaderboardEndDate) {
+        const start = new Date(leaderboardStartDate).setHours(0, 0, 0, 0);
+        const end = new Date(leaderboardEndDate).setHours(23, 59, 59, 999);
+        list = list.filter((c) => {
+          const d = getCardDeliveryDate(c);
+          if (!d) return false;
+          const t = d.getTime();
+          return t >= start && t <= end;
+        });
+        scopeLabel = `${leaderboardStartDate} → ${leaderboardEndDate}`;
+      } else if (leaderboardScope === 'users') {
+        scopeLabel = 'Todo o histórico';
+      }
+      const description = `${entry.name}${scopeLabel ? ' · ' + scopeLabel : ''}`;
+      openChartCardsModal('Cards entregues', description, list);
+    },
+    [
+      closedCards,
+      leaderboardScope,
+      leaderboardSprint,
+      leaderboardYear,
+      leaderboardMonth,
+      leaderboardMonthYear,
+      leaderboardStartDate,
+      leaderboardEndDate,
+      projects,
+      sprints,
+      openChartCardsModal,
+    ],
+  );
+
+  /** Click numa linha da tabela de Cycle Time → cards considerados no cálculo
+   * (têm data_inicio E finalizado_em). */
+  const handleCycleTimeRowClick = useCallback(
+    (userId: string, userName: string) => {
+      const uid = String(userId);
+      const list = closedCards.filter(
+        (c) =>
+          String(c.responsavel ?? '') === uid &&
+          c.data_inicio != null &&
+          c.finalizado_em != null,
+      );
+      openChartCardsModal('Cards considerados no Cycle Time', userName, list);
+    },
+    [closedCards, openChartCardsModal],
+  );
 
   const onTimeTableUserList = useMemo(() => {
     const seen = new Set<string>();
@@ -1125,10 +1247,11 @@ export default function Metrics() {
       overall.sumDays += days;
       overall.count += 1;
       if (card.responsavel) {
-        const cur = byUser.get(card.responsavel) ?? { sumDays: 0, count: 0 };
+        const uid = String(card.responsavel);
+        const cur = byUser.get(uid) ?? { sumDays: 0, count: 0 };
         cur.sumDays += days;
         cur.count += 1;
-        byUser.set(card.responsavel, cur);
+        byUser.set(uid, cur);
       }
       const area = card.area || 'desconhecida';
       const curA = byArea.get(area) ?? { sumDays: 0, count: 0 };
@@ -1142,7 +1265,7 @@ export default function Metrics() {
 
     const perUser = Array.from(byUser.entries())
       .map(([userId, b]) => {
-        const user = users.find((u) => u.id === userId);
+        const user = users.find((u) => String(u.id) === userId);
         return {
           userId,
           name: user ? getShortDisplayName(user) : userId,
@@ -1406,7 +1529,16 @@ export default function Metrics() {
                     }}
                   />
                   <ChartTooltip content={<ChartTooltipContent nameKey="name" />} />
-                  <Bar dataKey="count" fill="var(--color-count)" radius={[0, 4, 4, 0]} name="Entregas">
+                  <Bar
+                    dataKey="count"
+                    fill="var(--color-count)"
+                    radius={[0, 4, 4, 0]}
+                    name="Entregas"
+                    cursor="pointer"
+                    onClick={(data) =>
+                      handleCardsPerUserBarClick(data as { userId: string; name: string })
+                    }
+                  >
                     {cardsPerUserData.map((row) => (
                       <Cell key={row.userId} fill={getRoleBarColor(row.role)} />
                     ))}
@@ -1679,8 +1811,17 @@ export default function Metrics() {
                     }}
                   />
                   <ChartTooltip content={<ChartTooltipContent nameKey="name" />} />
-                  <Bar dataKey="count" fill="var(--color-count)" radius={[0, 4, 4, 0]} name="Entregas">
-                    {leaderboardData.map((row, i) => (
+                  <Bar
+                    dataKey="count"
+                    fill="var(--color-count)"
+                    radius={[0, 4, 4, 0]}
+                    name="Entregas"
+                    cursor="pointer"
+                    onClick={(data) =>
+                      handleLeaderboardBarClick(data as { userId: string; name: string })
+                    }
+                  >
+                    {leaderboardData.map((row) => (
                       <Cell key={row.userId} fill={getRoleBarColor(row.role)} />
                     ))}
                   </Bar>
@@ -2065,9 +2206,12 @@ export default function Metrics() {
               <tbody>
                 {onTimeTableFiltered.map((row, i) => {
                   const rank = i + 1;
+                  // Cor da linha reflete a meta de 80%: vermelho = abaixo da
+                  // meta, verde = na meta. Ter "alguns cards atrasados" sozinho
+                  // não puxa para vermelho — o que conta é a % total.
                   const rowBg = row.total === 0
                     ? 'bg-[var(--color-muted)]/25'
-                    : row.late > 0 ? 'bg-[#fca5a540]' : 'bg-[#86efac40]';
+                    : row.pct < 80 ? 'bg-[#fca5a540]' : 'bg-[#86efac40]';
                   const pctColor = row.total === 0
                     ? 'text-[var(--color-muted-foreground)]'
                     : row.pct >= 90 ? 'text-green-700 dark:text-green-400' : row.pct >= 80 ? 'text-yellow-600 dark:text-yellow-500' : 'text-red-700 dark:text-red-400';
@@ -2215,7 +2359,19 @@ export default function Metrics() {
                       </thead>
                       <tbody>
                         {cycleTimeData.perUser.map((u) => (
-                          <tr key={u.userId} className="border-b border-[var(--color-border)] last:border-0">
+                          <tr
+                            key={u.userId}
+                            role="button"
+                            tabIndex={0}
+                            onClick={() => handleCycleTimeRowClick(u.userId, u.name)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter' || e.key === ' ') {
+                                e.preventDefault();
+                                handleCycleTimeRowClick(u.userId, u.name);
+                              }
+                            }}
+                            className="border-b border-[var(--color-border)] last:border-0 cursor-pointer hover:bg-[var(--color-accent)]"
+                          >
                             <td className="px-3 py-2">
                               <div className="flex items-center gap-2">
                                 <Avatar className="h-6 w-6">
@@ -2598,6 +2754,71 @@ export default function Metrics() {
               </div>
               <DialogFooter className="mt-0 shrink-0 border-t border-[var(--color-border)] pt-4">
                 <Button type="button" variant="outline" onClick={() => setOnTimeListModalUserId(null)}>
+                  Fechar
+                </Button>
+              </DialogFooter>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Modal compartilhado entre os 3 gráficos de barras (clique numa barra
+          → lista de cards do usuário). */}
+      <Dialog
+        open={chartCardsModal != null}
+        onOpenChange={(open) => {
+          if (!open) setChartCardsModal(null);
+        }}
+        containerClassName="max-w-2xl"
+      >
+        <DialogContent
+          onClose={() => setChartCardsModal(null)}
+          className="max-h-[90vh] flex flex-col overflow-hidden"
+        >
+          <DialogHeader>
+            <DialogTitle>{chartCardsModal?.title ?? 'Cards entregues'}</DialogTitle>
+            <DialogDescription>
+              {chartCardsModal
+                ? `${chartCardsModal.description} · ${chartCardsModal.cards.length} card(s)`
+                : ''}
+            </DialogDescription>
+          </DialogHeader>
+          {chartCardsModal && (
+            <div className="mt-2 flex min-h-0 flex-1 flex-col">
+              <div className="min-h-0 max-h-[min(60vh,520px)] flex-1 overflow-y-auto pr-1 pt-1">
+                {chartCardsModal.cards.length === 0 ? (
+                  <p className="text-sm text-[var(--color-muted-foreground)]">
+                    Nenhum card neste filtro.
+                  </p>
+                ) : (
+                  <ul className="space-y-2">
+                    {[...chartCardsModal.cards].sort(sortCardsByDeliveryDesc).map((card) => {
+                      // Variant calculado: card é "no prazo" se finalizado_em <= data_fim.
+                      const scheduledEnd = card.data_fim ? new Date(card.data_fim).getTime() : null;
+                      const completedAt = card.finalizado_em
+                        ? new Date(card.finalizado_em).getTime()
+                        : null;
+                      const variant: 'onTime' | 'late' =
+                        scheduledEnd != null && completedAt != null && completedAt > scheduledEnd
+                          ? 'late'
+                          : 'onTime';
+                      return (
+                        <MetricsDeliveredCardRow
+                          key={card.id}
+                          card={card}
+                          variant={variant}
+                          onSelect={(id) => {
+                            setChartCardsModal(null);
+                            void openConsistencyCardFromMetrics(id);
+                          }}
+                        />
+                      );
+                    })}
+                  </ul>
+                )}
+              </div>
+              <DialogFooter className="mt-0 shrink-0 border-t border-[var(--color-border)] pt-4">
+                <Button type="button" variant="outline" onClick={() => setChartCardsModal(null)}>
                   Fechar
                 </Button>
               </DialogFooter>
