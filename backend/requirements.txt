@@ -12,3 +12,9 @@ celery==5.3.4
 redis==5.0.1
 daphne==4.1.0
 requests==2.32.3
+# Geração de relatórios (app apps.reports)
+WeasyPrint==63.1
+python-docx==1.1.2
+openpyxl==3.1.5
+# htmldocx é mantido pelo upstream com versões esparsas — pin estável.
+htmldocx==0.0.6

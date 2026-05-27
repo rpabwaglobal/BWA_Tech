@@ -1,0 +1,80 @@
+{% extends 'reports/base.html' %}
+
+{% block content %}
+  <div class="section">
+    <div class="kpi-grid">
+      <div class="kpi-card">
+        <div class="kpi-label">Entregues atrasados</div>
+        <div class="kpi-value" style="color: #991b1b;">{{ late_delivered_total }}</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Em aberto atrasados</div>
+        <div class="kpi-value" style="color: #9a3412;">{{ open_late_total }}</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="section">
+    <h2>Cycle time mais lento por área</h2>
+    {% if cycle_by_area %}
+      <table class="tight">
+        <thead><tr><th>Área</th><th style="width: 14%;">Cards</th><th style="width: 16%;">Média (dias)</th></tr></thead>
+        <tbody>
+          {% for a in cycle_by_area %}
+            <tr><td>{{ a.area }}</td><td>{{ a.count }}</td><td><strong>{{ a.avg_days }}</strong></td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <p class="empty">Sem dados.</p>
+    {% endif %}
+  </div>
+
+  <div class="section">
+    <h2>Cards entregues atrasados</h2>
+    {% if late_delivered %}
+      <table class="tight">
+        <thead>
+          <tr><th>Card</th><th style="width: 22%;">Projeto</th><th style="width: 16%;">Responsável</th><th style="width: 10%;">Prazo</th><th style="width: 10%;">Finalizado</th></tr>
+        </thead>
+        <tbody>
+          {% for c in late_delivered %}
+            <tr>
+              <td><strong>{{ c.nome }}</strong></td>
+              <td>{{ c.projeto.nome }}</td>
+              <td>{% if c.responsavel %}{{ c.responsavel.first_name }} {{ c.responsavel.last_name }}{% else %}<span class="muted">—</span>{% endif %}</td>
+              <td>{{ c.data_fim|date:"d/m/Y" }}</td>
+              <td><span class="badge badge-status-inviabilizado">{{ c.finalizado_em|date:"d/m/Y" }}</span></td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <p class="empty">Nenhum card entregue atrasado no período.</p>
+    {% endif %}
+  </div>
+
+  <div class="section">
+    <h2>Cards em aberto com prazo vencido</h2>
+    {% if open_late %}
+      <table class="tight">
+        <thead>
+          <tr><th>Card</th><th style="width: 22%;">Projeto</th><th style="width: 16%;">Responsável</th><th style="width: 14%;">Prazo</th><th style="width: 10%;">Status</th></tr>
+        </thead>
+        <tbody>
+          {% for c in open_late %}
+            <tr>
+              <td><strong>{{ c.nome }}</strong></td>
+              <td>{{ c.projeto.nome }}</td>
+              <td>{% if c.responsavel %}{{ c.responsavel.first_name }} {{ c.responsavel.last_name }}{% else %}<span class="muted">—</span>{% endif %}</td>
+              <td><span class="badge badge-status-inviabilizado">{{ c.data_fim|date:"d/m/Y" }}</span></td>
+              <td><span class="badge badge-status-{{ c.status }}">{{ c.get_status_display }}</span></td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <p class="empty">Nenhum card em aberto com prazo vencido.</p>
+    {% endif %}
+  </div>
+{% endblock %}

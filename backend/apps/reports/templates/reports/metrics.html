@@ -1,0 +1,116 @@
+{% extends 'reports/base.html' %}
+{% load reports_extras %}
+
+{% block content %}
+  <div class="section">
+    <div class="kpi-grid">
+      <div class="kpi-card">
+        <div class="kpi-label">Cards entregues</div>
+        <div class="kpi-value">{{ kpis.closed_total }}</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Sprints</div>
+        <div class="kpi-value">{{ kpis.sprints }}</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Usuários com entregas</div>
+        <div class="kpi-value">{{ kpis.users_with_deliveries }}</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Cycle médio</div>
+        <div class="kpi-value" style="color: var(--primary);">{{ cycle.avg_overall }}<span style="font-size: 11pt; font-weight: normal; color: var(--muted);">d</span></div>
+        <div class="kpi-sub">{{ cycle.count_with_cycle }} card(s)</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="section">
+    <h2>Leaderboard — Quem mais entregou</h2>
+    {% if ranking %}
+      <table class="tight">
+        <thead>
+          <tr><th style="width: 4%;">#</th><th>Usuário</th><th style="width: 14%;">Cargo</th><th style="width: 10%;">Entregas</th></tr>
+        </thead>
+        <tbody>
+          {% for r in ranking %}
+            <tr>
+              <td><strong>{{ forloop.counter }}</strong></td>
+              <td>{{ r.name }}</td>
+              <td class="muted">{{ r.role }}</td>
+              <td><strong>{{ r.count }}</strong></td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <p class="empty">Sem entregas no período.</p>
+    {% endif %}
+  </div>
+
+  <div class="section">
+    <h2>Throughput por Sprint</h2>
+    <table class="tight">
+      <thead><tr><th>Sprint</th><th style="width: 12%;">Entregues</th><th style="width: 10%;">Duração</th><th style="width: 12%;">Cards/dia</th></tr></thead>
+      <tbody>
+        {% for t in throughput %}
+          <tr>
+            <td>{{ t.sprint }}{% if t.active %} <span class="badge badge-status-em_desenvolvimento" style="font-size: 7pt;">Ativa</span>{% endif %}</td>
+            <td>{{ t.delivered }}</td>
+            <td>{{ t.days }}d</td>
+            <td><strong>{{ t.per_day }}</strong></td>
+          </tr>
+        {% empty %}
+          <tr><td colspan="4" class="muted" style="text-align:center;">Nenhuma sprint.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <div class="section">
+    <h2>Volume por Área</h2>
+    {% if volume %}
+      <table class="tight">
+        <thead><tr><th>Área</th><th style="width: 14%;">Cards</th><th style="width: 14%;">%</th></tr></thead>
+        <tbody>
+          {% for v in volume %}
+            <tr><td>{{ v.area }}</td><td>{{ v.count }}</td><td>{{ v.pct }}%</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <p class="empty">Sem dados.</p>
+    {% endif %}
+  </div>
+
+  <div class="section">
+    <h2>Cycle Time por Área</h2>
+    {% if cycle.by_area %}
+      <table class="tight">
+        <thead><tr><th>Área</th><th style="width: 12%;">Cards</th><th style="width: 16%;">Média (dias)</th></tr></thead>
+        <tbody>
+          {% for a in cycle.by_area %}
+            <tr><td>{{ a.area }}</td><td>{{ a.count }}</td><td><strong>{{ a.avg_days }}</strong></td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <p class="empty">Sem dados de cycle time.</p>
+    {% endif %}
+  </div>
+
+  <div class="section">
+    <h2>Cycle Time por Usuário</h2>
+    {% if cycle.by_user %}
+      <table class="tight">
+        <thead><tr><th>Usuário</th><th style="width: 14%;">Cargo</th><th style="width: 12%;">Cards</th><th style="width: 16%;">Média (dias)</th></tr></thead>
+        <tbody>
+          {% for u in cycle.by_user %}
+            <tr><td>{{ u.name }}</td><td class="muted">{{ u.role }}</td><td>{{ u.count }}</td><td><strong>{{ u.avg_days }}</strong></td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <p class="empty">Sem dados de cycle time.</p>
+    {% endif %}
+  </div>
+{% endblock %}

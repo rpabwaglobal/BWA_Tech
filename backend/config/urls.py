@@ -38,6 +38,7 @@ urlpatterns = [
     path('api/', include('apps.timeline.urls')),
     path('api/', include('apps.suggestions.urls')),
     path('api/', include('apps.geekday.urls')),
+    path('api/', include('apps.reports.urls')),
     path('api/formularios/', include('apps.formularios.urls')),
     path('media/<path:path>', serve_media),
     re_path(r'^(?P<path>.*)$', serve_spa),

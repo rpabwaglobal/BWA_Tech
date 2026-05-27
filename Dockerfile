@@ -22,9 +22,20 @@ FROM python:3.12.7-slim-bookworm
 WORKDIR /app/backend
 
 # Usuário não-root (UID/GID 10001) e dependências do sistema.
+# WeasyPrint requer libpango, libcairo, libgdk-pixbuf, libffi e fonts-liberation
+# (PDF não embed fontes do sistema sem isso e os relatórios saem com a fonte
+# default feia). Fonts-noto-color-emoji é opcional para emojis no PDF.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         libpq5 \
         curl \
+        libpango-1.0-0 \
+        libpangoft2-1.0-0 \
+        libcairo2 \
+        libgdk-pixbuf-2.0-0 \
+        libffi8 \
+        shared-mime-info \
+        fonts-liberation \
+        fonts-noto-color-emoji \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd -g 10001 appuser \
     && useradd -u 10001 -g appuser -r -s /sbin/nologin -d /app/backend appuser

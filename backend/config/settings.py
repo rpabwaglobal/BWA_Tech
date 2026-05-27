@@ -80,6 +80,7 @@ INSTALLED_APPS = [
     'apps.suggestions',
     'apps.geekday',
     'apps.formularios',
+    'apps.reports',
 ]
 
 MIDDLEWARE = [

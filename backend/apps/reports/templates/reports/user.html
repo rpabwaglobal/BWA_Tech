@@ -1,0 +1,70 @@
+{% extends 'reports/base.html' %}
+
+{% block content %}
+  <div class="section">
+    <h2>{{ target_user_name }}</h2>
+    <div class="kpi-grid">
+      <div class="kpi-card">
+        <div class="kpi-label">Entregas</div>
+        <div class="kpi-value">{{ total_delivered }}</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">No prazo</div>
+        <div class="kpi-value" style="color: #14532d;">{{ on_time }}</div>
+        {% if on_time_pct is not None %}<div class="kpi-sub">{{ on_time_pct }}%</div>{% endif %}
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Fora do prazo</div>
+        <div class="kpi-value" style="color: #991b1b;">{{ late }}</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Cycle médio</div>
+        <div class="kpi-value" style="color: var(--primary);">{% if avg_cycle is not None %}{{ avg_cycle }}<span style="font-size: 10pt; color: var(--muted);">d</span>{% else %}—{% endif %}</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="section">
+    <h2>Volume por área</h2>
+    {% if area_dist %}
+      <table class="tight">
+        <thead><tr><th>Área</th><th style="width: 14%;">Cards</th><th style="width: 14%;">%</th></tr></thead>
+        <tbody>
+          {% for a in area_dist %}
+            <tr><td>{{ a.area }}</td><td>{{ a.count }}</td><td>{{ a.pct }}%</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <p class="empty">Sem entregas no período.</p>
+    {% endif %}
+  </div>
+
+  <div class="section">
+    <h2>Lista de cards entregues</h2>
+    {% if delivered %}
+      <table class="tight">
+        <thead>
+          <tr>
+            <th>Card</th><th style="width: 22%;">Projeto</th><th style="width: 8%;">Área</th>
+            <th style="width: 12%;">Tipo</th><th style="width: 10%;">Prazo</th><th style="width: 10%;">Finalizado</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for c in delivered %}
+            <tr>
+              <td><strong>{{ c.nome }}</strong></td>
+              <td>{{ c.projeto.nome }}</td>
+              <td>{{ c.get_area_display }}</td>
+              <td>{{ c.get_tipo_display }}</td>
+              <td>{{ c.data_fim|date:"d/m/Y"|default:"—" }}</td>
+              <td>{{ c.finalizado_em|date:"d/m/Y" }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <p class="empty">Nenhuma entrega no período.</p>
+    {% endif %}
+  </div>
+{% endblock %}

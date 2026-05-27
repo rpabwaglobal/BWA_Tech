@@ -1,0 +1,45 @@
+{% extends 'reports/base.html' %}
+
+{% block content %}
+  <div class="section">
+    <div class="kpi-grid" style="grid-template-columns: repeat(3, 1fr);">
+      <div class="kpi-card">
+        <div class="kpi-label">Cards entregues</div>
+        <div class="kpi-value">{{ total_delivered }}</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">On-time %</div>
+        <div class="kpi-value" style="color: #14532d;">{% if on_time_pct is not None %}{{ on_time_pct }}%{% else %}—{% endif %}</div>
+        <div class="kpi-sub">{{ on_time }} no prazo · {{ late_total }} atrasados</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Cycle médio</div>
+        <div class="kpi-value" style="color: var(--primary);">{% if avg_cycle is not None %}{{ avg_cycle }}<span style="font-size: 11pt; color: var(--muted);">d</span>{% else %}—{% endif %}</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Projetos ativos</div>
+        <div class="kpi-value">{{ active_projects }}</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Em aberto atrasados</div>
+        <div class="kpi-value" style="color: #991b1b;">{{ open_late }}</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Sprint ativa</div>
+        <div class="kpi-value" style="font-size: 14pt;">{% if active_sprint %}{{ active_sprint.nome }}{% else %}—{% endif %}</div>
+        {% if active_sprint %}<div class="kpi-sub">{{ active_sprint.duracao_dias }} dias</div>{% endif %}
+      </div>
+    </div>
+  </div>
+
+  {% if top_user %}
+    <div class="section">
+      <h2>Destaque do período</h2>
+      <p style="font-size: 12pt;">
+        <strong>{{ top_user.name }}</strong> liderou com
+        <strong style="color: var(--primary);">{{ top_user.count }}</strong>
+        entrega{{ top_user.count|pluralize:"s" }}.
+      </p>
+    </div>
+  {% endif %}
+{% endblock %}

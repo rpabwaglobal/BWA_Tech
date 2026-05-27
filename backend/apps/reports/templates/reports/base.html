@@ -1,0 +1,266 @@
+{% load static %}<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <title>{{ report_title }}</title>
+  <style>
+    /* Paleta BWA Tech */
+    :root {
+      --primary: #754c99;
+      --primary-soft: #f0e8f7;
+      --cyan: #8fd0d7;
+      --foreground: #1f1726;
+      --muted: #6b6478;
+      --border: #e4e0eb;
+      --bg-card: #ffffff;
+      --bg-accent: #f7f5fa;
+    }
+
+    /* Tamanho A4 paisagem para relatórios tabulares; retrato pros demais.
+       Subclasses podem sobrescrever o body[data-orient]. */
+    @page {
+      size: A4 portrait;
+      margin: 18mm 14mm 18mm 14mm;
+      @top-left {
+        content: "{{ report_title }}";
+        font-size: 9pt;
+        color: var(--muted);
+      }
+      @top-right {
+        content: "Gerado em {{ generated_at }}";
+        font-size: 9pt;
+        color: var(--muted);
+      }
+      @bottom-center {
+        content: "Página " counter(page) " de " counter(pages);
+        font-size: 9pt;
+        color: var(--muted);
+      }
+    }
+    @page :first {
+      @top-left { content: ""; }
+      @top-right { content: ""; }
+    }
+
+    body[data-orient="landscape"] {
+      /* WeasyPrint não aceita @page redeclaração condicional simples; usar
+         este atributo só pra estilo de tabelas largas. A orientação real
+         é setada por subclasses via tag <style> extra. */
+    }
+
+    body {
+      font-family: 'Liberation Sans', 'Helvetica', sans-serif;
+      font-size: 10pt;
+      color: var(--foreground);
+      margin: 0;
+      padding: 0;
+    }
+
+    /* === Header da primeira página === */
+    .report-header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 16px;
+      padding-bottom: 12px;
+      border-bottom: 3px solid var(--primary);
+      margin-bottom: 16px;
+    }
+    .report-header .brand img {
+      max-height: 36px;
+      width: auto;
+    }
+    .report-header .brand .fallback {
+      font-size: 14pt;
+      font-weight: bold;
+      color: var(--primary);
+      letter-spacing: 0.5px;
+    }
+    .report-header .meta {
+      text-align: right;
+      color: var(--muted);
+      font-size: 9pt;
+      line-height: 1.4;
+    }
+    .report-header h1 {
+      font-size: 18pt;
+      color: var(--foreground);
+      margin: 0 0 4px 0;
+    }
+    .report-header h1 .accent {
+      color: var(--primary);
+    }
+    .report-header .subtitle {
+      color: var(--muted);
+      font-size: 10pt;
+    }
+
+    /* === Bloco de filtros aplicados === */
+    .applied-filters {
+      background: var(--bg-accent);
+      border-left: 3px solid var(--primary);
+      padding: 8px 12px;
+      margin-bottom: 18px;
+      font-size: 9pt;
+    }
+    .applied-filters .title {
+      font-weight: bold;
+      color: var(--primary);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      font-size: 8pt;
+      margin-bottom: 4px;
+    }
+    .applied-filters .filter {
+      display: inline-block;
+      margin-right: 16px;
+      color: var(--foreground);
+    }
+    .applied-filters .filter strong {
+      color: var(--muted);
+      font-weight: 500;
+    }
+
+    /* === Seções === */
+    .section {
+      margin-bottom: 22px;
+      page-break-inside: avoid;
+    }
+    .section > h2 {
+      font-size: 13pt;
+      color: var(--primary);
+      margin: 0 0 8px 0;
+      padding-bottom: 4px;
+      border-bottom: 1px solid var(--border);
+    }
+    .section > p.section-desc {
+      color: var(--muted);
+      font-size: 9pt;
+      margin: -4px 0 8px 0;
+    }
+
+    /* === Tabelas === */
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 9pt;
+    }
+    table th {
+      background: var(--primary);
+      color: white;
+      text-align: left;
+      padding: 6px 8px;
+      font-weight: 600;
+      font-size: 9pt;
+    }
+    table td {
+      padding: 5px 8px;
+      border-bottom: 1px solid var(--border);
+      vertical-align: top;
+    }
+    table tr:nth-child(even) td {
+      background: var(--bg-accent);
+    }
+    table.tight th,
+    table.tight td {
+      padding: 3px 6px;
+      font-size: 8pt;
+    }
+
+    /* === KPI cards === */
+    .kpi-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 10px;
+      margin-bottom: 16px;
+    }
+    .kpi-card {
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 10px 12px;
+      background: var(--bg-card);
+    }
+    .kpi-card .kpi-label {
+      color: var(--muted);
+      font-size: 8pt;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 4px;
+    }
+    .kpi-card .kpi-value {
+      color: var(--foreground);
+      font-size: 20pt;
+      font-weight: bold;
+      line-height: 1;
+    }
+    .kpi-card .kpi-sub {
+      color: var(--muted);
+      font-size: 8pt;
+      margin-top: 4px;
+    }
+
+    /* === Badges (status, prioridade) === */
+    .badge {
+      display: inline-block;
+      padding: 1px 8px;
+      border-radius: 99px;
+      font-size: 8pt;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+    .badge-priority-baixa    { background: #acd89b; color: #000; }
+    .badge-priority-media    { background: #ffeeb0; color: #000; }
+    .badge-priority-alta     { background: #fea1a0; color: #000; }
+    .badge-priority-absoluta { background: #888888; color: #fff; }
+    .badge-status-a_desenvolver       { background: #e5e7eb; color: #374151; }
+    .badge-status-em_desenvolvimento  { background: #dbeafe; color: #1e40af; }
+    .badge-status-parado_pendencias   { background: #fed7aa; color: #9a3412; }
+    .badge-status-em_homologacao      { background: #e9d5ff; color: #6b21a8; }
+    .badge-status-finalizado          { background: #bbf7d0; color: #14532d; }
+    .badge-status-inviabilizado       { background: #fecaca; color: #991b1b; }
+
+    .muted { color: var(--muted); }
+    .empty {
+      color: var(--muted);
+      font-style: italic;
+      padding: 16px;
+      text-align: center;
+      border: 1px dashed var(--border);
+      border-radius: 6px;
+    }
+  </style>
+  {% block extra_styles %}{% endblock %}
+</head>
+<body data-orient="{{ orientation|default:'portrait' }}">
+
+  <header class="report-header">
+    <div class="brand">
+      {% if logo_path %}
+        <img src="{{ logo_path }}" alt="BWA Tech">
+      {% else %}
+        <div class="fallback">BWA Tech</div>
+      {% endif %}
+      <h1><span class="accent">{{ report_title }}</span></h1>
+      {% if report_subtitle %}
+        <p class="subtitle">{{ report_subtitle }}</p>
+      {% endif %}
+    </div>
+    <div class="meta">
+      <div><strong>Gerado em:</strong> {{ generated_at }}</div>
+      <div><strong>Por:</strong> {{ user_name }}</div>
+    </div>
+  </header>
+
+  {% if filters_display %}
+    <div class="applied-filters">
+      <div class="title">Filtros aplicados</div>
+      {% for f in filters_display %}
+        <span class="filter"><strong>{{ f.label }}:</strong> {{ f.value }}</span>
+      {% endfor %}
+    </div>
+  {% endif %}
+
+  {% block content %}{% endblock %}
+
+</body>
+</html>
