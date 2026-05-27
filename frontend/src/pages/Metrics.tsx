@@ -1157,14 +1157,92 @@ export default function Metrics() {
       return endTime >= periodStart && startTime <= periodEnd;
     };
 
+    /**
+     * "Projeto mais longo" = projeto identificado pelo NOME normalizado.
+     * Projetos são replicados entre sprints (finalizar_sprint_replicacao),
+     * então um mesmo projeto vira N rows distintos no banco. Para medir
+     * "duração de vida" temos que AGREGAR por nome.
+     *
+     * - `firstSeen` = MIN(created_at) entre todas as instâncias
+     * - `lastSeen` = MAX(updated_at) entre todas as instâncias
+     * - `isActive` = alguma instância está em sprint NÃO finalizada
+     * - duração:
+     *   - se ATIVO: hoje - firstSeen (continua rodando)
+     *   - se inativo: lastSeen - firstSeen (já encerrou)
+     *
+     * O período selecionado pelo usuário (ano/intervalo) filtra os projetos
+     * por OVERLAP: incluímos qualquer projeto cujo intervalo [firstSeen,
+     * lastSeenOrToday] cruza com o período. Assim filtros de "ano X" ainda
+     * mostram projetos que começaram antes mas ainda estão vivos no ano X.
+     */
     let longest:
       | {
-          project: Project;
+          name: string;
           durationDays: number;
           start: string;
           end: string;
+          sprintCount: number;
+          isActive: boolean;
         }
       | null = null;
+
+    const today = Date.now();
+    const finalizedSprintIds = new Set(
+      sprints.filter((s) => !!s.finalizada).map((s) => String(s.id)),
+    );
+    type ProjectGroup = {
+      name: string;
+      firstSeen: number;
+      lastSeen: number;
+      sprintIds: Set<string>;
+      isActive: boolean;
+    };
+    const projectGroups = new Map<string, ProjectGroup>();
+    for (const project of projects) {
+      if (project.is_system || isSpecialProjectName(project.nome)) continue;
+      const created = toTime(project.created_at);
+      const updated = toTime(project.updated_at) ?? created;
+      if (created == null) continue;
+      const key = normalizeProjectName(project.nome) || String(project.id);
+      const sprintId = project.sprint != null ? String(project.sprint) : '';
+      const inActiveSprint = !!sprintId && !finalizedSprintIds.has(sprintId);
+      const cur = projectGroups.get(key);
+      if (!cur) {
+        projectGroups.set(key, {
+          name: project.nome,
+          firstSeen: created,
+          lastSeen: updated ?? created,
+          sprintIds: sprintId ? new Set([sprintId]) : new Set(),
+          isActive: inActiveSprint,
+        });
+      } else {
+        cur.firstSeen = Math.min(cur.firstSeen, created);
+        cur.lastSeen = Math.max(cur.lastSeen, updated ?? created);
+        if (sprintId) cur.sprintIds.add(sprintId);
+        if (inActiveSprint) cur.isActive = true;
+      }
+    }
+
+    for (const group of projectGroups.values()) {
+      const end = group.isActive ? today : group.lastSeen;
+      // Overlap com o período filtrado: aceitamos qualquer projeto cujo
+      // intervalo de existência cruza com [periodStart, periodEnd].
+      if (end < periodStart || group.firstSeen > periodEnd) continue;
+      const durationDays = Math.max(
+        1,
+        Math.round((end - group.firstSeen) / msPerDay),
+      );
+      if (!longest || durationDays > longest.durationDays) {
+        longest = {
+          name: group.name,
+          durationDays,
+          start: new Date(group.firstSeen).toISOString().slice(0, 10),
+          end: new Date(end).toISOString().slice(0, 10),
+          sprintCount: group.sprintIds.size,
+          isActive: group.isActive,
+        };
+      }
+    }
 
     const cardCounts = new Map<
       string,
@@ -1204,33 +1282,6 @@ export default function Metrics() {
     for (const project of projects) {
       // Excluir projetos sistêmicos das métricas (regra de negócio).
       if (project.is_system || isSpecialProjectName(project.nome)) continue;
-
-      const startTime =
-        toTime(project.data_inicio_desenvolvimento) ??
-        toTime(project.data_criacao) ??
-        toTime(project.created_at);
-      const endTime =
-        toTime(project.data_entrega) ??
-        toTime(project.data_homologacao) ??
-        toTime(project.nova_data_prevista) ??
-        toTime(project.updated_at);
-
-      if (!projectOverlapsPeriod(startTime, endTime)) continue;
-
-      if (startTime && endTime && endTime >= startTime) {
-        const durationDays = Math.max(
-          1,
-          Math.round((endTime - startTime) / msPerDay)
-        );
-        if (!longest || durationDays > longest.durationDays) {
-          longest = {
-            project,
-            durationDays,
-            start: new Date(startTime).toISOString().slice(0, 10),
-            end: new Date(endTime).toISOString().slice(0, 10),
-          };
-        }
-      }
 
       const stats = cardCounts.get(project.id);
       if (stats) {
@@ -2666,13 +2717,33 @@ export default function Metrics() {
                 </CardHeader>
                 <CardContent className="pt-0">
                   {projectStats.longest ? (
-                    <div className="text-sm space-y-0.5">
-                      <p className="font-semibold text-[var(--color-foreground)]">
-                        {projectStats.longest.project.nome}
+                    <div className="text-sm space-y-1">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <p className="font-semibold text-[var(--color-foreground)]">
+                          {projectStats.longest.name}
+                        </p>
+                        {projectStats.longest.isActive ? (
+                          <Badge className="border-green-600/40 bg-green-500/15 text-green-800 dark:text-green-400 text-[10px]">
+                            Ativo
+                          </Badge>
+                        ) : (
+                          <Badge variant="outline" className="text-[10px]">
+                            Encerrado
+                          </Badge>
+                        )}
+                      </div>
+                      <p className="text-2xl font-bold text-[var(--color-foreground)] leading-none">
+                        {projectStats.longest.durationDays}
+                        <span className="text-sm font-normal text-[var(--color-muted-foreground)]">
+                          {' '}dias
+                        </span>
                       </p>
-                      <p className="text-[var(--color-muted-foreground)]">
-                        {projectStats.longest.durationDays} dias ({projectStats.longest.start} →{' '}
-                        {projectStats.longest.end})
+                      <p className="text-xs text-[var(--color-muted-foreground)]">
+                        {projectStats.longest.start} → {projectStats.longest.end}
+                      </p>
+                      <p className="text-xs text-[var(--color-muted-foreground)]">
+                        Em {projectStats.longest.sprintCount} sprint
+                        {projectStats.longest.sprintCount === 1 ? '' : 's'}
                       </p>
                     </div>
                   ) : (
