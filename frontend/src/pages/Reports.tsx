@@ -3,13 +3,10 @@ import {
   BarChart3, Zap, FolderKanban, Layers, User, AlertTriangle, TrendingUp, ListChecks,
   FileText,
 } from 'lucide-react';
-import { isAxiosError } from 'axios';
 import ReportCard from '@/components/reports/ReportCard';
 import ReportConfigDialog, {
   type ReportDef,
-  type SubmitInput,
 } from '@/components/reports/ReportConfigDialog';
-import ReportProgressDialog from '@/components/reports/ReportProgressDialog';
 import ReportPreviewDialog from '@/components/reports/ReportPreviewDialog';
 import { reportService, type ReportJob } from '@/services/reportService';
 
@@ -84,7 +81,9 @@ const ICONS = {
 
 export default function Reports() {
   const [configReport, setConfigReport] = useState<ReportDef | null>(null);
-  const [activeJobId, setActiveJobId] = useState<number | null>(null);
+  // Job ativo (em andamento) — se o usuário recarregar a página, retomamos.
+  const [resumeJobId, setResumeJobId] = useState<number | null>(null);
+  // Job concluído com sucesso — abre preview (PDF) ou baixa direto.
   const [completedJob, setCompletedJob] = useState<ReportJob | null>(null);
 
   // Retoma job ativo ao montar (caso usuário tenha recarregado).
@@ -95,55 +94,48 @@ export default function Reports() {
         const running = await reportService.list('running');
         if (cancelled) return;
         if (running.length > 0) {
-          setActiveJobId(running[0].id);
+          setResumeJobId(running[0].id);
+          // Encontra o report def equivalente para reabrir o dialog.
+          const def = REPORT_DEFS.find((r) => r.id === running[0].type);
+          if (def) setConfigReport(def);
           return;
         }
         const pending = await reportService.list('pending');
         if (cancelled) return;
-        if (pending.length > 0) setActiveJobId(pending[0].id);
+        if (pending.length > 0) {
+          setResumeJobId(pending[0].id);
+          const def = REPORT_DEFS.find((r) => r.id === pending[0].type);
+          if (def) setConfigReport(def);
+        }
       } catch {
-        // Sem rede ou sem permissão — segue sem retomar.
+        // sem permissão / sem rede — segue sem retomar.
       }
     })();
     return () => { cancelled = true; };
   }, []);
 
-  const handleSubmit = useCallback(async (input: SubmitInput) => {
-    try {
-      const job = await reportService.create(input);
-      setConfigReport(null);
-      setActiveJobId(job.id);
-    } catch (err: unknown) {
-      // 409 = já existe job ativo. Adotamos o job existente.
-      if (isAxiosError(err) && err.response?.status === 409 && err.response.data?.existing_id) {
-        setConfigReport(null);
-        setActiveJobId(err.response.data.existing_id as number);
-        return;
-      }
-      throw err;
-    }
-  }, []);
-
-  const handleJobCompleted = useCallback(async (job: ReportJob) => {
-    setActiveJobId(null);
+  const handleJobCompleted = useCallback((job: ReportJob) => {
+    setResumeJobId(null);
     if (job.status !== 'completed') {
-      // O ProgressDialog já mostrou a falha; só limpamos o estado.
+      // Falha: o erro fica visível no próprio ConfigDialog. Não fechamos
+      // o dialog — usuário pode tentar de novo ajustando filtros.
       return;
     }
+    // Sucesso: fecha config e mostra preview ou baixa.
+    setConfigReport(null);
     if (job.format === 'pdf') {
-      // PDF: abre modal de preview com iframe + botão baixar.
       setCompletedJob(job);
     } else {
-      // DOCX/XLSX/CSV: baixa direto sem preview.
       window.open(reportService.downloadUrl(job.id), '_blank');
     }
   }, []);
 
-  const handleCancelOrClose = useCallback(() => {
-    setActiveJobId(null);
+  const handleConfigClose = useCallback(() => {
+    setConfigReport(null);
+    setResumeJobId(null);
   }, []);
 
-  const isLocked = activeJobId != null;
+  const isLocked = configReport != null && resumeJobId != null;
 
   return (
     <div className="space-y-[24px]">
@@ -172,18 +164,12 @@ export default function Reports() {
         ))}
       </div>
 
-      {/* Dialogs */}
       <ReportConfigDialog
         open={configReport != null}
         report={configReport}
-        onSubmit={handleSubmit}
-        onClose={() => setConfigReport(null)}
-      />
-      <ReportProgressDialog
-        open={activeJobId != null}
-        jobId={activeJobId}
+        initialJobId={resumeJobId}
         onCompleted={handleJobCompleted}
-        onCancel={handleCancelOrClose}
+        onClose={handleConfigClose}
       />
       <ReportPreviewDialog
         open={completedJob != null}

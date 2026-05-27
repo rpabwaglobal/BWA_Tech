@@ -1,12 +1,13 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { isAxiosError } from 'axios';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
 import { FilterSelect } from '@/components/ui/filter-select';
-import { Loader2 } from 'lucide-react';
+import { Loader2, AlertTriangle } from 'lucide-react';
 import { readIncludeHeader, writeIncludeHeader } from '@/lib/reportSettings';
-import type { ReportFormat, ReportType } from '@/services/reportService';
+import { reportService, type ReportFormat, type ReportJob, type ReportType } from '@/services/reportService';
 import { sprintService, type Sprint } from '@/services/sprintService';
 import { projectService, type Project } from '@/services/projectService';
 import { userService, type User } from '@/services/userService';
@@ -33,34 +34,43 @@ export type ReportDef = {
   requiredFilters?: ReportFilterKey[];
 };
 
-export type SubmitInput = {
-  type: ReportType;
-  format: ReportFormat;
-  filters: Record<string, unknown>;
-  include_header: boolean;
-};
-
 export type ReportConfigDialogProps = {
   open: boolean;
   report: ReportDef | null;
-  /** Submeter a config — caller dispara o reportService.create. */
-  onSubmit: (input: SubmitInput) => Promise<void>;
+  /** Job ativo a ser RETOMADO (caso o usuário tenha recarregado a página). */
+  initialJobId?: number | null;
+  /** Job concluído (status='completed' ou 'failed') — caller decide o que fazer
+   * (abrir preview, baixar, mostrar erro). */
+  onCompleted: (job: ReportJob) => void;
+  /** Modal fechado pelo usuário sem completar a geração — caller só remove o estado. */
   onClose: () => void;
 };
 
 const FORMATS: { value: ReportFormat; label: string; descr: string }[] = [
   { value: 'pdf', label: 'PDF estilizado', descr: 'Layout colorido, igual ao site' },
   { value: 'docx', label: 'DOCX (Word)', descr: 'Estilizado e editável' },
-  { value: 'xlsx', label: 'XLSX (Excel)', descr: 'Tabela com colunas filtrávies' },
+  { value: 'xlsx', label: 'XLSX (Excel)', descr: 'Tabela com colunas filtráveis' },
   { value: 'csv', label: 'CSV', descr: 'Texto separado por ; (Excel pt-BR)' },
 ];
 
-export default function ReportConfigDialog({ open, report, onSubmit, onClose }: ReportConfigDialogProps) {
+const POLL_INTERVAL_MS = 1500;
+
+export default function ReportConfigDialog({
+  open,
+  report,
+  initialJobId,
+  onCompleted,
+  onClose,
+}: ReportConfigDialogProps) {
   const [format, setFormat] = useState<ReportFormat>('pdf');
   const [filters, setFilters] = useState<Record<string, string | string[]>>({});
   const [includeHeader, setIncludeHeader] = useState<boolean>(true);
-  const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Estado do job em andamento (criado por este dialog OU adotado via initialJobId).
+  const [activeJob, setActiveJob] = useState<ReportJob | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const pollTimerRef = useRef<number | null>(null);
 
   // Dados pra dropdowns
   const [sprints, setSprints] = useState<Sprint[]>([]);
@@ -78,9 +88,7 @@ export default function ReportConfigDialog({ open, report, onSubmit, onClose }: 
       }
       if (report?.filters.some((f) => ['project', 'projects_multi'].includes(f))) {
         tasks.push(projectService.getAll().then((p) => {
-          if (!cancelled) {
-            setProjects(p.filter((pr) => !pr.is_system && !pr.arquivado));
-          }
+          if (!cancelled) setProjects(p.filter((pr) => !pr.is_system && !pr.arquivado));
         }));
       }
       if (report?.filters.some((f) => ['responsavel', 'user'].includes(f))) {
@@ -91,13 +99,23 @@ export default function ReportConfigDialog({ open, report, onSubmit, onClose }: 
     return () => { cancelled = true; };
   }, [open, report]);
 
-  // Reset ao abrir
+  // Reset state ao abrir o dialog. Se houver initialJobId, adota como activeJob.
   useEffect(() => {
     if (!open) return;
     setFormat('pdf');
     setFilters({});
     setError(null);
-  }, [open, report?.id]);
+    setSubmitting(false);
+    if (initialJobId) {
+      // Buscar status atual do job adotado.
+      void reportService
+        .getById(initialJobId)
+        .then((job) => setActiveJob(job))
+        .catch(() => setActiveJob(null));
+    } else {
+      setActiveJob(null);
+    }
+  }, [open, report?.id, initialJobId]);
 
   // Lê preferência de include_header sempre que muda o formato
   useEffect(() => {
@@ -107,6 +125,43 @@ export default function ReportConfigDialog({ open, report, onSubmit, onClose }: 
       setIncludeHeader(true);
     }
   }, [format]);
+
+  // Polling enquanto há activeJob não-terminal.
+  useEffect(() => {
+    if (!activeJob || activeJob.status === 'completed' || activeJob.status === 'failed') {
+      return;
+    }
+    let cancelled = false;
+    const tick = async () => {
+      try {
+        const fresh = await reportService.getById(activeJob.id);
+        if (cancelled) return;
+        setActiveJob(fresh);
+        if (fresh.status === 'completed' || fresh.status === 'failed') {
+          onCompleted(fresh);
+          return;
+        }
+      } catch {
+        // Erro transitório — continua tentando.
+      }
+      if (!cancelled) {
+        pollTimerRef.current = window.setTimeout(tick, POLL_INTERVAL_MS);
+      }
+    };
+    pollTimerRef.current = window.setTimeout(tick, POLL_INTERVAL_MS);
+    return () => {
+      cancelled = true;
+      if (pollTimerRef.current) window.clearTimeout(pollTimerRef.current);
+    };
+  }, [activeJob, onCompleted]);
+
+  // Cleanup do timer ao fechar.
+  useEffect(() => {
+    if (!open && pollTimerRef.current) {
+      window.clearTimeout(pollTimerRef.current);
+      pollTimerRef.current = null;
+    }
+  }, [open]);
 
   if (!report) return null;
 
@@ -134,13 +189,28 @@ export default function ReportConfigDialog({ open, report, onSubmit, onClose }: 
       if (format === 'xlsx' || format === 'csv') {
         writeIncludeHeader(format, includeHeader);
       }
-      await onSubmit({
+      const job = await reportService.create({
         type: report.id,
         format,
         filters: serializeFilters(filters),
         include_header: includeHeader,
       });
+      setActiveJob(job);
+      // Se já vier completo (raríssimo, mas possível), notifica imediato.
+      if (job.status === 'completed' || job.status === 'failed') {
+        onCompleted(job);
+      }
     } catch (e: unknown) {
+      // 409 = já existe job ativo (de outra aba/sessão). Adotamos.
+      if (isAxiosError(e) && e.response?.status === 409 && e.response.data?.existing_id) {
+        try {
+          const adopted = await reportService.getById(e.response.data.existing_id as number);
+          setActiveJob(adopted);
+          return;
+        } catch {
+          // Falha ao adotar: cai pra erro genérico.
+        }
+      }
       const msg = e instanceof Error ? e.message : 'Falha ao iniciar a geração.';
       setError(msg);
     } finally {
@@ -148,9 +218,33 @@ export default function ReportConfigDialog({ open, report, onSubmit, onClose }: 
     }
   };
 
+  /** Cancela o job em andamento mas mantém o dialog aberto pro usuário ajustar filtros. */
+  const handleCancelJob = async () => {
+    if (!activeJob) return;
+    try {
+      await reportService.cancel(activeJob.id);
+    } finally {
+      if (pollTimerRef.current) window.clearTimeout(pollTimerRef.current);
+      setActiveJob(null);
+    }
+  };
+
+  /** Fecha o modal. Se houver job em andamento, cancela antes. */
+  const handleCloseDialog = () => {
+    if (activeJob && activeJob.status !== 'completed' && activeJob.status !== 'failed') {
+      void reportService.cancel(activeJob.id).catch(() => undefined);
+    }
+    if (pollTimerRef.current) window.clearTimeout(pollTimerRef.current);
+    setActiveJob(null);
+    onClose();
+  };
+
+  const isGenerating = !!activeJob && activeJob.status !== 'completed' && activeJob.status !== 'failed';
+  const formControlsDisabled = isGenerating || submitting;
+
   return (
-    <Dialog open={open} onOpenChange={(o) => { if (!o) onClose(); }} containerClassName="max-w-xl">
-      <DialogContent onClose={onClose} className="max-h-[90vh] overflow-y-auto">
+    <Dialog open={open} onOpenChange={(o) => { if (!o) handleCloseDialog(); }} containerClassName="max-w-xl">
+      <DialogContent onClose={handleCloseDialog} className="max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>{report.title}</DialogTitle>
           <DialogDescription>{report.description}</DialogDescription>
@@ -161,14 +255,16 @@ export default function ReportConfigDialog({ open, report, onSubmit, onClose }: 
           {report.filters.map((f) => (
             <div key={f} className="space-y-1">
               <Label>{filterLabel(f)}{report.requiredFilters?.includes(f) ? ' *' : ''}</Label>
-              {renderFilter(f, filters, setFilter, { sprints, projects, users })}
+              <div className={formControlsDisabled ? 'opacity-60 pointer-events-none' : ''}>
+                {renderFilter(f, filters, setFilter, { sprints, projects, users })}
+              </div>
             </div>
           ))}
 
           {/* Formato */}
           <div className="space-y-1">
             <Label>Formato</Label>
-            <div className="grid grid-cols-2 gap-2">
+            <div className={`grid grid-cols-2 gap-2 ${formControlsDisabled ? 'opacity-60 pointer-events-none' : ''}`}>
               {FORMATS.map((opt) => (
                 <button
                   key={opt.value}
@@ -189,7 +285,7 @@ export default function ReportConfigDialog({ open, report, onSubmit, onClose }: 
 
           {/* Cabeçalho das colunas (só XLSX/CSV) */}
           {(format === 'xlsx' || format === 'csv') && (
-            <label className="flex items-start gap-2 cursor-pointer">
+            <label className={`flex items-start gap-2 cursor-pointer ${formControlsDisabled ? 'opacity-60 pointer-events-none' : ''}`}>
               <input
                 type="checkbox"
                 checked={includeHeader}
@@ -213,17 +309,58 @@ export default function ReportConfigDialog({ open, report, onSubmit, onClose }: 
               {error}
             </div>
           )}
+
+          {activeJob?.status === 'failed' && (
+            <div className="rounded-md border border-red-300 bg-red-50 dark:bg-red-950/40 dark:border-red-900 p-2 text-sm text-red-700 dark:text-red-300 flex items-start gap-2">
+              <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
+              <div>
+                <div className="font-medium">Falha ao gerar relatório</div>
+                <div className="text-xs">{activeJob.error?.split('\n')[0] || 'Tente novamente.'}</div>
+              </div>
+            </div>
+          )}
         </div>
 
-        <DialogFooter>
-          <Button type="button" variant="outline" onClick={onClose} disabled={submitting}>
-            Cancelar
-          </Button>
-          <Button type="button" onClick={handleSubmit} disabled={submitting}>
-            {submitting ? (
-              <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Gerando...</>
-            ) : 'Gerar'}
-          </Button>
+        <DialogFooter className="mt-4">
+          <div className="flex w-full items-center gap-3">
+            {/* Barra de progresso ocupa o espaço da esquerda quando há geração ativa. */}
+            <div className="flex-1 min-w-0">
+              {isGenerating && activeJob && (
+                <div className="space-y-1">
+                  <div className="h-2 w-full rounded-full bg-[var(--color-muted)] overflow-hidden">
+                    <div
+                      className="h-full bg-[var(--color-primary)] transition-all"
+                      style={{ width: `${activeJob.progress}%` }}
+                    />
+                  </div>
+                  <div className="flex items-center justify-between text-[11px] text-[var(--color-muted-foreground)] truncate">
+                    <span className="truncate">{activeJob.progress_message || 'Gerando...'}</span>
+                    <span className="font-medium shrink-0 ml-2">{activeJob.progress}%</span>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <Button
+              type="button"
+              variant="outline"
+              onClick={isGenerating ? handleCancelJob : handleCloseDialog}
+              disabled={submitting}
+              className="shrink-0"
+            >
+              Cancelar
+            </Button>
+            <Button
+              type="button"
+              onClick={handleSubmit}
+              disabled={submitting || isGenerating}
+              className="shrink-0"
+            >
+              {submitting || isGenerating ? (
+                <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Gerando...</>
+              ) : 'Gerar'}
+            </Button>
+          </div>
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -288,8 +425,6 @@ function renderFilter(
         />
       );
     case 'projects_multi':
-      // Versão simples por enquanto: vírgula-separada de IDs. Pode virar
-      // multi-select dedicado futuramente.
       return (
         <FilterSelect
           placeholder="Selecione um projeto (ou deixe vazio para TODOS)"
@@ -374,16 +509,14 @@ function renderFilter(
   }
 }
 
-/** Reorganiza filters do shape "frontend" pra forma que o backend espera. */
 function serializeFilters(raw: Record<string, string | string[]>): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(raw)) {
     if (v == null || v === '' || (Array.isArray(v) && v.length === 0)) continue;
-    // project_ids: backend espera array
     if (k === 'project_ids') {
       out[k] = Array.isArray(v) ? v : [v];
     } else if (k === 'period_range') {
-      // ignorado — period_start/period_end são salvos direto no filters Record
+      // ignored — period_start/period_end gravados separados
     } else {
       out[k] = v;
     }
