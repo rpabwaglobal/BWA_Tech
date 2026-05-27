@@ -2436,22 +2436,32 @@ export default function Metrics() {
                   <p className="text-xs text-[var(--color-muted-foreground)]">Sem dados.</p>
                 ) : (
                   <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
-                    {cycleTimeData.perArea.map((a) => (
-                      <div
-                        key={a.area}
-                        className="rounded-md border border-[var(--color-border)] p-3"
-                      >
-                        <p className="text-xs uppercase tracking-wide text-[var(--color-muted-foreground)] truncate">
-                          {a.label}
-                        </p>
-                        <p className="mt-1 text-lg font-bold text-[var(--color-foreground)]">
-                          {a.avgDays}d
-                        </p>
-                        <p className="text-[10px] text-[var(--color-muted-foreground)]">
-                          {a.count} card{a.count === 1 ? '' : 's'}
-                        </p>
-                      </div>
-                    ))}
+                    {cycleTimeData.perArea.map((a) => {
+                      // Capitaliza só a primeira letra (mantém o resto como vem).
+                      const label = a.label
+                        ? a.label.charAt(0).toUpperCase() + a.label.slice(1).toLowerCase()
+                        : a.area;
+                      const dayWord = a.avgDays === 1 ? 'Dia' : 'Dias';
+                      return (
+                        <div
+                          key={a.area}
+                          className="rounded-md border border-[var(--color-border)] p-3"
+                        >
+                          <p className="text-xs font-medium tracking-wide text-[var(--color-muted-foreground)] truncate">
+                            {label}
+                          </p>
+                          <p className="mt-1 text-lg font-bold text-[var(--color-foreground)]">
+                            {a.avgDays}{' '}
+                            <span className="text-xs font-normal text-[var(--color-muted-foreground)]">
+                              {dayWord}
+                            </span>
+                          </p>
+                          <p className="text-[10px] text-[var(--color-muted-foreground)]">
+                            {a.count} card{a.count === 1 ? '' : 's'}
+                          </p>
+                        </div>
+                      );
+                    })}
                   </div>
                 )}
               </div>
