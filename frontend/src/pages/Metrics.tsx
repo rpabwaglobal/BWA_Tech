@@ -9,7 +9,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { DateTimePicker } from '@/components/ui/datetime-picker';
-import { UserSelect } from '@/components/ui/user-select';
+import { UserSelect, getRoleColor } from '@/components/ui/user-select';
 import {
   Dialog,
   DialogContent,
@@ -2490,6 +2490,13 @@ export default function Metrics() {
                           >
                             <td className="px-3 py-2">
                               <div className="flex items-center gap-2">
+                                {u.role ? (
+                                  <Badge className={`${getRoleColor(u.role)} w-[64px] shrink-0 justify-center text-[10px]`}>
+                                    {getRoleLabel(u.role)}
+                                  </Badge>
+                                ) : (
+                                  <span className="w-[64px] shrink-0" aria-hidden />
+                                )}
                                 <Avatar className="h-6 w-6">
                                   {u.profile_picture_url && <AvatarImage src={u.profile_picture_url} alt="" />}
                                   <AvatarFallback className="text-[10px]">
@@ -2497,11 +2504,6 @@ export default function Metrics() {
                                   </AvatarFallback>
                                 </Avatar>
                                 <span>{u.name}</span>
-                                {u.role && (
-                                  <Badge variant="outline" className="text-[10px]">
-                                    {getRoleLabel(u.role)}
-                                  </Badge>
-                                )}
                               </div>
                             </td>
                             <td className="px-3 py-2 text-right text-[var(--color-muted-foreground)]">
