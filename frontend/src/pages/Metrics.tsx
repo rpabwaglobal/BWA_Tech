@@ -2490,6 +2490,12 @@ export default function Metrics() {
                           >
                             <td className="px-3 py-2">
                               <div className="flex items-center gap-2">
+                                <Avatar className="h-6 w-6">
+                                  {u.profile_picture_url && <AvatarImage src={u.profile_picture_url} alt="" />}
+                                  <AvatarFallback className="text-[10px]">
+                                    {u.name.slice(0, 2).toUpperCase()}
+                                  </AvatarFallback>
+                                </Avatar>
                                 {u.role ? (
                                   <Badge className={`${getRoleColor(u.role)} w-[64px] shrink-0 justify-center text-[10px]`}>
                                     {getRoleLabel(u.role)}
@@ -2497,12 +2503,6 @@ export default function Metrics() {
                                 ) : (
                                   <span className="w-[64px] shrink-0" aria-hidden />
                                 )}
-                                <Avatar className="h-6 w-6">
-                                  {u.profile_picture_url && <AvatarImage src={u.profile_picture_url} alt="" />}
-                                  <AvatarFallback className="text-[10px]">
-                                    {u.name.slice(0, 2).toUpperCase()}
-                                  </AvatarFallback>
-                                </Avatar>
                                 <span>{u.name}</span>
                               </div>
                             </td>
