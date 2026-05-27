@@ -36,7 +36,7 @@ User = get_user_model()
 
 class Report(BaseReport):
     type_id = 'user'
-    title = 'Relatório por Usuário'
+    title = 'Por Usuário'
     template_name = 'reports/user.html'
     orientation = 'portrait'
 
@@ -50,7 +50,6 @@ class Report(BaseReport):
         period_start = _parse_date(self.filters.get('period_start'))
         period_end = _parse_date(self.filters.get('period_end'))
 
-        self.set_progress(30, 'Buscando cards...')
         qs = (
             Card.objects.select_related('projeto', 'projeto__sprint')
             .filter(
@@ -66,7 +65,10 @@ class Report(BaseReport):
             qs = qs.filter(finalizado_em__gte=period_start)
         if period_end:
             qs = qs.filter(finalizado_em__lte=period_end)
-        delivered = list(qs)
+        delivered = self.paginate_with_progress(
+            qs, label='Carregando entregas do usuário',
+            progress_start=15, progress_end=70, chunk_size=100,
+        )
 
         # On-time: finalizado_em <= data_fim (cards com ambas as datas).
         with_due = [c for c in delivered if c.data_fim]

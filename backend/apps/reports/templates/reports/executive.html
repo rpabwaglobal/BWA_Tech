@@ -29,17 +29,21 @@
         <div class="kpi-value" style="font-size: 14pt;">{% if active_sprint %}{{ active_sprint.nome }}{% else %}—{% endif %}</div>
         {% if active_sprint %}<div class="kpi-sub">{{ active_sprint.duracao_dias }} dias</div>{% endif %}
       </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Chamados respondidos</div>
+        <div class="kpi-value">{{ support_resolved }}</div>
+        <div class="kpi-sub">suporte resolvido</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Alterações de data de entrega</div>
+        <div class="kpi-value" style="color: #92400e;">{{ date_changes_approved }}</div>
+        <div class="kpi-sub">solicitações aprovadas</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Projetos propostos</div>
+        <div class="kpi-value" style="color: var(--primary);">{{ projects_proposed }}</div>
+        <div class="kpi-sub">sugestões abertas</div>
+      </div>
     </div>
   </div>
-
-  {% if top_user %}
-    <div class="section">
-      <h2>Destaque do período</h2>
-      <p style="font-size: 12pt;">
-        <strong>{{ top_user.name }}</strong> liderou com
-        <strong style="color: var(--primary);">{{ top_user.count }}</strong>
-        entrega{{ top_user.count|pluralize:"s" }}.
-      </p>
-    </div>
-  {% endif %}
 {% endblock %}

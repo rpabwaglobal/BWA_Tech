@@ -58,14 +58,22 @@ class Report(BaseReport):
         if period_end:
             late_delivered_qs = late_delivered_qs.filter(finalizado_em__lte=period_end)
 
-        late_delivered = [
-            c for c in late_delivered_qs if c.finalizado_em > c.data_fim
-        ]
+        # Materializa em chunks com progresso, depois filtra in-memory pra ter
+        # certeza que o filtro Python (finalizado_em > data_fim) funcione.
+        all_delivered = self.paginate_with_progress(
+            late_delivered_qs, label='Analisando entregas',
+            progress_start=15, progress_end=45, chunk_size=100,
+        )
+        late_delivered = [c for c in all_delivered if c.finalizado_em > c.data_fim]
 
         # Em aberto com prazo passado (cards não-terminais com data_fim < hoje)
-        open_late = list(
+        open_late_qs = (
             base.exclude(status__in=['finalizado', 'inviabilizado'])
                 .filter(data_fim__lt=now)
+        )
+        open_late = self.paginate_with_progress(
+            open_late_qs, label='Analisando cards em aberto',
+            progress_start=45, progress_end=65, chunk_size=100,
         )
 
         self.set_progress(60, 'Calculando cycle time por área...')

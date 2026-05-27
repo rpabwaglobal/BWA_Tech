@@ -20,7 +20,7 @@ from .base import BaseReport, FilterDisplay, TableColumn
 
 class Report(BaseReport):
     type_id = 'projects'
-    title = 'Relatório de Projetos'
+    title = 'Projetos'
     template_name = 'reports/projects.html'
     orientation = 'landscape'
 
@@ -32,13 +32,16 @@ class Report(BaseReport):
             qs = qs.filter(id__in=project_ids)
         projects = list(qs)
 
-        self.set_progress(40, f'Carregando cards de {len(projects)} projeto(s)...')
-        cards = list(
+        cards_qs = (
             Card.objects.select_related('responsavel', 'projeto')
             .filter(projeto_id__in=[p.id for p in projects])
             .order_by('projeto_id', '-finalizado_em', 'data_fim')
         )
-        self.set_progress(70, f'{len(cards)} cards carregados')
+        cards = self.paginate_with_progress(
+            cards_qs,
+            label=f'Carregando cards de {len(projects)} projeto(s)',
+            progress_start=15, progress_end=70, chunk_size=100,
+        )
 
         by_project: dict[int, list[Card]] = defaultdict(list)
         for c in cards:

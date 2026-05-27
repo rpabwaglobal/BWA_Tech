@@ -32,7 +32,9 @@ class Report(BaseReport):
         project_id = self.filters.get('project_id')
         if project_id:
             qs = qs.filter(projeto_id=project_id)
-        cards = list(qs)
+        cards = self.paginate_with_progress(
+            qs, label='Carregando cards do backlog', progress_start=15, progress_end=70, chunk_size=100,
+        )
 
         by_project: dict[int, list[Card]] = defaultdict(list)
         for c in cards:

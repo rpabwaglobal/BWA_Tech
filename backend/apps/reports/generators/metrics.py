@@ -8,8 +8,11 @@ Cobre as principais visões da página `/metricas`:
 - Volume por área
 - Cycle time médio (geral, por área, por usuário)
 
-Filtros:
+Filtros (mutuamente exclusivos — frontend obriga escolher um dos dois modos):
 - period_start / period_end (opcional): filtra cards entregues nesse período
+- sprint_ids (opcional, lista de ints): restringe cards + lista de sprints
+  do throughput às sprints selecionadas. NÃO afeta "Operação geral"
+  (chamados/alterações/sugestões não têm FK pra Sprint).
 """
 from __future__ import annotations
 
@@ -19,7 +22,14 @@ from typing import Any
 from django.db.models import F
 from django.utils import timezone
 
-from apps.projects.models import Card, Sprint
+from apps.projects.models import (
+    Card,
+    CardDateChangeRequestStatus,
+    CardDueDateChangeRequest,
+    Sprint,
+)
+from apps.formularios.models import ChamadoSuporte, ChamadoSuporteStatus
+from apps.suggestions.models import ProjectSuggestion
 
 from .base import BaseReport, FilterDisplay, TableColumn
 
@@ -48,11 +58,29 @@ class Report(BaseReport):
         self.set_progress(10, 'Carregando cards...')
         period_start = _parse_date(self.filters.get('period_start'))
         period_end = _parse_date(self.filters.get('period_end'))
+        # `sprint_ids` aceita lista (preferencial) ou valor único (defesa
+        # contra um cliente antigo enviando string). Strings vazias e itens
+        # não-inteiros são descartados.
+        raw_ids = self.filters.get('sprint_ids')
+        if isinstance(raw_ids, (list, tuple)):
+            id_candidates = raw_ids
+        elif raw_ids in (None, ''):
+            id_candidates = []
+        else:
+            id_candidates = [raw_ids]
+        sprint_ids: list[int] = []
+        for v in id_candidates:
+            try:
+                sprint_ids.append(int(v))
+            except (TypeError, ValueError):
+                continue
 
         cards_qs = (
             Card.objects.select_related('projeto', 'responsavel', 'projeto__sprint')
             .filter(projeto__arquivado=False, projeto__is_system=False)
         )
+        if sprint_ids:
+            cards_qs = cards_qs.filter(projeto__sprint_id__in=sprint_ids)
 
         closed_qs = cards_qs.filter(status=CLOSED_STATUS, finalizado_em__isnull=False)
         if period_start:
@@ -62,7 +90,12 @@ class Report(BaseReport):
 
         self.set_progress(30, 'Calculando KPIs...')
         closed_cards = list(closed_qs)
-        sprints = list(Sprint.objects.all().order_by('-data_inicio'))
+        # Quando há sprints selecionadas, throughput mostra só elas;
+        # senão, todas (ordem mais recente primeiro).
+        sprints_qs = Sprint.objects.all().order_by('-data_inicio')
+        if sprint_ids:
+            sprints_qs = sprints_qs.filter(id__in=sprint_ids)
+        sprints = list(sprints_qs)
 
         # KPIs principais
         users_with_deliveries = len({c.responsavel_id for c in closed_cards if c.responsavel_id})
@@ -187,6 +220,35 @@ class Report(BaseReport):
             key=lambda r: r['avg_days'],
         )
 
+        # Operação geral (mesma janela do report) — mantém regra dos
+        # relatórios Executivo/Métricas em sincronia.
+        self.set_progress(90, 'Apurando operação geral...')
+        support_qs = ChamadoSuporte.objects.filter(status=ChamadoSuporteStatus.RESOLVIDO)
+        if period_start:
+            support_qs = support_qs.filter(data_atualizacao__gte=period_start)
+        if period_end:
+            support_qs = support_qs.filter(data_atualizacao__lte=period_end)
+
+        date_changes_qs = CardDueDateChangeRequest.objects.filter(
+            status=CardDateChangeRequestStatus.APPROVED,
+        )
+        if period_start:
+            date_changes_qs = date_changes_qs.filter(reviewed_at__gte=period_start)
+        if period_end:
+            date_changes_qs = date_changes_qs.filter(reviewed_at__lte=period_end)
+
+        suggestions_qs = ProjectSuggestion.objects.all()
+        if period_start:
+            suggestions_qs = suggestions_qs.filter(created_at__gte=period_start)
+        if period_end:
+            suggestions_qs = suggestions_qs.filter(created_at__lte=period_end)
+
+        operations = {
+            'support_resolved': support_qs.count(),
+            'date_changes_approved': date_changes_qs.count(),
+            'projects_proposed': suggestions_qs.count(),
+        }
+
         self.set_progress(95, 'Finalizando...')
         return {
             'kpis': kpis,
@@ -199,14 +261,35 @@ class Report(BaseReport):
                 'by_user': cycle_by_user,
                 'by_area': cycle_by_area,
             },
+            'operations': operations,
         }
 
     def filters_display(self, data: Any) -> list[FilterDisplay]:
+        out: list[FilterDisplay] = []
         ps = self.filters.get('period_start')
         pe = self.filters.get('period_end')
-        if not ps and not pe:
-            return [FilterDisplay('Período', 'Todo o histórico')]
-        return [FilterDisplay('Período', f'{ps or "?"} → {pe or "?"}')]
+        if ps or pe:
+            out.append(FilterDisplay('Período', f'{ps or "?"} → {pe or "?"}'))
+        else:
+            out.append(FilterDisplay('Período', 'Todo o histórico'))
+        raw_ids = self.filters.get('sprint_ids')
+        ids: list[int] = []
+        if isinstance(raw_ids, (list, tuple)):
+            for v in raw_ids:
+                try:
+                    ids.append(int(v))
+                except (TypeError, ValueError):
+                    continue
+        elif raw_ids not in (None, ''):
+            try:
+                ids.append(int(raw_ids))
+            except (TypeError, ValueError):
+                pass
+        if ids:
+            names = list(Sprint.objects.filter(id__in=ids).values_list('nome', flat=True))
+            label = ', '.join(names) if names else ', '.join(f'#{i}' for i in ids)
+            out.append(FilterDisplay('Sprint(s)', label))
+        return out
 
     def build_context(self, data: dict[str, Any]) -> dict[str, Any]:
         return data

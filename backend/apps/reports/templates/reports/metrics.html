@@ -25,6 +25,27 @@
   </div>
 
   <div class="section">
+    <h2>Operação geral</h2>
+    <div class="kpi-grid" style="grid-template-columns: repeat(3, 1fr);">
+      <div class="kpi-card">
+        <div class="kpi-label">Chamados respondidos</div>
+        <div class="kpi-value">{{ operations.support_resolved }}</div>
+        <div class="kpi-sub">suporte resolvido</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Alterações de data de entrega</div>
+        <div class="kpi-value" style="color: #92400e;">{{ operations.date_changes_approved }}</div>
+        <div class="kpi-sub">solicitações aprovadas</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Projetos propostos</div>
+        <div class="kpi-value" style="color: var(--primary);">{{ operations.projects_proposed }}</div>
+        <div class="kpi-sub">sugestões abertas</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="section">
     <h2>Leaderboard — Quem mais entregou</h2>
     {% if ranking %}
       <table class="tight">

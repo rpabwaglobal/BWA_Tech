@@ -35,13 +35,13 @@ def _parse_date(value: str | None) -> datetime | None:
 
 class Report(BaseReport):
     type_id = 'cards'
-    title = 'Relatório de Cards'
+    title = 'Cards'
     subtitle = None
     template_name = 'reports/cards.html'
     orientation = 'landscape'
 
     def fetch_data(self) -> list[Card]:
-        self.set_progress(10, 'Filtrando cards...')
+        self.set_progress(5, 'Filtrando cards...')
         qs = (
             Card.objects.select_related('projeto', 'projeto__sprint', 'responsavel')
             .filter(projeto__arquivado=False, projeto__is_system=False)
@@ -77,10 +77,11 @@ class Report(BaseReport):
         if period_end:
             qs = qs.filter(created_at__lte=period_end)
 
-        self.set_progress(30, 'Carregando cards...')
-        cards = list(qs[:5000])  # cap em 5000 pra evitar OOM
-        self.set_progress(60, f'{len(cards)} card(s) encontrados')
-        return cards
+        # Paginação com progresso: barra evolui de 10→65% conforme as páginas
+        # vão sendo carregadas. Mensagem "Exportando cards 245/1340".
+        return self.paginate_with_progress(
+            qs, label='Carregando cards', progress_start=10, progress_end=65, chunk_size=100,
+        )
 
     def filters_display(self, data: Any) -> list[FilterDisplay]:
         out: list[FilterDisplay] = []

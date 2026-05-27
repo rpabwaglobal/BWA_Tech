@@ -20,7 +20,7 @@ from .base import BaseReport, FilterDisplay, TableColumn
 
 class Report(BaseReport):
     type_id = 'sprint'
-    title = 'Relatório de Sprint'
+    title = 'Sprint Detalhada'
     template_name = 'reports/sprint.html'
     orientation = 'landscape'
 
@@ -32,20 +32,21 @@ class Report(BaseReport):
         self.set_progress(5, 'Carregando sprint...')
         sprint = Sprint.objects.get(pk=sprint_id)
 
-        self.set_progress(15, 'Carregando projetos...')
+        self.set_progress(10, 'Carregando projetos...')
         projects = list(
             Project.objects.filter(sprint=sprint, arquivado=False, is_system=False)
             .order_by('nome')
         )
 
-        self.set_progress(40, 'Carregando cards...')
         project_ids = [p.id for p in projects]
-        cards = list(
+        cards_qs = (
             Card.objects.select_related('responsavel', 'projeto')
             .filter(projeto_id__in=project_ids)
             .order_by('projeto_id', '-finalizado_em', 'data_fim')
         )
-        self.set_progress(70, f'{len(cards)} cards carregados')
+        cards = self.paginate_with_progress(
+            cards_qs, label='Carregando cards', progress_start=15, progress_end=70, chunk_size=100,
+        )
 
         by_project: dict[int, list[Card]] = defaultdict(list)
         for c in cards:

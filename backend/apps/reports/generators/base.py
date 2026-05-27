@@ -95,10 +95,63 @@ class BaseReport:
             self.job.progress_message = message[:200]
         self.job.save(update_fields=['progress', 'progress_message', 'updated_at'])
 
+    def paginate_with_progress(
+        self,
+        queryset,
+        *,
+        label: str,
+        progress_start: int = 10,
+        progress_end: int = 65,
+        chunk_size: int = 100,
+    ) -> list:
+        """Materializa um queryset em chunks reportando progresso a cada página.
+
+        - `queryset`: já com filtros, select_related, order_by aplicados.
+        - `label`: prefixo da mensagem (ex.: "Exportando cards").
+        - `progress_start`/`progress_end`: faixa de progresso (0–100) coberta
+          por esta operação. O caller usa o resto da faixa para tarefas
+          subsequentes (render PDF, etc.).
+        - `chunk_size`: tamanho de cada página interna.
+
+        Reporta no DB a cada chunk: "Exportando cards 245 / 1340". O frontend
+        faz polling a cada 1.5s e vê a barra evoluir.
+
+        Retorna a lista completa (consume todos os chunks).
+        """
+        # COUNT é uma única query — necessária pra calcular % real.
+        total = queryset.count()
+        if total == 0:
+            self.set_progress(progress_end, f'{label} 0 / 0')
+            return []
+
+        rows: list = []
+        # Loop manual: queryset[start:end] gera SQL com LIMIT/OFFSET. Cada
+        # chunk vira UMA query. Pra QS pequenos isso é overhead irrelevante;
+        # pra QS grandes (centenas+) o ganho de UX (barra evoluindo) vale.
+        progress_span = max(1, progress_end - progress_start)
+        for offset in range(0, total, chunk_size):
+            chunk = list(queryset[offset:offset + chunk_size])
+            rows.extend(chunk)
+            loaded = min(offset + chunk_size, total)
+            pct = progress_start + int(progress_span * loaded / total)
+            self.set_progress(pct, f'{label} {loaded} / {total}')
+        return rows
+
     def filename(self, fmt: str) -> str:
-        ts = timezone.localtime().strftime('%Y%m%d-%H%M%S')
-        safe = self.type_id.replace('/', '-') or 'report'
-        return f'{safe}-{ts}.{fmt}'
+        """Formato padrão: 'BWATech - <Título> - DD-MM-YYYY HH-MM.<fmt>'
+
+        Caracteres inválidos pro filesystem (Windows: \\/:*?\"<>|) são
+        substituídos por hífen — title fica legível sem quebrar download.
+        """
+        import re
+        ts = timezone.localtime().strftime('%d-%m-%Y %H-%M')
+        raw_title = self.title or self.type_id or 'Relatorio'
+        # Substitui caracteres proibidos em nomes de arquivo (Windows é mais
+        # restritivo que Linux/macOS — atende todos).
+        safe_title = re.sub(r'[\\/:*?"<>|]', '-', raw_title).strip()
+        # Colapsa espaços/hífens duplicados pra ficar legível.
+        safe_title = re.sub(r'\s+', ' ', safe_title)
+        return f'BWATech - {safe_title} - {ts}.{fmt}'
 
     def _logo_path(self) -> str | None:
         """Caminho absoluto do logo para o WeasyPrint embedar.
@@ -153,11 +206,26 @@ class BaseReport:
         raise ValueError(f'Formato não suportado: {fmt}')
 
     def _render_pdf(self) -> bytes:
-        """HTML → PDF via WeasyPrint."""
-        # Importação tardia: WeasyPrint exige libs do sistema (Pango, Cairo).
-        # Se não estiverem disponíveis em dev local, o erro só sobe quando
-        # alguém pedir PDF.
-        from weasyprint import HTML
+        """HTML → PDF via WeasyPrint.
+
+        WeasyPrint depende de libs nativas do sistema (Pango, Cairo, GDK-Pixbuf,
+        GObject). No Linux Docker (produção) elas vêm via apt-get. No Windows
+        é preciso instalar GTK runtime — sem isso o import falha com erro FFI
+        genérico que confunde o usuário. Catch específico aqui devolve uma
+        mensagem prática.
+        """
+        try:
+            from weasyprint import HTML
+        except OSError as exc:
+            msg = str(exc)
+            if 'libgobject' in msg or 'libpango' in msg or 'libcairo' in msg:
+                raise RuntimeError(
+                    'Geração de PDF indisponível neste ambiente: faltam as libs '
+                    'nativas do WeasyPrint (Pango/Cairo/GObject). '
+                    'Em Windows isso é normal — use DOCX, XLSX ou CSV para testes '
+                    'locais. Em produção Linux as libs estão instaladas no Dockerfile.'
+                ) from exc
+            raise
 
         data = self.fetch_data()
         self.set_progress(80, 'Renderizando PDF...')

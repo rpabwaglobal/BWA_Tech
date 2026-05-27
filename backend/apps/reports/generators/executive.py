@@ -10,7 +10,15 @@ from typing import Any
 
 from django.utils import timezone
 
-from apps.projects.models import Card, Project, Sprint
+from apps.projects.models import (
+    Card,
+    CardDateChangeRequestStatus,
+    CardDueDateChangeRequest,
+    Project,
+    Sprint,
+)
+from apps.formularios.models import ChamadoSuporte, ChamadoSuporteStatus
+from apps.suggestions.models import ProjectSuggestion
 
 from .base import BaseReport, FilterDisplay, TableColumn
 
@@ -28,7 +36,7 @@ def _parse_date(v: str | None) -> datetime | None:
 
 class Report(BaseReport):
     type_id = 'executive'
-    title = 'Relatório Executivo'
+    title = 'Executivo (KPIs)'
     subtitle = 'Visão consolidada em uma página'
     template_name = 'reports/executive.html'
     orientation = 'portrait'
@@ -83,6 +91,37 @@ class Report(BaseReport):
         # Projetos ativos
         active_projects = Project.objects.filter(arquivado=False, is_system=False).count()
 
+        # Operação geral (filtrada pelo mesmo período do report).
+        # `support_resolved`: chamados marcados como 'Resolvido' (atualização
+        # final dentro da janela — `data_atualizacao` reflete a transição).
+        # `date_changes_approved`: solicitações que efetivamente mudaram a
+        # data de entrega (status 'approved', usa `reviewed_at`).
+        # `projects_proposed`: TODAS as sugestões abertas no período, sem
+        # filtrar por status (a "proposição" é o evento que conta).
+        self.set_progress(80, 'Apurando operação geral...')
+        support_qs = ChamadoSuporte.objects.filter(status=ChamadoSuporteStatus.RESOLVIDO)
+        if period_start:
+            support_qs = support_qs.filter(data_atualizacao__gte=period_start)
+        if period_end:
+            support_qs = support_qs.filter(data_atualizacao__lte=period_end)
+        support_resolved = support_qs.count()
+
+        date_changes_qs = CardDueDateChangeRequest.objects.filter(
+            status=CardDateChangeRequestStatus.APPROVED,
+        )
+        if period_start:
+            date_changes_qs = date_changes_qs.filter(reviewed_at__gte=period_start)
+        if period_end:
+            date_changes_qs = date_changes_qs.filter(reviewed_at__lte=period_end)
+        date_changes_approved = date_changes_qs.count()
+
+        suggestions_qs = ProjectSuggestion.objects.all()
+        if period_start:
+            suggestions_qs = suggestions_qs.filter(created_at__gte=period_start)
+        if period_end:
+            suggestions_qs = suggestions_qs.filter(created_at__lte=period_end)
+        projects_proposed = suggestions_qs.count()
+
         self.set_progress(95, 'Finalizando...')
         return {
             'total_delivered': len(delivered_list),
@@ -94,6 +133,9 @@ class Report(BaseReport):
             'active_projects': active_projects,
             'open_late': open_late,
             'top_user': top_user,
+            'support_resolved': support_resolved,
+            'date_changes_approved': date_changes_approved,
+            'projects_proposed': projects_proposed,
         }
 
     def filters_display(self, data: Any) -> list[FilterDisplay]:
