@@ -1791,7 +1791,7 @@ function SupportColumn({
       </div>
       <div
         ref={scrollRef}
-        className="min-h-0 flex-1 space-y-[8px] overflow-y-auto overscroll-contain p-[8px] [scrollbar-gutter:stable]"
+        className="flex min-h-0 flex-1 flex-col gap-[8px] overflow-y-auto overscroll-contain p-[8px]"
       >
         <SortableContext items={chamados.map((c) => dragId(c.id))} strategy={verticalListSortingStrategy}>
           {chamados.map((c) => (
