@@ -375,26 +375,26 @@ function ItemBlock({
   dragHandleRef?: (el: HTMLElement | null) => void;
   dragListeners?: Record<string, (e: React.SyntheticEvent) => void>;
 }) {
-  const inputRef = useRef<HTMLInputElement | null>(null);
+  // Único textarea (até pra kind=todo, pra ter quebra de linha automática).
+  // <input> só renderiza 1 linha e fica fazendo overflow horizontal — feio
+  // pra item de lista longo.
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 
   useEffect(() => {
-    if (!autoFocus) return;
-    if (item.kind === 'todo') inputRef.current?.focus();
-    else textareaRef.current?.focus();
-  }, [autoFocus, item.kind]);
+    if (autoFocus) textareaRef.current?.focus();
+  }, [autoFocus]);
 
   // Reajusta a altura sempre que o texto mudar OU o componente montar com
   // valor inicial (caso da nota carregada do servidor com texto longo).
   useEffect(() => {
-    if (item.kind === 'text') autoResize(textareaRef.current);
-  }, [item.kind, item.text]);
+    autoResize(textareaRef.current);
+  }, [item.text]);
 
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       // Enter (sem shift): cria novo item logo abaixo, foca nele.
-      // Em Textarea (kind=text), Shift+Enter cai aqui SEM ser interceptado,
-      // mantendo o newline nativo do textarea.
+      // Shift+Enter cai aqui SEM ser interceptado, mantendo o newline nativo
+      // do textarea (em todo ou em text).
       e.preventDefault();
       onEnter();
       return;
@@ -414,22 +414,43 @@ function ItemBlock({
     }
   };
 
+  // Posição absoluta do conector em L (pseudo-tree). Largura = step do indent.
+  const STEP = 18;
   return (
     <div
-      className="group relative flex items-start gap-1"
-      style={{ paddingLeft: `${indent * 18}px` }}
+      className="group relative flex items-center gap-1"
+      style={{ paddingLeft: `${indent * STEP}px` }}
     >
+      {/* Conector em L ligando este filho ao pai imediato (acima e à esquerda).
+          Vertical sobe do meio do filho até o topo; horizontal vai do canto
+          inferior-esquerdo do pai até o início do filho. Pintada por
+          border-left + border-bottom com border-bottom-left-radius. */}
+      {indent > 0 && (
+        <span
+          aria-hidden
+          className="pointer-events-none absolute border-[var(--color-muted-foreground)]/30"
+          style={{
+            left: `${(indent - 1) * STEP + 8}px`,
+            top: '-2px',
+            bottom: '50%',
+            width: `${STEP - 6}px`,
+            borderLeftWidth: '1px',
+            borderBottomWidth: '1px',
+            borderBottomLeftRadius: '6px',
+          }}
+        />
+      )}
       <DragHandle
         ref={(el) => dragHandleRef?.(el)}
         {...(dragListeners as Record<string, (e: React.SyntheticEvent) => void>)}
-        className="mt-1.5"
+        className="self-center"
       />
       {item.kind === 'todo' ? (
         <input
           type="checkbox"
           checked={item.done}
           onChange={(e) => onChange({ ...item, done: e.target.checked })}
-          className="mt-1.5 h-4 w-4 shrink-0 cursor-pointer rounded border-border accent-primary"
+          className="mt-1.5 h-4 w-4 shrink-0 self-start cursor-pointer rounded border-border accent-primary"
         />
       ) : (
         // Bolinha "marcador" pra alinhar visualmente com checkbox; clica pra converter pra todo
@@ -437,36 +458,25 @@ function ItemBlock({
           type="button"
           onClick={() => onConvert('todo')}
           title="Converter em item de lista"
-          className="mt-1.5 h-4 w-4 shrink-0 rounded-sm border border-dashed border-[var(--color-muted-foreground)]/40 opacity-0 transition-opacity group-hover:opacity-100"
+          className="mt-1.5 h-4 w-4 shrink-0 self-start rounded-sm border border-dashed border-[var(--color-muted-foreground)]/40 opacity-0 transition-opacity group-hover:opacity-100"
         />
       )}
-      {item.kind === 'todo' ? (
-        <Input
-          ref={inputRef}
-          value={item.text}
-          onChange={(e) => onChange({ ...item, text: e.target.value })}
-          onKeyDown={handleKeyDown}
-          placeholder="Item da lista"
-          maxLength={NOTE_ITEM_TEXT_MAX}
-          className={cn(
-            'h-auto min-h-[28px] border-0 bg-transparent px-1 py-0.5 text-sm shadow-none focus-visible:ring-0 focus-visible:ring-offset-0',
-            item.done && 'line-through text-muted-foreground',
-          )}
-        />
-      ) : (
-        <Textarea
-          ref={textareaRef}
-          value={item.text}
-          onChange={(e) => onChange({ ...item, text: e.target.value })}
-          onInput={(e) => autoResize(e.currentTarget)}
-          onKeyDown={handleKeyDown}
-          placeholder="Texto..."
-          maxLength={NOTE_ITEM_TEXT_MAX}
-          rows={1}
-          className="min-h-[28px] resize-none overflow-hidden border-0 bg-transparent px-1 py-0.5 text-sm shadow-none focus-visible:ring-0 focus-visible:ring-offset-0"
-        />
-      )}
-      <div className="flex shrink-0 items-center opacity-0 transition-opacity group-hover:opacity-100">
+      <Textarea
+        ref={textareaRef}
+        value={item.text}
+        onChange={(e) => onChange({ ...item, text: e.target.value })}
+        onInput={(e) => autoResize(e.currentTarget)}
+        onKeyDown={handleKeyDown}
+        placeholder={item.kind === 'todo' ? 'Item da lista' : 'Texto...'}
+        maxLength={NOTE_ITEM_TEXT_MAX}
+        rows={1}
+        // wrap=soft + break-words = quebra de linha visual sem inserir \n.
+        className={cn(
+          'min-h-[28px] resize-none overflow-hidden border-0 bg-transparent px-1 py-0.5 text-sm leading-snug whitespace-pre-wrap break-words shadow-none focus-visible:ring-0 focus-visible:ring-offset-0',
+          item.kind === 'todo' && item.done && 'line-through text-muted-foreground',
+        )}
+      />
+      <div className="flex shrink-0 self-start items-center pt-1 opacity-0 transition-opacity group-hover:opacity-100">
         {item.kind === 'todo' && (
           <button
             type="button"
@@ -555,8 +565,10 @@ function InsertGap({
 }
 
 
-/** Wrapper sortable de um NoteCard. Inclui motion.div com `layoutId` único
- *  pra animar a transição pinned ↔ outras via framer-motion (shared element). */
+/** Wrapper sortable de um NoteCard. Sem drag handle visível: o card inteiro
+ *  é arrastável (sensor com `distance: 6` no DndContext pai diferencia entre
+ *  clique pra editar e arrastar). motion.div com `layoutId` único pra animar
+ *  a transição pinned ↔ outras via framer-motion (shared element). */
 function SortableNoteCardWrapper({
   noteId,
   layoutId,
@@ -564,14 +576,10 @@ function SortableNoteCardWrapper({
 }: {
   noteId: number;
   layoutId: string;
-  children: (handle: {
-    dragHandleRef: (el: HTMLElement | null) => void;
-    dragListeners: Record<string, (e: React.SyntheticEvent) => void> | undefined;
-  }) => React.ReactNode;
+  children: () => React.ReactNode;
 }) {
   const {
     setNodeRef,
-    setActivatorNodeRef,
     transform,
     transition,
     isDragging,
@@ -582,6 +590,8 @@ function SortableNoteCardWrapper({
     transform: CSS.Transform.toString(transform),
     transition,
     opacity: isDragging ? 0.4 : 1,
+    // Cursor "grab" no card inteiro pra deixar claro que arrasta.
+    cursor: isDragging ? 'grabbing' : 'grab',
   };
   return (
     <motion.div
@@ -591,11 +601,9 @@ function SortableNoteCardWrapper({
       ref={setNodeRef}
       style={style}
       {...attributes}
+      {...(listeners as Record<string, (e: React.SyntheticEvent) => void>)}
     >
-      {children({
-        dragHandleRef: setActivatorNodeRef,
-        dragListeners: listeners as Record<string, (e: React.SyntheticEvent) => void>,
-      })}
+      {children()}
     </motion.div>
   );
 }
@@ -630,8 +638,6 @@ function NoteCard({
   onToggleItem,
   selectionMode = false,
   selected = false,
-  dragHandleRef,
-  dragListeners,
 }: {
   note: UserNote;
   onClick: () => void;
@@ -647,18 +653,39 @@ function NoteCard({
    * escondidas/desabilitadas. */
   selectionMode?: boolean;
   selected?: boolean;
-  /** Injetados pelo wrapper sortable. */
-  dragHandleRef?: (el: HTMLElement | null) => void;
-  dragListeners?: Record<string, (e: React.SyntheticEvent) => void>;
 }) {
   const sortedItems = useMemo(
     () => (note.items || []).slice().sort((a, b) => a.order - b.order),
     [note.items],
   );
+  // Mapa id → item pra resolver depth de cada filho via cadeia de `parent`.
+  const itemsById = useMemo(() => {
+    const m = new Map<number, UserNoteItem>();
+    for (const it of sortedItems) if (it.id != null) m.set(it.id, it);
+    return m;
+  }, [sortedItems]);
+  const depthOf = useCallback(
+    (it: UserNoteItem): number => {
+      let d = 0;
+      let cur = it.parent ?? null;
+      const seen = new Set<number>();
+      while (cur != null && d < MAX_INDENT_DEPTH) {
+        if (seen.has(cur)) break;
+        seen.add(cur);
+        const p = itemsById.get(cur);
+        if (!p) break;
+        d++;
+        cur = p.parent ?? null;
+      }
+      return d;
+    },
+    [itemsById],
+  );
   const MAX_VISIBLE = 12;
   const visibleItems = sortedItems.slice(0, MAX_VISIBLE);
   const hiddenCount = sortedItems.length - visibleItems.length;
   const isDark = useIsDark();
+  const INDENT_STEP = 14;
 
   return (
     <div
@@ -669,16 +696,6 @@ function NoteCard({
       )}
     >
       <div className="relative cursor-pointer" onClick={onClick}>
-        {/* Drag handle no canto superior esquerdo do card (só fora de seleção) */}
-        {!selectionMode && dragHandleRef && (
-          <DragHandle
-            ref={dragHandleRef}
-            {...(dragListeners as Record<string, (e: React.SyntheticEvent) => void>)}
-            size="md"
-            className="absolute left-1.5 top-1.5"
-            onClick={(e) => e.stopPropagation()}
-          />
-        )}
         {!selectionMode && (
           <button
             type="button"
@@ -699,12 +716,31 @@ function NoteCard({
           {visibleItems.length > 0 && (
             <ul className="space-y-1.5">
               {visibleItems.map((it, idx) => {
+                const depth = depthOf(it);
+                // Conector em L pros filhos (mesmo visual do editor).
+                const connector = depth > 0 ? (
+                  <span
+                    aria-hidden
+                    className="pointer-events-none absolute border-[var(--color-muted-foreground)]/30"
+                    style={{
+                      left: `${(depth - 1) * INDENT_STEP + 6}px`,
+                      top: '-2px',
+                      bottom: '50%',
+                      width: `${INDENT_STEP - 4}px`,
+                      borderLeftWidth: '1px',
+                      borderBottomWidth: '1px',
+                      borderBottomLeftRadius: '5px',
+                    }}
+                  />
+                ) : null;
                 if (it.kind === 'todo') {
                   return (
                     <li
                       key={it.id ?? `idx-${idx}`}
-                      className="flex items-start gap-2 text-sm"
+                      className="relative flex items-start gap-2 text-sm"
+                      style={{ paddingLeft: `${depth * INDENT_STEP}px` }}
                     >
+                      {connector}
                       <input
                         type="checkbox"
                         checked={it.done}
@@ -730,8 +766,10 @@ function NoteCard({
                 return (
                   <li
                     key={it.id ?? `idx-${idx}`}
-                    className="whitespace-pre-wrap break-words text-sm text-muted-foreground"
+                    className="relative whitespace-pre-wrap break-words text-sm text-muted-foreground"
+                    style={{ paddingLeft: `${depth * INDENT_STEP}px` }}
                   >
+                    {connector}
                     {it.text}
                   </li>
                 );
@@ -1570,13 +1608,11 @@ export default function MyTasks() {
                               noteId={note.id}
                               layoutId={`note-${note.id}`}
                             >
-                              {({ dragHandleRef, dragListeners }) => (
+                              {() => (
                                 <NoteCard
                                   note={note}
                                   selectionMode={selectionMode}
                                   selected={selectedNoteIds.includes(note.id)}
-                                  dragHandleRef={dragHandleRef}
-                                  dragListeners={dragListeners}
                                   onClick={() =>
                                     selectionMode
                                       ? toggleNoteSelected(note.id)
