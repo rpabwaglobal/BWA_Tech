@@ -32,7 +32,7 @@ import {
   sortableKeyboardCoordinates,
   useSortable,
   verticalListSortingStrategy,
-  rectSortingStrategy,
+  type SortingStrategy,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { LayoutGroup, motion, useMotionValue, useSpring } from 'framer-motion';
@@ -609,6 +609,32 @@ function SortableNoteCardWrapper({
 
 /** Breakpoints (px do viewport → nº de colunas) usados pelo Masonry. */
 const NOTES_MASONRY_BREAKPOINTS = { default: 1, 640: 2, 1024: 3, 1280: 4 };
+
+/** Strategy custom pro SortableContext: igual ao rectSortingStrategy do dnd-kit
+ *  mas FORÇA scaleX/Y = 1 (não escala o card pra caber no slot alvo). Sem isso,
+ *  ao arrastar um card de tamanho diferente sobre outro, o "outro" estica/encolhe
+ *  pra virar o tamanho do que está sendo arrastado — visualmente péssimo em
+ *  layouts com cards de alturas heterogêneas (masonry estilo Keep).
+ *  O reorder na lógica continua igual; só o feedback visual durante o drag muda. */
+const noScaleRectSortingStrategy: SortingStrategy = ({
+  rects,
+  activeIndex,
+  overIndex,
+  index,
+}) => {
+  const newRects = [...rects];
+  const [moved] = newRects.splice(activeIndex, 1);
+  newRects.splice(overIndex, 0, moved);
+  const oldRect = rects[index];
+  const newRect = newRects[index];
+  if (!newRect || !oldRect) return null;
+  return {
+    x: newRect.left - oldRect.left,
+    y: newRect.top - oldRect.top,
+    scaleX: 1,
+    scaleY: 1,
+  };
+};
 
 function useColumnCount(breakpoints: { default: number; [width: number]: number }): number {
   const sortedKeys = useMemo(
@@ -1948,7 +1974,7 @@ export default function MyTasks() {
                     >
                       <SortableContext
                         items={pinned.map((n) => n.id)}
-                        strategy={rectSortingStrategy}
+                        strategy={noScaleRectSortingStrategy}
                       >
                         <Masonry breakpoints={NOTES_MASONRY_BREAKPOINTS}>
                           {pinned.map((note) => (
@@ -2017,7 +2043,7 @@ export default function MyTasks() {
                   >
                     <SortableContext
                       items={others.map((n) => n.id)}
-                      strategy={rectSortingStrategy}
+                      strategy={noScaleRectSortingStrategy}
                     >
                       <Masonry breakpoints={NOTES_MASONRY_BREAKPOINTS}>
                         {others.map((note) => (
