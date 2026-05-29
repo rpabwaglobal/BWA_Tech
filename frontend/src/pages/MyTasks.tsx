@@ -578,20 +578,20 @@ function SortableNoteCardWrapper({
     attributes,
     listeners,
   } = useSortable({ id: noteId });
+  // Receita padrão dnd-kit + DragOverlay: aplicar transform/transition do
+  // useSortable em TODOS os items (dnd-kit retorna null pro source ativo
+  // automaticamente; pros outros, retorna o translate que abre espaço).
+  // Source ativo: visibility:hidden — espaço preservado, sem ghost.
   const style: React.CSSProperties = {
-    // Source NÃO usa o transform do dnd-kit (DragOverlay cuida disso). Isso
-    // evita o card "esticar" / brigar com o reflow do CSS columns. Os outros
-    // cards SIM aplicam o transform pra abrir espaço (efeito empurrar).
-    transform: isDragging ? undefined : CSS.Transform.toString(transform),
+    transform: CSS.Transform.toString(transform),
     transition,
-    // Source fica invisível mantendo o espaço — outros cards reflowem ao
-    // redor; ao soltar, o card volta a aparecer na nova posição.
-    opacity: isDragging ? 0 : 1,
+    visibility: isDragging ? 'hidden' : 'visible',
     cursor: isDragging ? 'grabbing' : 'grab',
   };
   return (
     <motion.div
-      // Layout/layoutId off durante drag (briga com transforms do dnd-kit).
+      // layoutId só fora de drag — pin/unpin via framer-motion não interfere
+      // com o drag. Durante drag, sem framer.
       layoutId={isDragging ? undefined : layoutId}
       layout={!isDragging}
       transition={{ type: 'spring', stiffness: 380, damping: 32 }}
@@ -1629,11 +1629,19 @@ export default function MyTasks() {
     async (section: 'pinned' | 'others', activeId: number, overId: number) => {
       if (activeId === overId) return;
       const snapshot = notes;
-      // Aplica reorder local: pega só as notes da section, faz arrayMove,
-      // recombina mantendo ordem das outras inalterada.
-      const sectionNotes = snapshot.filter((n) =>
-        section === 'pinned' ? n.pinned && !n.archived : !n.pinned && !n.archived,
-      );
+      // IMPORTANTE: filtrar E sortear pelo MESMO critério visual (pinned/others
+      // useMemo usa sortBySectionOrder). Sem sortear aqui, findIndex retorna
+      // posições do array bruto que não casam com a ordem visual — drag dá
+      // arrayMove errado.
+      const sortFn = (a: UserNote, b: UserNote) => {
+        if (a.order !== b.order) return a.order - b.order;
+        return b.updated_at.localeCompare(a.updated_at);
+      };
+      const sectionNotes = snapshot
+        .filter((n) =>
+          section === 'pinned' ? n.pinned && !n.archived : !n.pinned && !n.archived,
+        )
+        .sort(sortFn);
       const oldIdx = sectionNotes.findIndex((n) => n.id === activeId);
       const newIdx = sectionNotes.findIndex((n) => n.id === overId);
       if (oldIdx === -1 || newIdx === -1) return;
@@ -1691,8 +1699,22 @@ export default function MyTasks() {
       });
   }, [notes, filter, search]);
 
-  const pinned = useMemo(() => filteredNotes.filter((n) => n.pinned), [filteredNotes]);
-  const others = useMemo(() => filteredNotes.filter((n) => !n.pinned), [filteredNotes]);
+  /** Ordena por `order` ASC (definido pelo drag); tie-break: updated_at DESC
+   * (mais recente primeiro — alinha com o ordering default do backend
+   * `['-pinned', 'order', '-updated_at']`). Sem esse sort, reorder via drag
+   * só atualizava o campo `order` mas a UI ficava na mesma ordem do array. */
+  const sortBySectionOrder = (a: UserNote, b: UserNote) => {
+    if (a.order !== b.order) return a.order - b.order;
+    return b.updated_at.localeCompare(a.updated_at);
+  };
+  const pinned = useMemo(
+    () => filteredNotes.filter((n) => n.pinned).sort(sortBySectionOrder),
+    [filteredNotes],
+  );
+  const others = useMemo(
+    () => filteredNotes.filter((n) => !n.pinned).sort(sortBySectionOrder),
+    [filteredNotes],
+  );
 
   const editingNote = useMemo(
     () => (editingId != null ? notes.find((n) => n.id === editingId) : null),
