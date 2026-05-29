@@ -49,10 +49,15 @@ class Report(BaseReport):
 
         cards = Card.objects.filter(projeto__arquivado=False, projeto__is_system=False)
         delivered = cards.filter(status='finalizado', finalizado_em__isnull=False)
+        # Tipo de data do filtro: default 'delivered' (relatório executivo é
+        # sobre entregas), opcional 'created' (criação).
+        date_field = 'created_at' if (
+            (self.filters.get('period_date_type') or 'delivered') == 'created'
+        ) else 'finalizado_em'
         if period_start:
-            delivered = delivered.filter(finalizado_em__gte=period_start)
+            delivered = delivered.filter(**{f'{date_field}__gte': period_start})
         if period_end:
-            delivered = delivered.filter(finalizado_em__lte=period_end)
+            delivered = delivered.filter(**{f'{date_field}__lte': period_end})
         delivered_list = list(delivered.select_related('projeto'))
 
         # On-time
@@ -143,7 +148,14 @@ class Report(BaseReport):
         pe = self.filters.get('period_end')
         if not ps and not pe:
             return [FilterDisplay('Período', 'Todo o histórico')]
-        return [FilterDisplay('Período', f'{ps or "?"} → {pe or "?"}')]
+        type_label = {
+            'created': 'criação',
+            'delivered': 'entrega',
+        }.get(self.filters.get('period_date_type') or 'delivered', 'entrega')
+        return [FilterDisplay(
+            f'Período ({type_label})',
+            f'{ps or "?"} → {pe or "?"}',
+        )]
 
     def build_context(self, data: dict[str, Any]) -> dict[str, Any]:
         return data

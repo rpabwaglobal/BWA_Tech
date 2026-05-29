@@ -61,10 +61,15 @@ class Report(BaseReport):
             )
             .order_by('-finalizado_em')
         )
+        # Tipo de data: default 'delivered' (relatório por usuário é sobre
+        # entregas dele), opcional 'created'.
+        date_field = 'created_at' if (
+            (self.filters.get('period_date_type') or 'delivered') == 'created'
+        ) else 'finalizado_em'
         if period_start:
-            qs = qs.filter(finalizado_em__gte=period_start)
+            qs = qs.filter(**{f'{date_field}__gte': period_start})
         if period_end:
-            qs = qs.filter(finalizado_em__lte=period_end)
+            qs = qs.filter(**{f'{date_field}__lte': period_end})
         delivered = self.paginate_with_progress(
             qs, label='Carregando entregas do usuário',
             progress_start=15, progress_end=70, chunk_size=100,
@@ -117,12 +122,20 @@ class Report(BaseReport):
     def filters_display(self, data: Any) -> list[FilterDisplay]:
         ps = self.filters.get('period_start')
         pe = self.filters.get('period_end')
-        period_label = (
-            f'{ps or "?"} → {pe or "?"}' if (ps or pe) else 'Todo o histórico'
-        )
+        if ps or pe:
+            type_label = {
+                'created': 'criação',
+                'delivered': 'entrega',
+            }.get(self.filters.get('period_date_type') or 'delivered', 'entrega')
+            period_field = FilterDisplay(
+                f'Período ({type_label})',
+                f'{ps or "?"} → {pe or "?"}',
+            )
+        else:
+            period_field = FilterDisplay('Período', 'Todo o histórico')
         return [
             FilterDisplay('Usuário', data['target_user_name']),
-            FilterDisplay('Período', period_label),
+            period_field,
         ]
 
     def build_context(self, data: dict[str, Any]) -> dict[str, Any]:

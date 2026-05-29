@@ -328,6 +328,7 @@ export default function ReportConfigPanel({
           if (f === 'period') {
             delete next['period_start'];
             delete next['period_end'];
+            delete next['period_date_type'];
           } else {
             delete next[filterKey(f)];
           }
@@ -813,7 +814,22 @@ function renderFilter(
       );
     case 'period':
       return (
-        <div className="grid grid-cols-2 gap-[8px]">
+        // 3 colunas na mesma linha: tipo de data + de + até. Em telas pequenas,
+        // empilha (sm:grid-cols-3).
+        <div className="grid grid-cols-1 gap-[8px] sm:grid-cols-3">
+          {/* Tipo de data: explicita por qual campo filtrar (criação OU
+              entrega). Backend usa `period_date_type` pra escolher entre
+              `created_at` e `finalizado_em`. Default = created. */}
+          <FilterSelect
+            clearable={false}
+            placeholder="Tipo de data"
+            options={[
+              { value: 'created', label: 'Data de criação' },
+              { value: 'delivered', label: 'Data de entrega' },
+            ]}
+            value={(filters['period_date_type'] as string) || 'created'}
+            onChange={(v) => setFilter('period_date_type', v)}
+          />
           <DateInput
             value={(filters['period_start'] as string) ?? ''}
             onChange={(e) => setFilter('period_start', e.target.value)}

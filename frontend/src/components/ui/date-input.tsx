@@ -149,7 +149,7 @@ const DateInput = React.forwardRef<HTMLInputElement, DateInputProps>(
         <input
           type="text"
           inputMode="numeric"
-          placeholder="DD/MM/AAAA"
+          placeholder="Dia/Mês/Ano"
           maxLength={10}
           className={cn(
             "flex h-[40px] w-full rounded-[8px] border border-[var(--color-input)] bg-[var(--color-background)] px-[16px] pr-[48px] py-[8px] text-sm ring-offset-background",

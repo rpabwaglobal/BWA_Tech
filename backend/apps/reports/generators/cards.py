@@ -84,10 +84,17 @@ class Report(BaseReport):
 
         period_start = _parse_date(self.filters.get('period_start'))
         period_end = _parse_date(self.filters.get('period_end'))
+        # `period_date_type` define se filtra por data de criação ou de
+        # entrega (default = created, retrocompatível). Frontend manda
+        # 'created' ou 'delivered'.
+        date_field = {
+            'created': 'created_at',
+            'delivered': 'finalizado_em',
+        }.get(self.filters.get('period_date_type') or 'created', 'created_at')
         if period_start:
-            qs = qs.filter(created_at__gte=period_start)
+            qs = qs.filter(**{f'{date_field}__gte': period_start})
         if period_end:
-            qs = qs.filter(created_at__lte=period_end)
+            qs = qs.filter(**{f'{date_field}__lte': period_end})
 
         # Paginação com progresso: barra evolui de 10→65% conforme as páginas
         # vão sendo carregadas. Mensagem "Exportando cards 245/1340".
@@ -121,8 +128,12 @@ class Report(BaseReport):
         if f.get('prioridade'):
             out.append(FilterDisplay('Prioridade', f['prioridade']))
         if f.get('period_start') or f.get('period_end'):
+            type_label = {
+                'created': 'criação',
+                'delivered': 'entrega',
+            }.get(f.get('period_date_type') or 'created', 'criação')
             out.append(FilterDisplay(
-                'Período',
+                f'Período ({type_label})',
                 f'{f.get("period_start", "?")} → {f.get("period_end", "?")}',
             ))
         return out

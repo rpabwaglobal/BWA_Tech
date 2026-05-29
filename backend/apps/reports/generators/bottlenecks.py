@@ -53,10 +53,15 @@ class Report(BaseReport):
             finalizado_em__isnull=False,
             data_fim__isnull=False,
         )
+        # Tipo de data: default 'delivered' (relatório de atrasos é sobre
+        # entregas), opcional 'created'.
+        date_field = 'created_at' if (
+            (self.filters.get('period_date_type') or 'delivered') == 'created'
+        ) else 'finalizado_em'
         if period_start:
-            late_delivered_qs = late_delivered_qs.filter(finalizado_em__gte=period_start)
+            late_delivered_qs = late_delivered_qs.filter(**{f'{date_field}__gte': period_start})
         if period_end:
-            late_delivered_qs = late_delivered_qs.filter(finalizado_em__lte=period_end)
+            late_delivered_qs = late_delivered_qs.filter(**{f'{date_field}__lte': period_end})
 
         # Materializa em chunks com progresso, depois filtra in-memory pra ter
         # certeza que o filtro Python (finalizado_em > data_fim) funcione.
@@ -115,7 +120,14 @@ class Report(BaseReport):
         pe = self.filters.get('period_end')
         if not ps and not pe:
             return [FilterDisplay('Período', 'Todo o histórico')]
-        return [FilterDisplay('Período', f'{ps or "?"} → {pe or "?"}')]
+        type_label = {
+            'created': 'criação',
+            'delivered': 'entrega',
+        }.get(self.filters.get('period_date_type') or 'delivered', 'entrega')
+        return [FilterDisplay(
+            f'Período ({type_label})',
+            f'{ps or "?"} → {pe or "?"}',
+        )]
 
     def build_context(self, data: dict[str, Any]) -> dict[str, Any]:
         return data
