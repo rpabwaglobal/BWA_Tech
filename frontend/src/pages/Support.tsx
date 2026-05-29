@@ -790,6 +790,32 @@ export default function Support() {
     return map;
   }, [tabFilteredItems]);
 
+  /** Por-tab: número de chamados na etapa "A desenvolver". Exibido no badge
+   * ao lado do nome da tab — é o sinal de "trabalho aguardando" pra cada
+   * categoria, mais útil que o total bruto. */
+  const tabADesenvolverCounts = useMemo(() => {
+    const counts: Partial<Record<TabKey, number>> = {};
+    for (const c of items) {
+      if (chamadoToStage(c) !== 'a_desenvolver') continue;
+      const tipoIdC = typeof c.tipo === 'number' ? c.tipo : c.tipo?.id;
+      const tipoNomeC = (typeof c.tipo === 'object' ? c.tipo?.nome ?? '' : '')
+        .toLowerCase();
+      for (const tab of TABS) {
+        if (!tab.tipoNome) {
+          counts[tab.key] = (counts[tab.key] ?? 0) + 1;
+          continue;
+        }
+        const tabTipoId = tipoIdByName[tab.tipoNome];
+        const matchesId = tabTipoId != null && tipoIdC === tabTipoId;
+        const matchesNome = tipoNomeC && tipoNomeC === tab.tipoNome.toLowerCase();
+        if (matchesId || matchesNome) {
+          counts[tab.key] = (counts[tab.key] ?? 0) + 1;
+        }
+      }
+    }
+    return counts;
+  }, [items, tipoIdByName]);
+
   const columns = useMemo(() => {
     const map = Object.fromEntries(STAGES.map((s) => [s.key, [] as ChamadoSuporte[]])) as Record<
       StageKey,
@@ -1088,11 +1114,7 @@ export default function Support() {
   );
 
   return (
-    <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-[16px] p-[16px] md:p-[24px]">
-      <header className="flex shrink-0 flex-col gap-[12px]">
-        <h1 className="text-xl font-semibold text-[var(--color-foreground)]">Suporte</h1>
-      </header>
-
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-[16px] p-[16px] md:p-[24px] overflow-hidden">
       {error && (
         <div
           className="shrink-0 rounded-[10px] border border-red-200 bg-red-50 px-[14px] py-[10px] text-sm text-red-800 dark:border-red-900 dark:bg-red-950/30 dark:text-red-200"
@@ -1103,17 +1125,13 @@ export default function Support() {
       )}
 
       {/* Tabs RPA / Easy / Dashboards — mesmo visual das tabs em MyTasks
-          (border-b com underline ativo). Posicionadas ACIMA da search. */}
+          (border-b com underline ativo). Posicionadas ACIMA da search.
+          Badge mostra quantos chamados estão na etapa "A desenvolver"
+          (trabalho aguardando) — não o total da tab. */}
       {!(loading && items.length === 0) ? (
         <div className="flex items-center gap-[8px] border-b border-[var(--color-border)] shrink-0">
           {TABS.map((t) => {
-            const tipoId = tipoIdByName[t.tipoNome];
-            const count = tipoId != null
-              ? items.filter((c) => {
-                  const tid = typeof c.tipo === 'number' ? c.tipo : c.tipo?.id;
-                  return tid === tipoId;
-                }).length
-              : null;
+            const count = tabADesenvolverCounts[t.key] ?? 0;
             const active = currentTab === t.key;
             return (
               <Button
@@ -1128,8 +1146,11 @@ export default function Support() {
                 )}
               >
                 {t.label}
-                {count != null && count > 0 && (
-                  <span className="ml-1.5 rounded-full bg-[var(--color-primary)]/10 px-1.5 py-0.5 text-[10px] font-semibold text-[var(--color-primary)]">
+                {count > 0 && (
+                  <span
+                    className="ml-1.5 rounded-full bg-[var(--color-primary)]/10 px-1.5 py-0.5 text-[10px] font-semibold text-[var(--color-primary)]"
+                    title="Chamados na etapa A desenvolver"
+                  >
                     {count}
                   </span>
                 )}
@@ -1720,6 +1741,24 @@ function SupportColumn({
   const empty = chamados.length === 0;
   const hasMore = paginated && chamados.length < totalCount;
 
+  // Paginação automática: dispara onLoadMore quando o sentinel no fundo da
+  // coluna entra na viewport. rootMargin de 240px = pré-carrega antes do
+  // usuário chegar de fato no fim (sensação de "infinito").
+  const sentinelRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!paginated || !hasMore) return;
+    const el = sentinelRef.current;
+    if (!el) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) onLoadMore();
+      },
+      { rootMargin: '240px 0px 240px 0px' },
+    );
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [paginated, hasMore, onLoadMore]);
+
   return (
     <div
       ref={setNodeRef}
@@ -1764,13 +1803,19 @@ function SupportColumn({
           ))}
         </SortableContext>
         {hasMore && (
-          <button
-            type="button"
-            onClick={onLoadMore}
-            className="w-full rounded-[8px] border border-dashed border-[var(--color-border)] py-[8px] text-[11px] font-medium text-[var(--color-muted-foreground)] hover:bg-[var(--color-accent)] hover:text-[var(--color-foreground)]"
-          >
-            Carregar mais ({totalCount - chamados.length} restantes)
-          </button>
+          <>
+            {/* Sentinel pro IntersectionObserver — entra na viewport quando o
+                usuário rola e dispara onLoadMore. Botão fica como fallback
+                clicável caso o IO falhe ou o usuário queira forçar. */}
+            <div ref={sentinelRef} aria-hidden className="h-px w-full" />
+            <button
+              type="button"
+              onClick={onLoadMore}
+              className="w-full rounded-[8px] border border-dashed border-[var(--color-border)] py-[8px] text-[11px] font-medium text-[var(--color-muted-foreground)] hover:bg-[var(--color-accent)] hover:text-[var(--color-foreground)]"
+            >
+              Carregar mais ({totalCount - chamados.length} restantes)
+            </button>
+          </>
         )}
       </div>
     </div>
