@@ -80,6 +80,7 @@ import {
   ensurePendenciaMarker,
   catalogNome,
   hasPendenciaMarker,
+  formatFormulariosApiError,
   type ChamadoSuporte,
   type PatchChamadoSuportePayload,
   type CatalogoSuporteResponse,
@@ -133,10 +134,10 @@ const SUPORTE_PAGE_SIZE = 50;
  *   - "Robô (RPA)" (id=1) → tab RPA
  *   - "Dashboard"  (id=2) → tab Dashboards
  *   - "Agente de IA" (id=3) → tab IA
- * "Easy" ainda não existe no portal — tab fica vazia até criarem. */
+ *   - "Ferramentas Easy" (id=4) → tab Easy */
 const TABS = [
   { key: 'rpa' as const, label: 'RPA', tipoNome: 'Robô (RPA)' },
-  { key: 'easy' as const, label: 'Easy', tipoNome: 'Easy' },
+  { key: 'easy' as const, label: 'Easy', tipoNome: 'Ferramentas Easy' },
   { key: 'dashboards' as const, label: 'Dashboards', tipoNome: 'Dashboard' },
   { key: 'ia' as const, label: 'IA', tipoNome: 'Agente de IA' },
   // "Todos": tab agregadora — mostra TODOS os chamados, sem filtro por tipo.
@@ -414,6 +415,7 @@ export default function Support() {
   /** Mapa: nome do SuporteTipo (RPA, Easy, Dashboards) → id real no banco.
    *  Carregado do catálogo no mount. Sem isso, frontend não consegue filtrar. */
   const [tipoIdByName, setTipoIdByName] = useState<Record<string, number>>({});
+  const [suporteCatalog, setSuporteCatalog] = useState<CatalogoSuporteResponse | null>(null);
 
   // Toggle de cores (status badges etc). Persiste em localStorage.
   const [showCardColors, setShowCardColors] = useState<boolean>(() => readShowColorsOnSuporteCards());
@@ -535,6 +537,7 @@ export default function Support() {
         if (match) map[match[1]] = tipo.id;
       }
       setTipoIdByName(map);
+      setSuporteCatalog(cat);
     }).catch(() => {
       // Sem catálogo, tabs ficam sem id — fallback: mostra "(carregando)" nas tabs.
     });
@@ -1031,7 +1034,7 @@ export default function Support() {
       const patch = patchForStage(targetStage, chamado, assigneeName);
       await applyPatchAndRefresh(chamado.id, patch, chamado);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Erro ao atualizar chamado.');
+      setError(`Erro ao mover ticket: ${formatFormulariosApiError(err)}`);
       void load();
     }
   };
@@ -1055,6 +1058,10 @@ export default function Support() {
       const targetSpec = TABS.find((t) => t.key === targetTabKey);
       const targetTipoId = targetSpec ? tipoIdByName[targetSpec.tipoNome] : undefined;
       if (!targetTipoId || selectedChamadoIds.length === 0) return;
+      if (!suporteCatalog) {
+        setError('Catálogo de tipos ainda não carregou — aguarde e tente mover entre abas novamente.');
+        return;
+      }
       const ids = selectedChamadoIds.slice();
       setBulkMoving(true);
       // Snapshot SÓ dos chamados afetados (não o array todo): se um chamado
@@ -1074,10 +1081,21 @@ export default function Support() {
         ),
       );
       try {
-        await Promise.all(ids.map((id) => suporteService.patchTipo(id, targetTipoId)));
+        await Promise.all(
+          ids.map((id) => {
+            const chamado = snapshotById.get(id);
+            if (!chamado) {
+              throw new Error(`Chamado #${id} não encontrado para mover entre abas.`);
+            }
+            return suporteService.patchTipo(id, targetTipoId, {
+              chamado,
+              catalog: suporteCatalog,
+            });
+          }),
+        );
         exitSelectionMode();
       } catch (err) {
-        setError(err instanceof Error ? err.message : 'Falha ao mover chamados entre abas.');
+        setError(`Falha ao mover chamados entre abas: ${formatFormulariosApiError(err)}`);
         // Reverte SÓ os IDs do batch — preserva mudanças concorrentes.
         setItems((prev) =>
           prev.map((c) => (snapshotById.has(c.id) ? snapshotById.get(c.id)! : c)),
@@ -1086,7 +1104,7 @@ export default function Support() {
         setBulkMoving(false);
       }
     },
-    [tipoIdByName, selectedChamadoIds, items, exitSelectionMode],
+    [tipoIdByName, selectedChamadoIds, items, exitSelectionMode, suporteCatalog],
   );
 
   /** "Carregar mais" pra etapas paginadas. */
@@ -1916,7 +1934,7 @@ function SortableChamadoCard({
         bloqueado || selectionMode
           ? 'cursor-pointer'
           : 'touch-none cursor-grab hover:border-[var(--color-primary)]/40 active:cursor-grabbing',
-        selected && 'ring-2 ring-[var(--color-primary)] border-[var(--color-primary)]',
+        selected && 'border-2 border-[var(--color-primary)]',
       )}
       {...(!bloqueado && !selectionMode
         ? { ...attributes, ...listeners }
@@ -1937,15 +1955,6 @@ function SortableChamadoCard({
       }}
     >
       <div className="flex items-start justify-between gap-[8px]">
-        {selectionMode && !bloqueado && (
-          <input
-            type="checkbox"
-            checked={selected}
-            onChange={onToggleSelected}
-            onClick={(e) => e.stopPropagation()}
-            className="mt-[2px] h-4 w-4 shrink-0 rounded border-[var(--color-input)] accent-[var(--color-primary)]"
-          />
-        )}
         {/* Título: nome do robô (extraído do [Item selecionado: ...] da descrição). */}
         <div className="min-w-0 flex-1 text-[13px] font-semibold leading-snug line-clamp-2">
           {robotName ?? '(sem item)'}

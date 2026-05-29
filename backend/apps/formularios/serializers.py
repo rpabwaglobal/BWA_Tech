@@ -134,7 +134,7 @@ class ChamadoSuporteWriteSerializer(serializers.ModelSerializer):
 
 
 ALLOWED_PATCH_FIELDS = frozenset({
-    'status', 'responsavel_solucao', 'descricao_resolucao', 'tipo',
+    'status', 'responsavel_solucao', 'descricao_resolucao', 'tipo', 'item',
 })
 
 
@@ -151,15 +151,31 @@ class ChamadoSuportePatchSerializer(serializers.Serializer):
         queryset=SuporteTipo.objects.all(),
         required=False,
     )
+    item = serializers.PrimaryKeyRelatedField(
+        queryset=SuporteItem.objects.all(),
+        required=False,
+    )
 
     def validate(self, attrs):
         if not attrs:
             raise serializers.ValidationError(
-                'Informe ao menos um dos campos: status, responsavel_solucao, descricao_resolucao, tipo.',
+                'Informe ao menos um dos campos: status, responsavel_solucao, '
+                'descricao_resolucao, tipo, item.',
             )
         for key in attrs:
             if key not in ALLOWED_PATCH_FIELDS:
                 raise serializers.ValidationError({key: 'Campo não permitido neste PATCH.'})
+        instance = self.context.get('instance')
+        tipo = attrs.get('tipo') or (instance.tipo if instance else None)
+        item = attrs.get('item') or (instance.item if instance else None)
+        if item is not None and tipo is not None and item.tipo_id != tipo.pk:
+            raise serializers.ValidationError(
+                {'item': 'O item selecionado não pertence ao tipo informado.'},
+            )
+        if tipo is not None and not tipo.ativo:
+            raise serializers.ValidationError({'tipo': 'Tipo inativo.'})
+        if item is not None and not item.ativo:
+            raise serializers.ValidationError({'item': 'Item inativo.'})
         return attrs
 
 

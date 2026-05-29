@@ -1,4 +1,4 @@
-import formulariosApi from './formulariosApi';
+import formulariosApi, { usesLocalFormulariosBackend } from './formulariosApi';
 
 /** Marcador no início de `descricao_resolucao` quando o ticket está «parado por pendências» (a API só tem «Em andamento»). */
 export const SUPORTE_PENDENCIA_MARKER = '__PENDENCIA_BWA__';
@@ -56,7 +56,65 @@ export type PatchChamadoSuportePayload = {
   descricao_resolucao?: string | null;
   /** PK do SuporteTipo — usado pra mover entre tabs RPA / Easy / Dashboards. */
   tipo?: number;
+  /** PK do SuporteItem — necessário ao mudar `tipo` se o item atual não pertence ao novo tipo. */
+  item?: number;
 };
+
+/** Omite `null`/`undefined` — a API externa costuma rejeitar PATCH com campos nulos explícitos. */
+function stripNullishPatchPayload(payload: PatchChamadoSuportePayload): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(payload).filter(([, v]) => v !== undefined && v !== null),
+  );
+}
+
+/** Resolve item compatível ao mover chamado entre tabs (tipos). */
+export function resolveItemIdForTipo(
+  chamado: ChamadoSuporte,
+  targetTipoId: number,
+  catalog: CatalogoSuporteResponse,
+): number | undefined {
+  const targetTipo = catalog.tipos.find((t) => t.id === targetTipoId);
+  const itensDoTipo =
+    targetTipo?.itens?.length
+      ? targetTipo.itens
+      : (catalog as CatalogoSuporteRaw).itens?.filter((i) => i.tipo?.id === targetTipoId) ?? [];
+
+  if (!itensDoTipo.length) return undefined;
+
+  const currentItemId = typeof chamado.item === 'number' ? chamado.item : chamado.item?.id;
+  if (currentItemId != null && itensDoTipo.some((i) => i.id === currentItemId)) {
+    return currentItemId;
+  }
+
+  const currentName = catalogNome(chamado.item).trim().toLowerCase();
+  if (currentName) {
+    const byName = itensDoTipo.find(
+      (i) => i.ativo && i.nome.trim().toLowerCase() === currentName,
+    );
+    if (byName) return byName.id;
+  }
+
+  const fallback = itensDoTipo.find((i) => i.ativo) ?? itensDoTipo[0];
+  return fallback?.id;
+}
+
+export function formatFormulariosApiError(err: unknown): string {
+  if (err && typeof err === 'object' && 'response' in err) {
+    const data = (err as { response?: { data?: unknown } }).response?.data;
+    if (typeof data === 'string' && data.trim()) return data;
+    if (data && typeof data === 'object') {
+      const detail = (data as { detail?: unknown }).detail;
+      if (typeof detail === 'string' && detail.trim()) return detail;
+      try {
+        return JSON.stringify(data);
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+  if (err instanceof Error && err.message) return err.message;
+  return String(err);
+}
 
 export type ListByUsuarioFiltered = {
   usuario_email?: string;
@@ -77,6 +135,30 @@ export type ListByUsuarioPagedResponse = {
 export type CatalogoItemLista = { id: number; nome: string; ativo: boolean };
 export type CatalogoTipoLista = CatalogoItemLista & { itens: CatalogoItemLista[] };
 export type CatalogoSuporteResponse = { tipos: CatalogoTipoLista[]; motivos: CatalogoItemLista[] };
+
+/** Resposta bruta do portal: `itens` costuma vir num array plano (não aninhado em `tipos`). */
+type CatalogoSuporteRaw = CatalogoSuporteResponse & {
+  itens?: Array<CatalogoItemLista & { tipo?: { id?: number } }>;
+};
+
+/** Normaliza catálogo do portal (itens planos) para o formato usado no SPA. */
+export function normalizeCatalogResponse(raw: CatalogoSuporteRaw): CatalogoSuporteResponse {
+  const tipos = (raw.tipos ?? []).map((t) => ({
+    ...t,
+    itens: Array.isArray(t.itens) ? t.itens : [],
+  }));
+  const flatItens = raw.itens ?? [];
+  if (flatItens.length) {
+    for (const tipo of tipos) {
+      if (!tipo.itens.length) {
+        tipo.itens = flatItens
+          .filter((i) => i.tipo?.id === tipo.id)
+          .map(({ id, nome, ativo }) => ({ id, nome, ativo }));
+      }
+    }
+  }
+  return { tipos, motivos: raw.motivos ?? [] };
+}
 
 /** Indica se o texto guardado na API começa pelo marcador interno de pendência (aceita `\n`, `\r\n` ou só o marcador). */
 export function hasPendenciaMarker(text: string | null | undefined): boolean {
@@ -114,8 +196,8 @@ export const suporteService = {
   async fetchCatalog(): Promise<CatalogoSuporteResponse> {
     const raw = (import.meta.env.VITE_FORMULARIOS_SUPORTE_CATALOGO_PATH as string | undefined)?.trim();
     const path = (raw ? raw.replace(/^\//, '') : '') || 'suporte/catalogo/';
-    const { data } = await formulariosApi.get<CatalogoSuporteResponse>(path);
-    return data;
+    const { data } = await formulariosApi.get<CatalogoSuporteRaw>(path);
+    return normalizeCatalogResponse(data);
   },
 
   async listByUsuario(usuarioEmail?: string): Promise<ChamadoSuporte[]> {
@@ -139,17 +221,41 @@ export const suporteService = {
   },
 
   async patch(id: number, payload: PatchChamadoSuportePayload): Promise<ChamadoSuporte> {
-    const { data } = await formulariosApi.patch<ChamadoSuporte>(`suporte/${id}/`, payload);
+    const { data } = await formulariosApi.patch<ChamadoSuporte>(
+      `suporte/${id}/`,
+      stripNullishPatchPayload(payload),
+    );
     return data;
   },
 
-  /** Atalho pra mover chamado entre tabs (PATCH tipo). Otimizado pelo
-   * frontend pra rodar em Promise.all no multi-select. */
-  async patchTipo(id: number, tipoId: number): Promise<ChamadoSuporte> {
-    const { data } = await formulariosApi.patch<ChamadoSuporte>(`suporte/${id}/`, {
+  /** Atalho pra mover chamado entre tabs (PATCH tipo + item compatível + status atual). */
+  async patchTipo(
+    id: number,
+    tipoId: number,
+    opts: { chamado: ChamadoSuporte; catalog?: CatalogoSuporteResponse },
+  ): Promise<ChamadoSuporte> {
+    const { chamado, catalog } = opts;
+    const payload: PatchChamadoSuportePayload = {
+      status: chamado.status,
       tipo: tipoId,
-    });
-    return data;
+    };
+    if (catalog) {
+      const itemId = resolveItemIdForTipo(chamado, tipoId, catalog);
+      if (itemId != null) payload.item = itemId;
+    }
+    const updated = await this.patch(id, payload);
+    if (!usesLocalFormulariosBackend()) {
+      const updatedTipoId =
+        typeof updated.tipo === 'number' ? updated.tipo : updated.tipo?.id;
+      if (updatedTipoId !== tipoId) {
+        throw new Error(
+          'A API do portal (api.bwa.global) ainda não aplica alteração de aba/tipo no PATCH. ' +
+            'Atualize o serviço de formulários do portal para aceitar os campos «tipo» e «item», ' +
+            'ou mova o ticket manualmente no portal.',
+        );
+      }
+    }
+    return updated;
   },
 
   /** Versão filtrada + paginada do listByUsuario.

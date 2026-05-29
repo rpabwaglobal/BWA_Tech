@@ -58,7 +58,7 @@ class ChamadoSuporteViewSet(viewsets.ModelViewSet):
     # marca o próprio como Resolvido/Cancelado nem altera responsável/notas.
     # Isso evita bypass do fluxo de suporte (auto-fechamento de chamado).
     _PRIVILEGED_PATCH_FIELDS = frozenset({
-        'status', 'responsavel_solucao', 'descricao_resolucao', 'tipo',
+        'status', 'responsavel_solucao', 'descricao_resolucao', 'tipo', 'item',
     })
 
     def get_queryset(self):
@@ -102,7 +102,11 @@ class ChamadoSuporteViewSet(viewsets.ModelViewSet):
 
     def partial_update(self, request, *args, **kwargs):
         instance = self.get_object()
-        patch_sr = ChamadoSuportePatchSerializer(data=request.data, partial=True)
+        patch_sr = ChamadoSuportePatchSerializer(
+            data=request.data,
+            partial=True,
+            context={'instance': instance},
+        )
         patch_sr.is_valid(raise_exception=True)
         data = patch_sr.validated_data
 
@@ -142,6 +146,8 @@ class ChamadoSuporteViewSet(viewsets.ModelViewSet):
                         setattr(instance, field, data[field])
                 if 'tipo' in data:
                     instance.tipo = data['tipo']
+                if 'item' in data:
+                    instance.item = data['item']
                 instance.save()
                 body = ChamadoSuporteReadSerializer(instance).data
                 # [M2] broadcast só após commit — não envia evento fantasma

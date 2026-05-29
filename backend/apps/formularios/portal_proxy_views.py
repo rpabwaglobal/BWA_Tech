@@ -7,6 +7,7 @@ O SPA autentica no BWA (Token); este view reenvia ao portal com Bearer JWT obtid
 from __future__ import annotations
 
 import ipaddress
+import json
 import logging
 import re
 import socket
@@ -27,6 +28,64 @@ logger = logging.getLogger(__name__)
 # Path seguro: letras, dígitos, hífen, underline, ponto, barra. Sem `..`, `\`,
 # `:`, espaços ou caracteres de controle. Evita path traversal e injeção.
 _SAFE_PATH_RE = re.compile(r'^[A-Za-z0-9_\-./]*$')
+
+_PORTAL_PATCH_ALLOWED = frozenset({'status', 'responsavel_solucao', 'descricao_resolucao'})
+
+
+def _parse_json_dict(raw: bytes) -> dict:
+    if not raw:
+        return {}
+    try:
+        data = json.loads(raw)
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _extract_tipo_id(value) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, dict):
+        value = value.get('id')
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _enrich_portal_patch_body(method: str, url: str, raw_body: bytes) -> bytes:
+    """Portal externo rejeita PATCH só com tipo/item — exige status, responsável ou notas."""
+    if method != 'PATCH' or not raw_body:
+        return raw_body
+    body = _parse_json_dict(raw_body)
+    wants_tipo = 'tipo' in body or 'tipo_id' in body
+    wants_item = 'item' in body or 'item_id' in body
+    if not wants_tipo and not wants_item:
+        return raw_body
+    if _PORTAL_PATCH_ALLOWED & body.keys():
+        return raw_body
+    try:
+        token = login_on_portal_cached()
+        current = requests.get(
+            url,
+            headers={'Authorization': f'Bearer {token}', 'Accept': 'application/json'},
+            timeout=90,
+        )
+        current.raise_for_status()
+        status = current.json().get('status')
+    except (requests.RequestException, ValueError, PortalLoginError):
+        return raw_body
+    if status:
+        body = {**body, 'status': status}
+    return json.dumps(body).encode('utf-8')
+
+
+def _portal_tipo_not_applied(request_body: dict, upstream_json: dict) -> bool:
+    requested = _extract_tipo_id(request_body.get('tipo') if 'tipo' in request_body else request_body.get('tipo_id'))
+    if requested is None:
+        return False
+    actual = _extract_tipo_id(upstream_json.get('tipo'))
+    return actual is not None and requested != actual
 
 
 def _is_internal_host(hostname: str) -> bool:
@@ -124,7 +183,7 @@ class PortalFormulariosProxyView(APIView):
 
     permission_classes = [IsAuthenticated]
 
-    def _do_request(self, method: str, url: str, request) -> requests.Response:
+    def _do_request(self, method: str, url: str, request, body: bytes | None = None) -> requests.Response:
         """Monta e executa a requisição HTTP ao upstream. Sempre busca o JWT
         do cache antes — quem chama é responsável por invalidar em 401."""
         token = login_on_portal_cached()
@@ -133,9 +192,10 @@ class PortalFormulariosProxyView(APIView):
             'Accept': request.headers.get('Accept', '*/*'),
         }
         kw: dict = {'headers': headers, 'timeout': 90}
-        if method in ('POST', 'PATCH', 'PUT') or (method == 'DELETE' and request.body):
+        payload = body if body is not None else request.body
+        if method in ('POST', 'PATCH', 'PUT') or (method == 'DELETE' and payload):
             headers['Content-Type'] = request.content_type or 'application/json'
-            kw['data'] = request.body
+            kw['data'] = payload
         return requests.request(method, url, **kw)
 
     def _forward(self, request, path: str):
@@ -178,12 +238,17 @@ class PortalFormulariosProxyView(APIView):
             url = f'{url}?{qs}'
 
         method = request.method.upper()
+        patch_body = request.body
+        parsed_patch_body: dict = {}
+        if method == 'PATCH' and request.body:
+            patch_body = _enrich_portal_patch_body(method, url, request.body)
+            parsed_patch_body = _parse_json_dict(patch_body)
 
         # Primeira tentativa. Em caso de 401 (JWT cacheado já revogado pelo portal
         # antes do nosso TTL local), invalida o cache e tenta de novo — UMA vez.
         try:
             try:
-                upstream = self._do_request(method, url, request)
+                upstream = self._do_request(method, url, request, body=patch_body)
             except PortalLoginError as exc:
                 logger.warning('Login no portal falhou: %s', exc)
                 return Response(
@@ -204,7 +269,7 @@ class PortalFormulariosProxyView(APIView):
                 )
                 invalidate_portal_token_cache()
                 try:
-                    upstream = self._do_request(method, url, request)
+                    upstream = self._do_request(method, url, request, body=patch_body)
                 except PortalLoginError as exc:
                     logger.warning('Re-login no portal falhou após 401: %s', exc)
                     return Response(
@@ -230,6 +295,29 @@ class PortalFormulariosProxyView(APIView):
         # gatilho. Cobre o caso comum (todos os usuários editam via tech.bwa.global).
         if 200 <= upstream.status_code < 300:
             _maybe_broadcast_suporte_event(method, sub, upstream)
+
+        if (
+            method == 'PATCH'
+            and 200 <= upstream.status_code < 300
+            and parsed_patch_body
+        ):
+            try:
+                upstream_json = upstream.json()
+            except ValueError:
+                upstream_json = {}
+            if isinstance(upstream_json, dict) and _portal_tipo_not_applied(parsed_patch_body, upstream_json):
+                return Response(
+                    {
+                        'detail': (
+                            'A API do portal (api.bwa.global) ainda não aplica alteração de '
+                            'aba/tipo no PATCH de suporte. Atualize o serviço de formulários '
+                            'do portal para aceitar os campos «tipo» e «item», ou mova o ticket '
+                            'manualmente no portal.'
+                        ),
+                        'reason': 'portal_tipo_patch_not_supported',
+                    },
+                    status=409,
+                )
 
         # Repassa o body e os headers úteis. Excluímos headers de transporte
         # (Content-Length, Transfer-Encoding) que o Django reescreve, e Set-Cookie
