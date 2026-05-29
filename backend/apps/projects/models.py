@@ -825,6 +825,17 @@ class UserNoteItem(models.Model):
     text = models.TextField(blank=True, verbose_name='Texto')
     done = models.BooleanField(default=False, verbose_name='Concluído (só p/ kind=todo)')
     order = models.IntegerField(default=0, verbose_name='Ordem')
+    # Indentação tipo "tree" — pai dentro da mesma nota. Frontend pode aninhar
+    # arrastando um item "pra frente" sobre outro. `on_delete=CASCADE` faz com
+    # que apagar um pai apague os filhos junto (intencional: nó-pai some, sub-árvore some).
+    parent = models.ForeignKey(
+        'self',
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name='children',
+        verbose_name='Item pai (para indentação)',
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -834,6 +845,7 @@ class UserNoteItem(models.Model):
         ordering = ['order', 'created_at']
         indexes = [
             models.Index(fields=['note', 'order']),
+            models.Index(fields=['parent']),
         ]
 
     def __str__(self):

@@ -15,9 +15,29 @@ import {
   Trash2,
   X,
 } from 'lucide-react';
+import {
+  DndContext,
+  KeyboardSensor,
+  PointerSensor,
+  closestCenter,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from '@dnd-kit/core';
+import {
+  SortableContext,
+  arrayMove,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+  rectSortingStrategy,
+} from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
+import { LayoutGroup, motion } from 'framer-motion';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
+import { DragHandle } from '@/components/ui/drag-handle';
 import {
   Dialog,
   DialogContent,
@@ -32,6 +52,7 @@ import {
   type UserNoteColor,
   type UserNoteItem,
   type UserNoteItemKind,
+  type UserNoteItemInput,
 } from '@/services/userNoteService';
 import { cardPinService, type CardPin } from '@/services/cardPinService';
 import { KanbanCardPreview } from '@/components/KanbanCardPreview';
@@ -42,7 +63,13 @@ type NoteFilter = 'active' | 'archived';
 
 // Cada bloco do draft tem um _key estável p/ React; o id do backend (quando
 // existe) é descartado já que a estratégia de update é replace-all no servidor.
-type DraftItem = UserNoteItem & { _key: string };
+// `parentKey` referencia o `_key` de outro item da mesma nota — usado pra
+// indentação tipo árvore (sem precisar de PKs reais).
+type DraftItem = UserNoteItem & { _key: string; parentKey: string | null };
+
+/** Limite de profundidade visual da árvore. Frontend impede ir além;
+ * backend não força (defesa em profundidade). */
+const MAX_INDENT_DEPTH = 5;
 
 type DraftNote = {
   id?: number;
@@ -63,10 +90,6 @@ type ColorSpec = {
   border: string;
   borderDark: string;
 };
-
-/** Breakpoints (px do viewport → nº de colunas) usados pelo Masonry de notas
- * e de cards fixados. Espelha os antigos columns-1 / sm:columns-2 / lg:3 / xl:4. */
-const NOTES_MASONRY_BREAKPOINTS = { default: 1, 640: 2, 1024: 3, 1280: 4 };
 
 /** Limites de tamanho. O backend tem só title.max_length=200; o conteúdo
  * (items.text) é TextField sem limite — limitamos no frontend pra prevenir
@@ -134,16 +157,28 @@ function getSwatchStyle(color: UserNoteColor, isDark: boolean): React.CSSPropert
 const newKey = () => `tmp-${Math.random().toString(36).slice(2, 10)}`;
 
 function toDraft(note: UserNote): DraftNote {
+  const sorted = (note.items || []).slice().sort((a, b) => a.order - b.order);
+  // Mapa PK → _key pra resolver parent (parent vem como FK numérica).
+  const idToKey = new Map<number, string>();
+  const items: DraftItem[] = sorted.map((it) => {
+    const _key = it.id != null ? `id-${it.id}` : newKey();
+    if (it.id != null) idToKey.set(it.id, _key);
+    return { ...it, _key, parentKey: null };
+  });
+  for (let i = 0; i < items.length; i++) {
+    const raw = sorted[i];
+    if (raw.parent != null) {
+      const parentKey = idToKey.get(raw.parent);
+      if (parentKey) items[i].parentKey = parentKey;
+    }
+  }
   return {
     id: note.id,
     title: note.title,
     color: note.color,
     pinned: note.pinned,
     archived: note.archived,
-    items: (note.items || [])
-      .slice()
-      .sort((a, b) => a.order - b.order)
-      .map((it) => ({ ...it, _key: it.id != null ? `id-${it.id}` : newKey() })),
+    items,
   };
 }
 
@@ -154,7 +189,7 @@ function emptyDraft(): DraftNote {
     pinned: false,
     archived: false,
     // Começa com um único bloco de texto vazio para o usuário digitar logo de cara.
-    items: [{ _key: newKey(), kind: 'text', text: '', done: false, order: 0 }],
+    items: [{ _key: newKey(), kind: 'text', text: '', done: false, order: 0, parentKey: null }],
   };
 }
 
@@ -163,14 +198,34 @@ function isDraftEmpty(draft: DraftNote): boolean {
 }
 
 function draftToPayload(draft: DraftNote) {
-  const cleanItems = draft.items
-    .filter((it) => it.text.trim().length > 0)
-    .map((it, index) => ({
-      kind: it.kind,
-      text: it.text.trim(),
-      done: it.kind === 'todo' ? it.done : false,
-      order: index,
-    }));
+  // Mantém só items com texto OU items que são pai de algum filho com texto
+  // (não faz sentido descartar um pai vazio e manter os filhos órfãos).
+  const hasContent = new Set<string>();
+  for (const it of draft.items) if (it.text.trim().length > 0) hasContent.add(it._key);
+  // Marca pais como "tem conteúdo" se algum filho descendente tem.
+  const keyToItem = new Map(draft.items.map((it) => [it._key, it] as const));
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const it of draft.items) {
+      if (hasContent.has(it._key) && it.parentKey && !hasContent.has(it.parentKey)
+          && keyToItem.has(it.parentKey)) {
+        hasContent.add(it.parentKey);
+        changed = true;
+      }
+    }
+  }
+  const kept = draft.items.filter((it) => hasContent.has(it._key));
+
+  const cleanItems: UserNoteItemInput[] = kept.map((it, index) => ({
+    kind: it.kind,
+    text: it.text.trim(),
+    done: it.kind === 'todo' ? it.done : false,
+    order: index,
+    client_id: it._key,
+    parent_client_id:
+      it.parentKey && hasContent.has(it.parentKey) ? it.parentKey : null,
+  }));
   return {
     title: draft.title.trim(),
     color: draft.color,
@@ -178,6 +233,40 @@ function draftToPayload(draft: DraftNote) {
     archived: draft.archived,
     items: cleanItems,
   };
+}
+
+/** True se `candidateKey` é descendente (transitivo) de `ancestorKey`. */
+function isDescendantOf(
+  candidateKey: string,
+  ancestorKey: string,
+  items: DraftItem[],
+): boolean {
+  const byKey = new Map(items.map((it) => [it._key, it] as const));
+  let cur: string | null = byKey.get(candidateKey)?.parentKey ?? null;
+  const seen = new Set<string>();
+  while (cur) {
+    if (cur === ancestorKey) return true;
+    if (seen.has(cur)) return false;
+    seen.add(cur);
+    cur = byKey.get(cur)?.parentKey ?? null;
+  }
+  return false;
+}
+
+/** Profundidade visual de um item (0 = raiz). Limitada a MAX_INDENT_DEPTH. */
+function indentOf(item: DraftItem, byKey: Map<string, DraftItem>): number {
+  let depth = 0;
+  let cur: string | null = item.parentKey;
+  const seen = new Set<string>();
+  while (cur && depth < MAX_INDENT_DEPTH) {
+    if (seen.has(cur)) break; // defesa contra ciclo
+    seen.add(cur);
+    const p = byKey.get(cur);
+    if (!p) break;
+    depth++;
+    cur = p.parentKey;
+  }
+  return depth;
 }
 
 function ColorPicker({
@@ -252,20 +341,39 @@ function autoResize(el: HTMLTextAreaElement | null) {
   el.style.height = `${el.scrollHeight}px`;
 }
 
-/** Renderiza um bloco do conteúdo da nota — texto ou checklist — no editor.
- * Permite converter entre os dois tipos via botão hover. */
+/** Bloco do conteúdo da nota (texto ou checklist) com:
+ * - drag handle (6 pontinhos) à esquerda
+ * - indentação visual proporcional ao `indent`
+ * - Enter cria novo item logo abaixo (Shift+Enter quebra linha no Textarea)
+ * - Tab indenta, Shift+Tab desindenta
+ *
+ * O wrapper sortable (SortableItemBlock) injeta `dragHandleRef`/`dragListeners`
+ * que são repassados ao DragHandle.
+ */
 function ItemBlock({
   item,
+  indent,
   onChange,
   onRemove,
   onConvert,
+  onEnter,
+  onIndent,
+  onOutdent,
   autoFocus,
+  dragHandleRef,
+  dragListeners,
 }: {
   item: DraftItem;
+  indent: number;
   onChange: (next: DraftItem) => void;
   onRemove: () => void;
   onConvert: (next: UserNoteItemKind) => void;
+  onEnter: () => void;
+  onIndent: () => void;
+  onOutdent: () => void;
   autoFocus?: boolean;
+  dragHandleRef?: (el: HTMLElement | null) => void;
+  dragListeners?: Record<string, (e: React.SyntheticEvent) => void>;
 }) {
   const inputRef = useRef<HTMLInputElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -282,8 +390,40 @@ function ItemBlock({
     if (item.kind === 'text') autoResize(textareaRef.current);
   }, [item.kind, item.text]);
 
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      // Enter (sem shift): cria novo item logo abaixo, foca nele.
+      // Em Textarea (kind=text), Shift+Enter cai aqui SEM ser interceptado,
+      // mantendo o newline nativo do textarea.
+      e.preventDefault();
+      onEnter();
+      return;
+    }
+    if (e.key === 'Tab') {
+      // Tab indenta, Shift+Tab desindenta (estilo Notion/Keep).
+      e.preventDefault();
+      if (e.shiftKey) onOutdent();
+      else onIndent();
+      return;
+    }
+    if (e.key === 'Backspace' && item.text.length === 0) {
+      // Backspace em item vazio remove o bloco.
+      e.preventDefault();
+      onRemove();
+      return;
+    }
+  };
+
   return (
-    <div className="group flex items-start gap-2">
+    <div
+      className="group relative flex items-start gap-1"
+      style={{ paddingLeft: `${indent * 18}px` }}
+    >
+      <DragHandle
+        ref={(el) => dragHandleRef?.(el)}
+        {...(dragListeners as Record<string, (e: React.SyntheticEvent) => void>)}
+        className="mt-1.5"
+      />
       {item.kind === 'todo' ? (
         <input
           type="checkbox"
@@ -305,6 +445,7 @@ function ItemBlock({
           ref={inputRef}
           value={item.text}
           onChange={(e) => onChange({ ...item, text: e.target.value })}
+          onKeyDown={handleKeyDown}
           placeholder="Item da lista"
           maxLength={NOTE_ITEM_TEXT_MAX}
           className={cn(
@@ -318,6 +459,7 @@ function ItemBlock({
           value={item.text}
           onChange={(e) => onChange({ ...item, text: e.target.value })}
           onInput={(e) => autoResize(e.currentTarget)}
+          onKeyDown={handleKeyDown}
           placeholder="Texto..."
           maxLength={NOTE_ITEM_TEXT_MAX}
           rows={1}
@@ -348,62 +490,113 @@ function ItemBlock({
   );
 }
 
-
-/**
- * Layout masonry estilo Google Keep: N colunas verticais, cada card vai pra
- * próxima coluna em round-robin. Diferente de CSS multi-column (que tenta
- * balancear alturas e cria gaps imprevisíveis), todas as colunas começam no
- * topo e cada uma empilha seus cards com gap constante.
- */
-function useColumnCount(breakpoints: { default: number; [width: number]: number }): number {
-  const sortedKeys = useMemo(
-    () =>
-      Object.keys(breakpoints)
-        .filter((k) => k !== 'default')
-        .map(Number)
-        .sort((a, b) => b - a),
-    [breakpoints],
+/** Wrapper sortable em torno do ItemBlock. Usa `useSortable` do dnd-kit
+ *  pra prover handle ref + listeners + transform. */
+function SortableItemBlock(props: React.ComponentProps<typeof ItemBlock> & { id: string }) {
+  const { id, ...rest } = props;
+  const {
+    setNodeRef,
+    setActivatorNodeRef,
+    transform,
+    transition,
+    isDragging,
+    attributes,
+    listeners,
+  } = useSortable({ id });
+  const style: React.CSSProperties = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.4 : 1,
+  };
+  return (
+    <div ref={setNodeRef} style={style} {...attributes}>
+      <ItemBlock
+        {...rest}
+        dragHandleRef={setActivatorNodeRef}
+        dragListeners={listeners as Record<string, (e: React.SyntheticEvent) => void>}
+      />
+    </div>
   );
-  const compute = useCallback(() => {
-    if (typeof window === 'undefined') return breakpoints.default;
-    const w = window.innerWidth;
-    for (const bp of sortedKeys) {
-      if (w >= bp) return breakpoints[bp];
-    }
-    return breakpoints.default;
-  }, [breakpoints, sortedKeys]);
-  const [cols, setCols] = useState<number>(compute);
-  useEffect(() => {
-    const handler = () => setCols(compute());
-    window.addEventListener('resize', handler);
-    return () => window.removeEventListener('resize', handler);
-  }, [compute]);
-  return cols;
 }
 
-function Masonry({
-  children,
-  breakpoints,
-  gap = '12px',
+/** Faixa fininha entre items: hover mostra "+" pra inserir texto ou todo
+ *  exatamente naquela posição. */
+function InsertGap({
+  onInsert,
 }: {
-  children: React.ReactNode[];
-  breakpoints: { default: number; [width: number]: number };
-  gap?: string;
+  onInsert: (kind: UserNoteItemKind) => void;
 }) {
-  const cols = useColumnCount(breakpoints);
-  const columns = useMemo(() => {
-    const arr: React.ReactNode[][] = Array.from({ length: cols }, () => []);
-    children.forEach((child, i) => arr[i % cols].push(child));
-    return arr;
-  }, [children, cols]);
   return (
-    <div className="flex w-full items-start" style={{ gap }}>
-      {columns.map((col, i) => (
-        <div key={i} className="flex flex-1 min-w-0 flex-col" style={{ gap }}>
-          {col}
+    <div className="group/gap relative flex h-[6px] items-center">
+      <div className="absolute inset-x-2 top-1/2 h-px -translate-y-1/2 bg-transparent transition-colors group-hover/gap:bg-[var(--color-primary)]/30" />
+      <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 opacity-0 transition-opacity group-hover/gap:opacity-100">
+        <div className="flex items-center gap-1 rounded-full border border-[var(--color-border)] bg-[var(--color-card)] px-1.5 py-0.5 shadow-sm">
+          <button
+            type="button"
+            onClick={() => onInsert('text')}
+            title="Inserir texto aqui"
+            className="text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]"
+          >
+            <Plus className="h-3 w-3" />
+          </button>
+          <span className="text-[9px] font-bold uppercase tracking-wider text-[var(--color-muted-foreground)]">/</span>
+          <button
+            type="button"
+            onClick={() => onInsert('todo')}
+            title="Inserir item de lista aqui"
+            className="text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]"
+          >
+            <CheckSquare className="h-3 w-3" />
+          </button>
         </div>
-      ))}
+      </div>
     </div>
+  );
+}
+
+
+/** Wrapper sortable de um NoteCard. Inclui motion.div com `layoutId` único
+ *  pra animar a transição pinned ↔ outras via framer-motion (shared element). */
+function SortableNoteCardWrapper({
+  noteId,
+  layoutId,
+  children,
+}: {
+  noteId: number;
+  layoutId: string;
+  children: (handle: {
+    dragHandleRef: (el: HTMLElement | null) => void;
+    dragListeners: Record<string, (e: React.SyntheticEvent) => void> | undefined;
+  }) => React.ReactNode;
+}) {
+  const {
+    setNodeRef,
+    setActivatorNodeRef,
+    transform,
+    transition,
+    isDragging,
+    attributes,
+    listeners,
+  } = useSortable({ id: noteId });
+  const style: React.CSSProperties = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.4 : 1,
+  };
+  return (
+    <motion.div
+      layoutId={layoutId}
+      layout
+      transition={{ type: 'spring', stiffness: 380, damping: 32 }}
+      ref={setNodeRef}
+      style={style}
+      {...attributes}
+    >
+      {children({
+        dragHandleRef: setActivatorNodeRef,
+        dragListeners: listeners as Record<string, (e: React.SyntheticEvent) => void>,
+      })}
+    </motion.div>
   );
 }
 
@@ -437,6 +630,8 @@ function NoteCard({
   onToggleItem,
   selectionMode = false,
   selected = false,
+  dragHandleRef,
+  dragListeners,
 }: {
   note: UserNote;
   onClick: () => void;
@@ -452,6 +647,9 @@ function NoteCard({
    * escondidas/desabilitadas. */
   selectionMode?: boolean;
   selected?: boolean;
+  /** Injetados pelo wrapper sortable. */
+  dragHandleRef?: (el: HTMLElement | null) => void;
+  dragListeners?: Record<string, (e: React.SyntheticEvent) => void>;
 }) {
   const sortedItems = useMemo(
     () => (note.items || []).slice().sort((a, b) => a.order - b.order),
@@ -471,6 +669,16 @@ function NoteCard({
       )}
     >
       <div className="relative cursor-pointer" onClick={onClick}>
+        {/* Drag handle no canto superior esquerdo do card (só fora de seleção) */}
+        {!selectionMode && dragHandleRef && (
+          <DragHandle
+            ref={dragHandleRef}
+            {...(dragListeners as Record<string, (e: React.SyntheticEvent) => void>)}
+            size="md"
+            className="absolute left-1.5 top-1.5"
+            onClick={(e) => e.stopPropagation()}
+          />
+        )}
         {!selectionMode && (
           <button
             type="button"
@@ -596,20 +804,49 @@ function NoteEditor({
   isCreate?: boolean;
 }) {
   const [draft, setDraft] = useState<DraftNote>(emptyDraft());
+  // _key do item recém-inserido — gerencia auto-focus após Enter / +Insert.
+  const [autoFocusKey, setAutoFocusKey] = useState<string | null>(null);
   const isDark = useIsDark();
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  );
 
   useEffect(() => {
-    if (open && initial) setDraft({ ...initial });
+    if (open && initial) {
+      setDraft({ ...initial });
+      setAutoFocusKey(null);
+    }
   }, [open, initial]);
 
-  const addItem = (kind: UserNoteItemKind) =>
-    setDraft((prev) => ({
-      ...prev,
-      items: [
-        ...prev.items,
-        { _key: newKey(), kind, text: '', done: false, order: prev.items.length },
-      ],
-    }));
+  const byKey = useMemo(
+    () => new Map(draft.items.map((it) => [it._key, it] as const)),
+    [draft.items],
+  );
+
+  /** Insere um novo item em `index` (default: fim). Retorna o `_key` criado. */
+  const insertItem = (
+    kind: UserNoteItemKind,
+    index?: number,
+    parentKey: string | null = null,
+  ): string => {
+    const key = newKey();
+    setDraft((prev) => {
+      const arr = prev.items.slice();
+      const at = index == null ? arr.length : Math.max(0, Math.min(arr.length, index));
+      arr.splice(at, 0, {
+        _key: key,
+        kind,
+        text: '',
+        done: false,
+        order: at,
+        parentKey,
+      });
+      return { ...prev, items: arr };
+    });
+    setAutoFocusKey(key);
+    return key;
+  };
 
   const updateItem = (key: string, next: DraftItem) =>
     setDraft((prev) => ({
@@ -617,11 +854,22 @@ function NoteEditor({
       items: prev.items.map((it) => (it._key === key ? next : it)),
     }));
 
+  /** Remove o item E todos os descendentes (sub-árvore inteira some). */
   const removeItem = (key: string) =>
-    setDraft((prev) => ({
-      ...prev,
-      items: prev.items.filter((it) => it._key !== key),
-    }));
+    setDraft((prev) => {
+      const descendants = new Set<string>([key]);
+      let grew = true;
+      while (grew) {
+        grew = false;
+        for (const it of prev.items) {
+          if (it.parentKey && descendants.has(it.parentKey) && !descendants.has(it._key)) {
+            descendants.add(it._key);
+            grew = true;
+          }
+        }
+      }
+      return { ...prev, items: prev.items.filter((it) => !descendants.has(it._key)) };
+    });
 
   const convertItem = (key: string, next: UserNoteItemKind) =>
     setDraft((prev) => ({
@@ -630,6 +878,85 @@ function NoteEditor({
         it._key === key ? { ...it, kind: next, done: next === 'todo' ? it.done : false } : it,
       ),
     }));
+
+  /** Indenta o item: parent vira o item IMEDIATAMENTE ACIMA dele (no array
+   * linear), desde que não crie ciclo nem exceda MAX_INDENT_DEPTH. */
+  const indentItem = (key: string) =>
+    setDraft((prev) => {
+      const idx = prev.items.findIndex((it) => it._key === key);
+      if (idx <= 0) return prev; // primeiro item não pode indentar
+      const newParent = prev.items[idx - 1];
+      const target = prev.items[idx];
+      // Não permite criar ciclo: novo pai não pode ser descendente do alvo.
+      if (isDescendantOf(newParent._key, key, prev.items)) return prev;
+      const tentative = prev.items.map((it) =>
+        it._key === key ? { ...it, parentKey: newParent._key } : it,
+      );
+      // Valida profundidade.
+      const map = new Map(tentative.map((it) => [it._key, it] as const));
+      if (indentOf(tentative[idx], map) > MAX_INDENT_DEPTH) return prev;
+      return { ...prev, items: tentative };
+    });
+
+  /** Desindenta: parent vira o parent do parent atual (sobe um nível). */
+  const outdentItem = (key: string) =>
+    setDraft((prev) => {
+      const item = prev.items.find((it) => it._key === key);
+      if (!item || !item.parentKey) return prev;
+      const parent = prev.items.find((it) => it._key === item.parentKey);
+      const newParent = parent?.parentKey ?? null;
+      return {
+        ...prev,
+        items: prev.items.map((it) =>
+          it._key === key ? { ...it, parentKey: newParent } : it,
+        ),
+      };
+    });
+
+  /** Cria um novo item de mesmo tipo logo após `key`. Herda o parent. */
+  const insertAfter = (key: string) => {
+    const idx = draft.items.findIndex((it) => it._key === key);
+    if (idx === -1) return;
+    const source = draft.items[idx];
+    insertItem(source.kind, idx + 1, source.parentKey);
+  };
+
+  const handleDragEnd = (e: DragEndEvent) => {
+    const { active, over, delta } = e;
+    if (!over || active.id === over.id) {
+      // Drag sem reorder real — pode ainda querer mudar indent baseado em
+      // delta horizontal puro.
+      if (Math.abs(delta.x) > 30) {
+        if (delta.x > 0) indentItem(String(active.id));
+        else outdentItem(String(active.id));
+      }
+      return;
+    }
+    setDraft((prev) => {
+      const oldIdx = prev.items.findIndex((it) => it._key === active.id);
+      const newIdx = prev.items.findIndex((it) => it._key === over.id);
+      if (oldIdx === -1 || newIdx === -1) return prev;
+      const moved = arrayMove(prev.items, oldIdx, newIdx);
+      // Mover um item move seus filhos junto: re-insere os descendentes
+      // logo abaixo do item movido na ordem original deles.
+      const movedKey = String(active.id);
+      const descendantsInOrder = prev.items
+        .filter((it) => it._key !== movedKey && isDescendantOf(it._key, movedKey, prev.items));
+      const cleaned = moved.filter((it) => !descendantsInOrder.some((d) => d._key === it._key));
+      const finalIdx = cleaned.findIndex((it) => it._key === movedKey);
+      const out = [
+        ...cleaned.slice(0, finalIdx + 1),
+        ...descendantsInOrder,
+        ...cleaned.slice(finalIdx + 1),
+      ];
+      return { ...prev, items: out };
+    });
+    // Após o reorder, ajusta indent se houve delta horizontal significativo.
+    if (Math.abs(delta.x) > 30) {
+      if (delta.x > 0) indentItem(String(active.id));
+      else outdentItem(String(active.id));
+    }
+  };
 
   return (
     <Dialog
@@ -655,21 +982,48 @@ function NoteEditor({
             className="h-8 border-0 bg-transparent px-1 text-base font-medium shadow-none focus-visible:ring-0 focus-visible:ring-offset-0"
           />
         </DialogHeader>
-        <div className="space-y-1 px-4 pb-2">
-          {draft.items.map((it, idx) => (
-            <ItemBlock
-              key={it._key}
-              item={it}
-              autoFocus={idx === draft.items.length - 1 && !it.text}
-              onChange={(next) => updateItem(it._key, next)}
-              onRemove={() => removeItem(it._key)}
-              onConvert={(kind) => convertItem(it._key, kind)}
-            />
-          ))}
-          <div className="flex items-center gap-3 pt-1">
+        <div className="space-y-0 px-4 pb-2">
+          <DndContext
+            sensors={sensors}
+            collisionDetection={closestCenter}
+            onDragEnd={handleDragEnd}
+          >
+            <SortableContext
+              items={draft.items.map((it) => it._key)}
+              strategy={verticalListSortingStrategy}
+            >
+              {draft.items.map((it, idx) => (
+                <div key={it._key}>
+                  {/* Gap pra inserir item ACIMA deste */}
+                  <InsertGap onInsert={(kind) => insertItem(kind, idx, it.parentKey)} />
+                  <SortableItemBlock
+                    id={it._key}
+                    item={it}
+                    indent={indentOf(it, byKey)}
+                    autoFocus={
+                      autoFocusKey === it._key ||
+                      (autoFocusKey === null &&
+                        idx === draft.items.length - 1 &&
+                        !it.text)
+                    }
+                    onChange={(next) => updateItem(it._key, next)}
+                    onRemove={() => removeItem(it._key)}
+                    onConvert={(kind) => convertItem(it._key, kind)}
+                    onEnter={() => insertAfter(it._key)}
+                    onIndent={() => indentItem(it._key)}
+                    onOutdent={() => outdentItem(it._key)}
+                  />
+                </div>
+              ))}
+            </SortableContext>
+            {/* Gap final pra inserir item ao FIM */}
+            <InsertGap onInsert={(kind) => insertItem(kind)} />
+          </DndContext>
+
+          <div className="flex items-center gap-3 pt-2">
             <button
               type="button"
-              onClick={() => addItem('text')}
+              onClick={() => insertItem('text')}
               className="flex items-center gap-1.5 px-1 py-1 text-xs text-muted-foreground hover:text-foreground"
             >
               <Plus className="h-3.5 w-3.5" />
@@ -677,7 +1031,7 @@ function NoteEditor({
             </button>
             <button
               type="button"
-              onClick={() => addItem('todo')}
+              onClick={() => insertItem('todo')}
               className="flex items-center gap-1.5 px-1 py-1 text-xs text-muted-foreground hover:text-foreground"
             >
               <CheckSquare className="h-3.5 w-3.5" />
@@ -977,6 +1331,53 @@ export default function MyTasks() {
     [patchNote],
   );
 
+  // Sensors p/ DnD de cards. Distance > 6px evita clique acidental virar drag.
+  const cardsDndSensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  );
+
+  /** Reordena as notes de uma section (pinned ou outras) e dispara PATCH de
+   * `order` em paralelo. Atualização otimista — em caso de erro, reverte. */
+  const reorderNotes = useCallback(
+    async (section: 'pinned' | 'others', activeId: number, overId: number) => {
+      if (activeId === overId) return;
+      const snapshot = notes;
+      // Aplica reorder local: pega só as notes da section, faz arrayMove,
+      // recombina mantendo ordem das outras inalterada.
+      const sectionNotes = snapshot.filter((n) =>
+        section === 'pinned' ? n.pinned && !n.archived : !n.pinned && !n.archived,
+      );
+      const oldIdx = sectionNotes.findIndex((n) => n.id === activeId);
+      const newIdx = sectionNotes.findIndex((n) => n.id === overId);
+      if (oldIdx === -1 || newIdx === -1) return;
+      const reordered = arrayMove(sectionNotes, oldIdx, newIdx);
+      // Atribui novo `order` sequencial (0..N-1) dentro da section.
+      const updates = reordered.map((n, i) => ({ id: n.id, order: i }));
+      const updatesById = new Map(updates.map((u) => [u.id, u.order]));
+      setNotes((prev) =>
+        prev.map((n) =>
+          updatesById.has(n.id) ? { ...n, order: updatesById.get(n.id)! } : n,
+        ),
+      );
+      try {
+        await Promise.all(
+          updates
+            .filter((u) => {
+              const original = snapshot.find((n) => n.id === u.id);
+              return original && original.order !== u.order;
+            })
+            .map((u) => userNoteService.update(u.id, { order: u.order })),
+        );
+      } catch (err) {
+        console.error('Erro ao reordenar notas:', err);
+        setError('Falha ao salvar a nova ordem. Recarregue a página.');
+        setNotes(snapshot);
+      }
+    },
+    [notes],
+  );
+
   const toggleItemOnCard = useCallback(
     async (note: UserNote, itemIdx: number, done: boolean) => {
       const sorted = (note.items || []).slice().sort((a, b) => a.order - b.order);
@@ -1138,63 +1539,127 @@ export default function MyTasks() {
               </p>
             </div>
           ) : (
-            <div className="space-y-6">
-              {pinned.length > 0 && (
-                <section>
-                  <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                    Fixadas
-                  </h2>
-                  <Masonry breakpoints={NOTES_MASONRY_BREAKPOINTS}>
-                    {pinned.map((note) => (
-                      <NoteCard
-                        key={note.id}
-                        note={note}
-                        selectionMode={selectionMode}
-                        selected={selectedNoteIds.includes(note.id)}
-                        onClick={() =>
-                          selectionMode ? toggleNoteSelected(note.id) : setEditingId(note.id)
-                        }
-                        onTogglePin={() => void togglePin(note)}
-                        onToggleArchive={() => void toggleArchive(note)}
-                        onDelete={() => handleDelete(note.id)}
-                        onChangeColor={(color) => void changeColor(note, color)}
-                        onToggleItem={(idx, done) => void toggleItemOnCard(note, idx, done)}
-                      />
-                    ))}
-                  </Masonry>
-                </section>
-              )}
-              <section>
+            <LayoutGroup>
+              <div className="space-y-6">
                 {pinned.length > 0 && (
-                  <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                    Outras
-                  </h2>
-                )}
-                <Masonry breakpoints={NOTES_MASONRY_BREAKPOINTS}>
-                  {[
-                    ...(filter === 'active' && !search && !selectionMode
-                      ? [<CreateNoteCard key="__create__" onClick={() => setCreatingOpen(true)} />]
-                      : []),
-                    ...others.map((note) => (
-                      <NoteCard
-                        key={note.id}
-                        note={note}
-                        selectionMode={selectionMode}
-                        selected={selectedNoteIds.includes(note.id)}
-                        onClick={() =>
-                          selectionMode ? toggleNoteSelected(note.id) : setEditingId(note.id)
+                  <section>
+                    <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                      Fixadas
+                    </h2>
+                    <DndContext
+                      sensors={cardsDndSensors}
+                      collisionDetection={closestCenter}
+                      onDragEnd={(e) => {
+                        if (e.over && e.active.id !== e.over.id) {
+                          void reorderNotes(
+                            'pinned',
+                            Number(e.active.id),
+                            Number(e.over.id),
+                          );
                         }
-                        onTogglePin={() => void togglePin(note)}
-                        onToggleArchive={() => void toggleArchive(note)}
-                        onDelete={() => handleDelete(note.id)}
-                        onChangeColor={(color) => void changeColor(note, color)}
-                        onToggleItem={(idx, done) => void toggleItemOnCard(note, idx, done)}
-                      />
-                    )),
-                  ]}
-                </Masonry>
-              </section>
-            </div>
+                      }}
+                    >
+                      <SortableContext
+                        items={pinned.map((n) => n.id)}
+                        strategy={rectSortingStrategy}
+                      >
+                        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                          {pinned.map((note) => (
+                            <SortableNoteCardWrapper
+                              key={note.id}
+                              noteId={note.id}
+                              layoutId={`note-${note.id}`}
+                            >
+                              {({ dragHandleRef, dragListeners }) => (
+                                <NoteCard
+                                  note={note}
+                                  selectionMode={selectionMode}
+                                  selected={selectedNoteIds.includes(note.id)}
+                                  dragHandleRef={dragHandleRef}
+                                  dragListeners={dragListeners}
+                                  onClick={() =>
+                                    selectionMode
+                                      ? toggleNoteSelected(note.id)
+                                      : setEditingId(note.id)
+                                  }
+                                  onTogglePin={() => void togglePin(note)}
+                                  onToggleArchive={() => void toggleArchive(note)}
+                                  onDelete={() => handleDelete(note.id)}
+                                  onChangeColor={(color) => void changeColor(note, color)}
+                                  onToggleItem={(idx, done) =>
+                                    void toggleItemOnCard(note, idx, done)
+                                  }
+                                />
+                              )}
+                            </SortableNoteCardWrapper>
+                          ))}
+                        </div>
+                      </SortableContext>
+                    </DndContext>
+                  </section>
+                )}
+                <section>
+                  {pinned.length > 0 && (
+                    <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                      Outras
+                    </h2>
+                  )}
+                  <DndContext
+                    sensors={cardsDndSensors}
+                    collisionDetection={closestCenter}
+                    onDragEnd={(e) => {
+                      if (e.over && e.active.id !== e.over.id) {
+                        void reorderNotes(
+                          'others',
+                          Number(e.active.id),
+                          Number(e.over.id),
+                        );
+                      }
+                    }}
+                  >
+                    <SortableContext
+                      items={others.map((n) => n.id)}
+                      strategy={rectSortingStrategy}
+                    >
+                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                        {filter === 'active' && !search && !selectionMode && (
+                          <CreateNoteCard onClick={() => setCreatingOpen(true)} />
+                        )}
+                        {others.map((note) => (
+                          <SortableNoteCardWrapper
+                            key={note.id}
+                            noteId={note.id}
+                            layoutId={`note-${note.id}`}
+                          >
+                            {({ dragHandleRef, dragListeners }) => (
+                              <NoteCard
+                                note={note}
+                                selectionMode={selectionMode}
+                                selected={selectedNoteIds.includes(note.id)}
+                                dragHandleRef={dragHandleRef}
+                                dragListeners={dragListeners}
+                                onClick={() =>
+                                  selectionMode
+                                    ? toggleNoteSelected(note.id)
+                                    : setEditingId(note.id)
+                                }
+                                onTogglePin={() => void togglePin(note)}
+                                onToggleArchive={() => void toggleArchive(note)}
+                                onDelete={() => handleDelete(note.id)}
+                                onChangeColor={(color) => void changeColor(note, color)}
+                                onToggleItem={(idx, done) =>
+                                  void toggleItemOnCard(note, idx, done)
+                                }
+                              />
+                            )}
+                          </SortableNoteCardWrapper>
+                        ))}
+                      </div>
+                    </SortableContext>
+                  </DndContext>
+                </section>
+              </div>
+            </LayoutGroup>
           )}
         </div>
       )}

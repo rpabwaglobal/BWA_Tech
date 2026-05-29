@@ -21,6 +21,21 @@ export type UserNoteItem = {
   /** Só relevante quando kind='todo'. */
   done: boolean;
   order: number;
+  /** PK do item-pai (para indentação tipo árvore). null = raiz.
+   *  Read-only: o cliente referencia pais via parent_client_id no payload de
+   *  escrita; o backend devolve o `parent` resolvido. */
+  parent?: number | null;
+};
+
+/** Item enviado ao backend (POST/PATCH). `client_id` e `parent_client_id`
+ *  permitem referências cruzadas entre items recém-criados no mesmo payload
+ *  (já que IDs reais só nascem após persistir). */
+export type UserNoteItemInput = Omit<UserNoteItem, 'id' | 'parent'> & {
+  /** ID temporário (qualquer string única) usado pra ser referenciado por
+   *  outros itens do mesmo payload via `parent_client_id`. */
+  client_id?: string;
+  /** Referência ao `client_id` de outro item da mesma payload. */
+  parent_client_id?: string | null;
 };
 
 export type UserNote = {
@@ -42,7 +57,7 @@ export type UserNoteCreate = {
   pinned?: boolean;
   archived?: boolean;
   order?: number;
-  items?: Array<Omit<UserNoteItem, 'id'> & { id?: number }>;
+  items?: UserNoteItemInput[];
 };
 
 export type UserNoteUpdate = Partial<UserNoteCreate>;

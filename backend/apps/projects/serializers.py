@@ -191,9 +191,25 @@ class ProjectSerializer(serializers.ModelSerializer):
 
 
 class UserNoteItemSerializer(serializers.ModelSerializer):
+    # `parent` é o PK do item-pai no DB. Read-only no output (IDs trocam a
+    # cada save por causa da replace-strategy); na entrada usa-se
+    # `parent_client_id` (ver UserNoteSerializer).
+    parent = serializers.PrimaryKeyRelatedField(read_only=True)
+    # Inputs auxiliares pra referência cruzada dentro do MESMO payload:
+    # cada item pode declarar um `client_id` (string opaca) e referenciar
+    # outro item via `parent_client_id`. O serializer resolve depois de criar.
+    client_id = serializers.CharField(required=False, allow_blank=True, write_only=True)
+    parent_client_id = serializers.CharField(
+        required=False, allow_blank=True, allow_null=True, write_only=True,
+    )
+
     class Meta:
         model = UserNoteItem
-        fields = ['id', 'kind', 'text', 'done', 'order', 'created_at', 'updated_at']
+        fields = [
+            'id', 'kind', 'text', 'done', 'order', 'parent',
+            'client_id', 'parent_client_id',
+            'created_at', 'updated_at',
+        ]
         # `id` precisa ser read-only — o backend usa estratégia de replace (delete + create)
         # nos updates aninhados, então ids vindos do cliente seriam ignorados ou
         # piores: causariam IntegrityError ao tentar inserir com PK já existente.
@@ -212,12 +228,40 @@ class UserNoteSerializer(serializers.ModelSerializer):
         read_only_fields = ['created_at', 'updated_at']
 
     def _create_items(self, note, items_data):
+        """Cria itens em DUAS passadas pra suportar parent_client_id.
+
+        Pass 1: cria todos os itens sem parent, guarda um mapa
+        client_id → PK gerado.
+        Pass 2: para cada item com `parent_client_id`, resolve o PK via
+        o mapa e atualiza `parent` em bulk.
+        """
+        client_id_to_pk: dict[str, int] = {}
+        created: list[tuple[UserNoteItem, dict]] = []
         for idx, item in enumerate(items_data):
-            payload = {k: v for k, v in item.items() if k != 'order'}
+            payload = {
+                k: v for k, v in item.items()
+                if k not in ('order', 'client_id', 'parent_client_id')
+            }
             # `done` só faz sentido pra todos — zero para texto evita confusão no admin.
             if payload.get('kind') != UserNoteItemKind.TODO:
                 payload['done'] = False
-            UserNoteItem.objects.create(note=note, order=item.get('order', idx), **payload)
+            obj = UserNoteItem.objects.create(
+                note=note, order=item.get('order', idx), **payload,
+            )
+            client_id = (item.get('client_id') or '').strip()
+            if client_id:
+                client_id_to_pk[client_id] = obj.pk
+            created.append((obj, item))
+
+        # Pass 2: linka pais
+        for obj, item in created:
+            ref = (item.get('parent_client_id') or '').strip() if item.get('parent_client_id') else ''
+            if ref and ref in client_id_to_pk:
+                parent_pk = client_id_to_pk[ref]
+                # Defesa: item não pode ser pai de si mesmo (defesa).
+                if parent_pk != obj.pk:
+                    obj.parent_id = parent_pk
+                    obj.save(update_fields=['parent'])
 
     def create(self, validated_data):
         items_data = validated_data.pop('items', [])
