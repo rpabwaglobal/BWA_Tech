@@ -54,6 +54,24 @@ export type PatchChamadoSuportePayload = {
   status?: SuporteStatusApi;
   responsavel_solucao?: string | null;
   descricao_resolucao?: string | null;
+  /** PK do SuporteTipo — usado pra mover entre tabs RPA / Easy / Dashboards. */
+  tipo?: number;
+};
+
+export type ListByUsuarioFiltered = {
+  usuario_email?: string;
+  /** Filtra por SuporteTipo (PK). */
+  tipo_id?: number;
+  /** Filtra por status do chamado (Aberto / Em andamento / Resolvido / Cancelado). */
+  status?: SuporteStatusApi;
+  /** Limit/offset ativam a resposta `{count, results}` (scroll infinito). */
+  limit?: number;
+  offset?: number;
+};
+
+export type ListByUsuarioPagedResponse = {
+  count: number;
+  results: ChamadoSuporte[];
 };
 
 export type CatalogoItemLista = { id: number; nome: string; ativo: boolean };
@@ -122,6 +140,33 @@ export const suporteService = {
 
   async patch(id: number, payload: PatchChamadoSuportePayload): Promise<ChamadoSuporte> {
     const { data } = await formulariosApi.patch<ChamadoSuporte>(`suporte/${id}/`, payload);
+    return data;
+  },
+
+  /** Atalho pra mover chamado entre tabs (PATCH tipo). Otimizado pelo
+   * frontend pra rodar em Promise.all no multi-select. */
+  async patchTipo(id: number, tipoId: number): Promise<ChamadoSuporte> {
+    const { data } = await formulariosApi.patch<ChamadoSuporte>(`suporte/${id}/`, {
+      tipo: tipoId,
+    });
+    return data;
+  },
+
+  /** Versão filtrada + paginada do listByUsuario.
+   * - Sem `limit/offset`: retorna array (igual listByUsuario).
+   * - Com `limit/offset`: retorna `{count, results}` pra scroll infinito.
+   * Aceita `tipo_id` e `status` (backend filtra no SQL).
+   */
+  async listByUsuarioFiltered(params: ListByUsuarioFiltered): Promise<ChamadoSuporte[] | ListByUsuarioPagedResponse> {
+    const cleaned: Record<string, string | number> = {};
+    if (params.usuario_email) cleaned.usuario_email = params.usuario_email;
+    if (params.tipo_id != null) cleaned.tipo_id = params.tipo_id;
+    if (params.status) cleaned.status = params.status;
+    if (params.limit != null) cleaned.limit = params.limit;
+    if (params.offset != null) cleaned.offset = params.offset;
+    const { data } = await formulariosApi.get<
+      ChamadoSuporte[] | ListByUsuarioPagedResponse
+    >('suporte/por-usuario/', { params: cleaned });
     return data;
   },
 

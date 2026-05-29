@@ -23,7 +23,6 @@ import { CSS } from '@dnd-kit/utilities';
 import {
   Loader2,
   Plus,
-  Bell,
   ExternalLink,
   Copy,
   Check,
@@ -36,6 +35,8 @@ import {
   Columns3,
   FileSpreadsheet,
   Download,
+  CheckSquare,
+  ArrowRightLeft,
 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { Button } from '@/components/ui/button';
@@ -85,6 +86,12 @@ import {
 } from '@/services/suporteService';
 import { cn } from '@/lib/utils';
 import { formatDateTime } from '@/lib/dateUtils';
+import { parseDescricao, parseEmpresa } from '@/lib/suporteParsers';
+import { isSuporteOverdue } from '@/lib/businessHours';
+import {
+  readShowColorsOnSuporteCards,
+  writeShowColorsOnSuporteCards,
+} from '@/lib/suporteCardDisplayPreference';
 import {
   getSuporteColumnDefsByGroup,
   SUPORTE_CHAMADOS_COLUMN_DEFS,
@@ -98,16 +105,46 @@ import { userService, type User } from '@/services/userService';
 import { suporteTimelineService } from '@/services/suporteTimelineService';
 
 const SUPORTE_LIST_COLUMNS_STORAGE_KEY = 'bwa_suporte_list_columns_v1';
+/** Tab atual persistida (RPA | Easy | Dashboards). */
+const SUPORTE_ACTIVE_TAB_STORAGE_KEY = 'bwa_suporte_active_tab_v1';
 
+/** Paleta dos headers das etapas — crescente roxo escuro → azul-acinzentado.
+ *  Concluído = #6a8aa8 (o mais azul, definido pelo usuário). Os 4 anteriores
+ *  formam uma progressão suave saindo do roxo profundo, passando pelo
+ *  --bwa-purple (#754c99) na metade, e fazendo a transição roxo→azul antes
+ *  de chegar em Concluído. Inviabilizado entra entre Parado por pendências
+ *  e Concluído nessa progressão. */
 const STAGES = [
-  { key: 'a_desenvolver' as const, label: 'A desenvolver', hint: 'Aguardando suporte' },
-  { key: 'em_desenvolvimento' as const, label: 'Em desenvolvimento', hint: 'Com responsável' },
-  { key: 'parado_pendencias' as const, label: 'Parado por pendências', hint: 'Em andamento bloqueado' },
-  { key: 'inviabilizado' as const, label: 'Inviabilizado', hint: 'Cancelado na API' },
-  { key: 'finalizado' as const, label: 'Concluído', hint: 'Resolvido na API' },
+  { key: 'a_desenvolver' as const, label: 'A desenvolver', hint: 'Aguardando suporte', headerBg: '#2a1f3d' },
+  { key: 'em_desenvolvimento' as const, label: 'Em desenvolvimento', hint: 'Com responsável', headerBg: '#43325c' },
+  { key: 'parado_pendencias' as const, label: 'Parado por pendências', hint: 'Em andamento bloqueado', headerBg: '#5a4580' },
+  { key: 'inviabilizado' as const, label: 'Inviabilizado', hint: 'Cancelado na API', headerBg: '#5d6b98' },
+  { key: 'finalizado' as const, label: 'Concluído', hint: 'Resolvido na API', headerBg: '#6a8aa8' },
 ];
 
 type StageKey = (typeof STAGES)[number]['key'];
+
+/** Etapas onde paginamos (volume alto). */
+const PAGED_STAGES: ReadonlySet<StageKey> = new Set(['finalizado', 'inviabilizado']);
+const SUPORTE_PAGE_SIZE = 50;
+
+/** Tabs visíveis e mapeamento pro nome do SuporteTipo no backend. */
+const TABS = [
+  { key: 'rpa' as const, label: 'RPA', tipoNome: 'RPA' },
+  { key: 'easy' as const, label: 'Easy', tipoNome: 'Easy' },
+  { key: 'dashboards' as const, label: 'Dashboards', tipoNome: 'Dashboards' },
+];
+type TabKey = (typeof TABS)[number]['key'];
+
+function readStoredSuporteTab(): TabKey {
+  try {
+    const raw = window.localStorage.getItem(SUPORTE_ACTIVE_TAB_STORAGE_KEY);
+    if (raw && TABS.some((t) => t.key === raw)) return raw as TabKey;
+  } catch {
+    /* ignore */
+  }
+  return 'rpa';
+}
 
 function readStoredSuporteColumnIds(): string[] {
   try {
@@ -363,6 +400,30 @@ export default function Support() {
   const [listExpandAllColumns, setListExpandAllColumns] = useState(false);
   const listHeaderClickTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Tabs RPA / Easy / Dashboards (estado persistido em localStorage).
+  const [currentTab, setCurrentTab] = useState<TabKey>(() => readStoredSuporteTab());
+  /** Mapa: nome do SuporteTipo (RPA, Easy, Dashboards) → id real no banco.
+   *  Carregado do catálogo no mount. Sem isso, frontend não consegue filtrar. */
+  const [tipoIdByName, setTipoIdByName] = useState<Record<string, number>>({});
+
+  // Toggle de cores (status badges etc). Persiste em localStorage.
+  const [showCardColors, setShowCardColors] = useState<boolean>(() => readShowColorsOnSuporteCards());
+
+  // Multi-select pra mover entre tabs.
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedChamadoIds, setSelectedChamadoIds] = useState<number[]>([]);
+  const [bulkMoving, setBulkMoving] = useState(false);
+
+  // Quantidade já carregada por etapa paginada (finalizado/inviabilizado).
+  // Default igual ao page size — backend serve 50 por chamada incremental.
+  const [pageLimits, setPageLimits] = useState<Record<StageKey, number>>(() => ({
+    a_desenvolver: Number.POSITIVE_INFINITY,
+    em_desenvolvimento: Number.POSITIVE_INFINITY,
+    parado_pendencias: Number.POSITIVE_INFINITY,
+    inviabilizado: SUPORTE_PAGE_SIZE,
+    finalizado: SUPORTE_PAGE_SIZE,
+  }));
+
   const bumpTimeline = useCallback(() => setTimelineRefreshNonce((n) => n + 1), []);
 
   const getKanbanStageLabel = useCallback(
@@ -436,6 +497,54 @@ export default function Support() {
     }
   }, [selectedColumnIds]);
 
+  // Persiste tab atual.
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(SUPORTE_ACTIVE_TAB_STORAGE_KEY, currentTab);
+    } catch {
+      /* ignore */
+    }
+  }, [currentTab]);
+
+  // Persiste preferência de exibir cores.
+  useEffect(() => {
+    writeShowColorsOnSuporteCards(showCardColors);
+  }, [showCardColors]);
+
+  // Carrega catálogo de tipos e resolve IDs dos 3 tabs (RPA, Easy, Dashboards).
+  useEffect(() => {
+    let cancelled = false;
+    void suporteService.fetchCatalog().then((cat) => {
+      if (cancelled) return;
+      const map: Record<string, number> = {};
+      for (const tipo of cat.tipos) {
+        if (TABS.some((t) => t.tipoNome === tipo.nome)) {
+          map[tipo.nome] = tipo.id;
+        }
+      }
+      setTipoIdByName(map);
+    }).catch(() => {
+      // Sem catálogo, tabs ficam sem id — fallback: mostra "(carregando)" nas tabs.
+    });
+    return () => { cancelled = true; };
+  }, []);
+
+  // Reseta paginação ao mudar de tab (cada tab tem seu kanban montado independente).
+  useEffect(() => {
+    setPageLimits((prev) => ({
+      ...prev,
+      finalizado: SUPORTE_PAGE_SIZE,
+      inviabilizado: SUPORTE_PAGE_SIZE,
+    }));
+  }, [currentTab]);
+
+  // Sair do modo seleção ao trocar de tab evita ambiguidade
+  // (cards selecionados em RPA não fazem sentido em Easy).
+  useEffect(() => {
+    setSelectionMode(false);
+    setSelectedChamadoIds([]);
+  }, [currentTab]);
+
   useEffect(() => {
     if (viewMode !== 'lista') {
       setListExpandedColumnIds(new Set());
@@ -462,6 +571,12 @@ export default function Support() {
     setDetailChamado((cur) => (cur?.id === row.id ? row : cur));
   }, []);
 
+  const removeRemoteChamado = useCallback((id: number) => {
+    setItems((prev) => prev.filter((c) => c.id !== id));
+    setDetailChamado((cur) => (cur?.id === id ? null : cur));
+    setSelectedChamadoIds((prev) => prev.filter((x) => x !== id));
+  }, []);
+
   // Realtime de suporte:
   // - Modo local (Django dono dos chamados): signals nativos disparam o broadcast.
   // - Modo proxy-through-Django (chamados no portal externo): o proxy dispara o
@@ -470,6 +585,7 @@ export default function Support() {
     enabled:
       isAuthenticated && (usesLocalFormulariosBackend() || proxyThroughDjango()),
     onChamadoUpsert: mergeRemoteChamado,
+    onChamadoDeleted: removeRemoteChamado,
   });
 
   /** Portal externo: novos chamados por WS; arrastar/outras alterações via polling (dev: proxy Vite com ws:true). Com proxy Django não há WS mesmo host → só polling. */
@@ -592,18 +708,61 @@ export default function Support() {
     );
   }, [items, suporteSearchQuery, filterResponsavelSolucao, assignUsers]);
 
+  /** Filtro adicional pela tab atual (RPA / Easy / Dashboards). Chamados de
+   * outros tipos (ex.: "Infraestrutura" antigo) ficam ocultos das 3 tabs.
+   * Se ainda não resolvemos o id da tab, mostra vazio. */
+  const tabFilteredItems = useMemo(() => {
+    const tabSpec = TABS.find((t) => t.key === currentTab);
+    const tabTipoId = tabSpec ? tipoIdByName[tabSpec.tipoNome] : undefined;
+    if (tabTipoId == null) return [] as ChamadoSuporte[];
+    const filtered = filteredItems.filter((c) => {
+      const tipoId = typeof c.tipo === 'number' ? c.tipo : c.tipo?.id;
+      return tipoId === tabTipoId;
+    });
+    // Ordena por data_atualizacao desc pra que o slice da paginação
+    // (colunas finalizado/inviabilizado) sempre mostre os MAIS RECENTES
+    // primeiro. Sem isso, um card recém-concluído pode cair fora dos 50
+    // primeiros e "sumir" da UI apesar do PATCH ter sucesso.
+    return filtered.slice().sort((a, b) => {
+      const da = a.data_atualizacao ?? a.data_abertura ?? '';
+      const db = b.data_atualizacao ?? b.data_abertura ?? '';
+      return db.localeCompare(da);
+    });
+  }, [filteredItems, currentTab, tipoIdByName]);
+
+  /** Totais REAIS por etapa (antes do truncamento da paginação) — usado pro
+   * badge da coluna mostrar "120" mesmo se só 50 estão visíveis.
+   *
+   * Nota: conta apenas chamados visíveis na tab atual (já passaram pela
+   * busca + filtro de tipo). Não é o total absoluto no backend. */
+  const visibleStageCounts = useMemo(() => {
+    const map = Object.fromEntries(STAGES.map((s) => [s.key, 0])) as Record<StageKey, number>;
+    for (const c of tabFilteredItems) {
+      map[chamadoToStage(c)] += 1;
+    }
+    return map;
+  }, [tabFilteredItems]);
+
   const columns = useMemo(() => {
     const map = Object.fromEntries(STAGES.map((s) => [s.key, [] as ChamadoSuporte[]])) as Record<
       StageKey,
       ChamadoSuporte[]
     >;
-    for (const c of filteredItems) {
+    for (const c of tabFilteredItems) {
       map[chamadoToStage(c)].push(c);
     }
+    // Paginação client-side em finalizado/inviabilizado: trunca pelo pageLimits.
+    for (const stage of STAGES) {
+      if (PAGED_STAGES.has(stage.key)) {
+        const lim = pageLimits[stage.key];
+        if (Number.isFinite(lim)) map[stage.key] = map[stage.key].slice(0, lim);
+      }
+    }
     return map;
-  }, [filteredItems]);
+  }, [tabFilteredItems, pageLimits]);
 
-  const visibleChamadosForList = filteredItems;
+  // Lista também respeita a tab atual.
+  const visibleChamadosForList = tabFilteredItems;
   const selectedColumnDefsSafe = SUPORTE_CHAMADOS_COLUMN_DEFS.filter((c) =>
     selectedColumnIds.includes(c.id),
   );
@@ -800,6 +959,64 @@ export default function Support() {
     }
   };
 
+  // ── Multi-select ─────────────────────────────────────────────────────
+  const toggleChamadoSelected = useCallback((id: number) => {
+    setSelectedChamadoIds((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
+    );
+  }, []);
+
+  const exitSelectionMode = useCallback(() => {
+    setSelectionMode(false);
+    setSelectedChamadoIds([]);
+  }, []);
+
+  /** Move chamados selecionados pra uma outra tab via PATCH tipo. Otimista
+   *  local (atualiza o tipo no items[]); recarrega em caso de erro. */
+  const handleBulkMoveToTab = useCallback(
+    async (targetTabKey: TabKey) => {
+      const targetSpec = TABS.find((t) => t.key === targetTabKey);
+      const targetTipoId = targetSpec ? tipoIdByName[targetSpec.tipoNome] : undefined;
+      if (!targetTipoId || selectedChamadoIds.length === 0) return;
+      const ids = selectedChamadoIds.slice();
+      setBulkMoving(true);
+      // Snapshot SÓ dos chamados afetados (não o array todo): se um chamado
+      // não-selecionado mudar via WS durante o PATCH, o revert não pisa em cima.
+      const snapshotById = new Map<number, ChamadoSuporte>();
+      for (const c of items) {
+        if (ids.includes(c.id)) snapshotById.set(c.id, c);
+      }
+      // Tipo é sempre serializado como objeto {id, nome} no backend; substitui
+      // direto sem espalhar o tipo antigo (evita carregar campos stale).
+      const targetTipoObj = { id: targetTipoId, nome: targetSpec!.tipoNome };
+      setItems((prev) =>
+        prev.map((c) =>
+          ids.includes(c.id)
+            ? { ...c, tipo: typeof c.tipo === 'number' ? targetTipoId : targetTipoObj }
+            : c,
+        ),
+      );
+      try {
+        await Promise.all(ids.map((id) => suporteService.patchTipo(id, targetTipoId)));
+        exitSelectionMode();
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Falha ao mover chamados entre abas.');
+        // Reverte SÓ os IDs do batch — preserva mudanças concorrentes.
+        setItems((prev) =>
+          prev.map((c) => (snapshotById.has(c.id) ? snapshotById.get(c.id)! : c)),
+        );
+      } finally {
+        setBulkMoving(false);
+      }
+    },
+    [tipoIdByName, selectedChamadoIds, items, exitSelectionMode],
+  );
+
+  /** "Carregar mais" pra etapas paginadas. */
+  const loadMoreForStage = useCallback((stage: StageKey) => {
+    setPageLimits((prev) => ({ ...prev, [stage]: prev[stage] + SUPORTE_PAGE_SIZE }));
+  }, []);
+
   const handleConcluirTicketNoCard = useCallback(
     async (chamado: ChamadoSuporte, notasResolucao: string) => {
       const noteTrim = notasResolucao.trim();
@@ -834,6 +1051,43 @@ export default function Support() {
         </div>
       )}
 
+      {/* Tabs RPA / Easy / Dashboards — mesmo visual das tabs em MyTasks
+          (border-b com underline ativo). Posicionadas ACIMA da search. */}
+      {!(loading && items.length === 0) ? (
+        <div className="flex items-center gap-[8px] border-b border-[var(--color-border)] shrink-0">
+          {TABS.map((t) => {
+            const tipoId = tipoIdByName[t.tipoNome];
+            const count = tipoId != null
+              ? items.filter((c) => {
+                  const tid = typeof c.tipo === 'number' ? c.tipo : c.tipo?.id;
+                  return tid === tipoId;
+                }).length
+              : null;
+            const active = currentTab === t.key;
+            return (
+              <Button
+                key={t.key}
+                variant="ghost"
+                onClick={() => setCurrentTab(t.key)}
+                className={cn(
+                  'rounded-none border-b-2 border-transparent px-[16px] py-[8px] h-auto',
+                  active
+                    ? 'border-[var(--color-primary)] text-[var(--color-primary)] font-semibold'
+                    : 'text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]',
+                )}
+              >
+                {t.label}
+                {count != null && count > 0 && (
+                  <span className="ml-1.5 rounded-full bg-[var(--color-primary)]/10 px-1.5 py-0.5 text-[10px] font-semibold text-[var(--color-primary)]">
+                    {count}
+                  </span>
+                )}
+              </Button>
+            );
+          })}
+        </div>
+      ) : null}
+
       {!(loading && items.length === 0) ? (
         <div className="flex shrink-0 flex-col gap-[8px] lg:flex-row lg:items-end lg:gap-[8px]">
           <div className="relative min-h-[40px] min-w-0 w-full lg:min-w-[min(280px,100%)] lg:flex-1">
@@ -849,6 +1103,33 @@ export default function Support() {
                 className="h-[40px] pl-[40px]"
               />
             </div>
+          </div>
+          <div className="flex shrink-0 flex-col gap-[4px]">
+            <span className="mb-[4px] block text-xs text-[var(--color-muted-foreground)]">
+              Seleção
+            </span>
+            <Button
+              type="button"
+              variant={selectionMode ? 'default' : 'outline'}
+              className="h-[40px] gap-[8px] px-[14px] shadow-sm"
+              onClick={() => {
+                if (selectionMode) exitSelectionMode();
+                else setSelectionMode(true);
+              }}
+              disabled={loading || viewMode !== 'kanban'}
+              title={
+                viewMode !== 'kanban'
+                  ? 'Disponível apenas no modo Kanban'
+                  : selectionMode
+                    ? 'Sair do modo seleção'
+                    : 'Selecionar tickets para mover entre tabs'
+              }
+            >
+              <CheckSquare className="h-[18px] w-[18px] shrink-0" />
+              <span className="hidden text-sm font-medium sm:inline">
+                {selectionMode ? 'Sair' : 'Selecionar'}
+              </span>
+            </Button>
           </div>
           <div className="flex shrink-0 flex-col gap-[4px]">
             <span className="mb-[4px] block text-xs text-[var(--color-muted-foreground)]">Opções</span>
@@ -881,6 +1162,26 @@ export default function Support() {
                     <Plus className="h-4 w-4 shrink-0 text-[var(--color-primary)]" />
                     <span className="flex-1 text-left font-medium">Novo chamado</span>
                   </DropdownMenuItem>
+
+                  <DropdownMenuSeparator className="my-2" />
+
+                  {/* Toggle de cores nos cards. Persistido em localStorage
+                      (key: bwa_suporte_show_card_colors_v1). Espelha padrão
+                      de ProjectDetails. */}
+                  <label
+                    className="flex cursor-pointer items-center gap-2.5 rounded-md px-2 py-2.5 text-sm text-[var(--color-foreground)] transition-colors hover:bg-[var(--color-accent)]"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <input
+                      type="checkbox"
+                      className="h-4 w-4 shrink-0 rounded border-[var(--color-border)] accent-[var(--color-primary)]"
+                      checked={showCardColors}
+                      onChange={(e) => setShowCardColors(e.target.checked)}
+                    />
+                    <span className="flex-1 text-left leading-snug">
+                      Exibir cores nos cards (status + SLA)
+                    </span>
+                  </label>
 
                   <DropdownMenuSeparator className="my-2" />
 
@@ -1086,9 +1387,17 @@ export default function Support() {
                     stageKey={stage.key}
                     label={stage.label}
                     hint={stage.hint}
+                    headerBg={stage.headerBg}
                     chamados={columns[stage.key]}
+                    totalCount={visibleStageCounts[stage.key]}
+                    paginated={PAGED_STAGES.has(stage.key)}
+                    onLoadMore={() => loadMoreForStage(stage.key)}
                     users={assignUsers}
                     onOpen={(c) => setDetailChamado(c)}
+                    showCardColors={showCardColors}
+                    selectionMode={selectionMode}
+                    selectedChamadoIds={selectedChamadoIds}
+                    onToggleSelected={toggleChamadoSelected}
                   />
                 ))}
               </div>
@@ -1274,6 +1583,48 @@ export default function Support() {
         onConfirm={handlePendenciaConfirm}
         cardName={pendingPendenciaChamado ? tituloItemMotivo(pendingPendenciaChamado) : ''}
       />
+
+      {/* Barra inferior flutuante com ações de bulk move. Aparece só quando há
+          chamados selecionados em modo seleção. Mesmo padrão visual da página
+          de sprint/projetos. */}
+      {selectionMode && selectedChamadoIds.length > 0 && (
+        <div className="pointer-events-none fixed inset-x-0 bottom-6 z-40 flex justify-center px-4">
+          <div className="pointer-events-auto flex max-w-[min(100%,720px)] flex-wrap items-center justify-center gap-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-background)] px-5 py-3 shadow-lg">
+            <span className="text-sm font-medium text-[var(--color-foreground)]">
+              {selectedChamadoIds.length} ticket(s) selecionado(s)
+            </span>
+            <span className="text-[11px] uppercase tracking-wide text-[var(--color-muted-foreground)]">
+              Mover para
+            </span>
+            {TABS.filter((t) => t.key !== currentTab).map((t) => {
+              const targetTipoId = tipoIdByName[t.tipoNome];
+              return (
+                <Button
+                  key={t.key}
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={bulkMoving || targetTipoId == null}
+                  onClick={() => void handleBulkMoveToTab(t.key)}
+                >
+                  <ArrowRightLeft className="h-4 w-4 mr-2" />
+                  {t.label}
+                </Button>
+              );
+            })}
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={exitSelectionMode}
+              disabled={bulkMoving}
+            >
+              Cancelar
+            </Button>
+            {bulkMoving && <Loader2 className="h-4 w-4 animate-spin text-[var(--color-muted-foreground)]" />}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1282,25 +1633,46 @@ function SupportColumn({
   stageKey,
   label,
   hint,
+  headerBg,
   chamados,
+  totalCount,
+  paginated,
+  onLoadMore,
   users,
   onOpen,
+  showCardColors,
+  selectionMode,
+  selectedChamadoIds,
+  onToggleSelected,
 }: {
   stageKey: StageKey;
   label: string;
   hint: string;
+  /** Cor de fundo do header (paleta roxo→ciano por etapa). */
+  headerBg: string;
+  /** Cards visíveis (já truncados por paginação se aplicável). */
   chamados: ChamadoSuporte[];
+  /** Total de cards na etapa antes do truncamento (badge sempre mostra o REAL). */
+  totalCount: number;
+  /** Se a coluna é paginada (finalizado/inviabilizado). */
+  paginated: boolean;
+  onLoadMore: () => void;
   users: User[];
   onOpen: (c: ChamadoSuporte) => void;
+  showCardColors: boolean;
+  selectionMode: boolean;
+  selectedChamadoIds: number[];
+  onToggleSelected: (id: number) => void;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: stageKey });
   const empty = chamados.length === 0;
+  const hasMore = paginated && chamados.length < totalCount;
 
   return (
     <div
       ref={setNodeRef}
       className={cn(
-        'flex h-full min-h-0 min-w-[220px] flex-1 flex-col rounded-[12px] border border-[var(--color-border)]',
+        'flex h-full min-h-0 min-w-[220px] flex-1 flex-col overflow-hidden rounded-[12px] border border-[var(--color-border)]',
         empty ? 'bg-transparent' : 'bg-[var(--color-card)]',
         isOver &&
           cn(
@@ -1309,21 +1681,45 @@ function SupportColumn({
           ),
       )}
     >
-      <div className="flex flex-row items-center justify-between gap-[10px] border-b border-[var(--color-border)] p-[12px]">
+      <div
+        className="flex flex-row items-center justify-between gap-[10px] border-b border-[var(--color-border)] p-[12px]"
+        style={{ backgroundColor: headerBg, color: '#ffffff' }}
+      >
         <div className="min-w-0 flex-1">
-          <div className="font-medium text-[var(--color-foreground)]">{label}</div>
-          <div className="mt-[2px] text-[11px] text-[var(--color-muted-foreground)]">{hint}</div>
+          <div className="font-medium text-white">{label}</div>
+          <div className="mt-[2px] text-[11px] text-white/75">{hint}</div>
         </div>
-        <Badge variant="secondary" className="shrink-0 text-[11px] tabular-nums">
-          {chamados.length}
+        <Badge
+          variant="secondary"
+          className="shrink-0 text-[11px] tabular-nums bg-white/20 text-white border-transparent"
+        >
+          {totalCount}
         </Badge>
       </div>
       <div className="min-h-0 flex-1 space-y-[8px] overflow-y-auto p-[8px]">
         <SortableContext items={chamados.map((c) => dragId(c.id))} strategy={verticalListSortingStrategy}>
           {chamados.map((c) => (
-            <SortableChamadoCard key={c.id} chamado={c} users={users} onOpen={() => onOpen(c)} />
+            <SortableChamadoCard
+              key={c.id}
+              chamado={c}
+              users={users}
+              onOpen={() => onOpen(c)}
+              showCardColors={showCardColors}
+              selectionMode={selectionMode}
+              selected={selectedChamadoIds.includes(c.id)}
+              onToggleSelected={() => onToggleSelected(c.id)}
+            />
           ))}
         </SortableContext>
+        {hasMore && (
+          <button
+            type="button"
+            onClick={onLoadMore}
+            className="w-full rounded-[8px] border border-dashed border-[var(--color-border)] py-[8px] text-[11px] font-medium text-[var(--color-muted-foreground)] hover:bg-[var(--color-accent)] hover:text-[var(--color-foreground)]"
+          >
+            Carregar mais ({totalCount - chamados.length} restantes)
+          </button>
+        )}
       </div>
     </div>
   );
@@ -1373,15 +1769,24 @@ function SortableChamadoCard({
   chamado,
   users,
   onOpen,
+  showCardColors,
+  selectionMode,
+  selected,
+  onToggleSelected,
 }: {
   chamado: ChamadoSuporte;
   users: User[];
   onOpen: () => void;
+  showCardColors: boolean;
+  selectionMode: boolean;
+  selected: boolean;
+  onToggleSelected: () => void;
 }) {
   const bloqueado = chamadoEncerradoNoQuadro(chamado);
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: dragId(chamado.id),
-    disabled: bloqueado,
+    // Em modo seleção drag fica off — clique vira toggle.
+    disabled: bloqueado || selectionMode,
   });
   const style = {
     transform: CSS.Transform.toString(transform),
@@ -1389,97 +1794,115 @@ function SortableChamadoCard({
     opacity: isDragging ? 0.45 : 1,
   };
 
+  // Parser do "nome do robô" e da descrição limpa.
+  const { robotName, cleanText } = parseDescricao(chamado.descricao);
+  // SLA 24h úteis estourado? (só conta pra cards ainda em aberto.)
+  const overdue = isSuporteOverdue(chamado);
+  const sol = (chamado.responsavel_solucao ?? '').trim();
+  const ped = (chamado.responsavel ?? '').trim();
+
   return (
     <div
       ref={setNodeRef}
       style={style}
       className={cn(
-        'w-full space-y-[6px] rounded-[10px] border border-[var(--color-border)] bg-[var(--color-background)] p-[10px] text-left shadow-sm outline-none transition-colors focus-visible:ring-2 focus-visible:ring-[var(--color-ring)] focus-visible:ring-offset-2',
-        bloqueado
-          ? 'cursor-default'
+        'w-full space-y-[6px] rounded-[10px] border p-[10px] text-left shadow-sm outline-none transition-colors focus-visible:ring-2 focus-visible:ring-[var(--color-ring)] focus-visible:ring-offset-2',
+        // Cor base do card: vermelho (rose) se overdue + showCardColors, senão neutro.
+        overdue && showCardColors
+          ? 'border-rose-300/95 bg-rose-100 text-rose-950 dark:border-rose-400/55 dark:bg-rose-950/40 dark:text-rose-50'
+          : 'border-[var(--color-border)] bg-[var(--color-background)]',
+        bloqueado || selectionMode
+          ? 'cursor-pointer'
           : 'touch-none cursor-grab hover:border-[var(--color-primary)]/40 active:cursor-grabbing',
+        selected && 'ring-2 ring-[var(--color-primary)] border-[var(--color-primary)]',
       )}
-      {...(!bloqueado ? { ...attributes, ...listeners } : { tabIndex: 0, role: 'button' as const })}
+      {...(!bloqueado && !selectionMode
+        ? { ...attributes, ...listeners }
+        : { tabIndex: 0, role: 'button' as const })}
       title={bloqueado ? 'Ticket concluído ou inviabilizado — não pode ser movido no quadro' : undefined}
-      onClick={() => onOpen()}
+      onClick={() => {
+        // Cards encerrados (Resolvido/Cancelado) não participam do batch move
+        // entre abas — mover tipo de um ticket já fechado não faz sentido.
+        if (selectionMode && !bloqueado) onToggleSelected();
+        else onOpen();
+      }}
       onKeyDown={(e) => {
         if (e.key === 'Enter' || e.key === ' ') {
           e.preventDefault();
-          onOpen();
+          if (selectionMode && !bloqueado) onToggleSelected();
+          else onOpen();
         }
       }}
     >
-          <div className="flex items-start justify-between gap-[8px]">
-            <div className="min-w-0 flex-1 text-[13px] font-semibold leading-snug text-[var(--color-foreground)] line-clamp-2">
-              {tituloItemMotivo(chamado)}
-            </div>
-            <span className="shrink-0 pt-[1px] text-[11px] font-semibold tabular-nums text-[var(--color-muted-foreground)]">
-              #{chamado.id}
-            </span>
-          </div>
-          <p className="text-[12px] leading-snug whitespace-pre-wrap break-words text-[var(--color-foreground)] line-clamp-4">
-            {chamado.descricao?.trim() ? chamado.descricao : '—'}
-          </p>
-          <div className="text-[11px] text-[var(--color-muted-foreground)]">
-            {(chamado.usuario_setor ?? '').trim() || '—'} – {chamado.usuario_nome || '—'}
-          </div>
-          <div className="text-[11px] font-medium text-[var(--color-foreground)]">{catalogNome(chamado.tipo)}</div>
+      <div className="flex items-start justify-between gap-[8px]">
+        {selectionMode && !bloqueado && (
+          <input
+            type="checkbox"
+            checked={selected}
+            onChange={onToggleSelected}
+            onClick={(e) => e.stopPropagation()}
+            className="mt-[2px] h-4 w-4 shrink-0 rounded border-[var(--color-input)] accent-[var(--color-primary)]"
+          />
+        )}
+        {/* Título: nome do robô (extraído do [Item selecionado: ...] da descrição). */}
+        <div className="min-w-0 flex-1 text-[13px] font-semibold leading-snug line-clamp-2">
+          {robotName ?? '(sem item)'}
+        </div>
+        <span className="shrink-0 pt-[1px] text-[11px] font-semibold tabular-nums opacity-70">
+          #{chamado.id}
+        </span>
+      </div>
+      {/* Subtítulo: setor · nome do solicitante. */}
+      <div className="text-[11px] opacity-80">
+        {(chamado.usuario_setor ?? '').trim() || '—'} · {chamado.usuario_nome || '—'}
+      </div>
+      {/* Corpo: descrição sem o prefixo [Item selecionado: …]. */}
+      <p className="text-[12px] leading-snug whitespace-pre-wrap break-words line-clamp-4">
+        {cleanText.trim() ? cleanText : '—'}
+      </p>
 
-          {(() => {
-            const sol = (chamado.responsavel_solucao ?? '').trim();
-            const ped = (chamado.responsavel ?? '').trim();
-            return (
-              <>
-                {sol ? (
-                  <div className="space-y-[4px] pt-[2px]">
-                    <div className="text-[10px] font-medium uppercase tracking-wide text-[var(--color-muted-foreground)]">
-                      Responsável
-                    </div>
-                    <SuporteResponsavelFace
-                      users={users}
-                      nome={sol}
-                      avatarClassName="h-7 w-7"
-                      textClassName="text-[11px] font-medium text-[var(--color-foreground)]"
-                    />
-                  </div>
-                ) : null}
-                {ped && ped !== sol ? (
-                  <div className="space-y-[4px] pt-[2px]">
-                    <div className="text-[10px] font-medium uppercase tracking-wide text-[var(--color-muted-foreground)]">
-                      Responsável (pedido)
-                    </div>
-                    <SuporteResponsavelFace
-                      users={users}
-                      nome={ped}
-                      avatarClassName="h-7 w-7"
-                      textClassName="text-[11px] font-medium text-[var(--color-foreground)]"
-                    />
-                  </div>
-                ) : null}
-              </>
-            );
-          })()}
-
-          {chamadoEstaAberto(chamado) ? (
-            <div className="space-y-[4px] border-t border-[var(--color-border)]/80 pt-[4px] text-[11px] text-[var(--color-muted-foreground)]">
-              <div className="truncate" title={chamado.usuario_email}>
-                E-mail: {chamado.usuario_email || '—'}
-              </div>
-              <div className="truncate">{chamado.empresa?.trim() ? `Empresa: ${chamado.empresa}` : 'Empresa: —'}</div>
-              {chamado.anexo_url ? (
-                <div className="truncate text-[var(--color-primary)]">Anexo: link disponível</div>
-              ) : (
-                <div>Anexo: —</div>
-              )}
-              <div>Notificado: {chamado.usuario_notificado ? 'sim' : 'não'}</div>
-            </div>
-          ) : null}
-
-          <div className="flex flex-wrap gap-[4px] pt-[2px]">
-            <Badge variant="outline" className="text-[10px]">
-              {chamado.status}
-            </Badge>
+      {sol ? (
+        <div className="space-y-[4px] pt-[2px]">
+          <div className="text-[10px] font-medium uppercase tracking-wide opacity-70">
+            Responsável
           </div>
+          <SuporteResponsavelFace
+            users={users}
+            nome={sol}
+            avatarClassName="h-7 w-7"
+            textClassName="text-[11px] font-medium"
+          />
+        </div>
+      ) : null}
+      {ped && ped !== sol ? (
+        <div className="space-y-[4px] pt-[2px]">
+          <div className="text-[10px] font-medium uppercase tracking-wide opacity-70">
+            Responsável (pedido)
+          </div>
+          <SuporteResponsavelFace
+            users={users}
+            nome={ped}
+            avatarClassName="h-7 w-7"
+            textClassName="text-[11px] font-medium"
+          />
+        </div>
+      ) : null}
+
+      <div className="flex flex-wrap items-center gap-[4px] pt-[2px]">
+        {showCardColors && (
+          <Badge variant="outline" className="text-[10px]">
+            {chamado.status}
+          </Badge>
+        )}
+        {overdue && (
+          <Badge
+            variant="outline"
+            className="text-[10px] border-rose-300/95 bg-rose-100 text-rose-950 dark:border-rose-400/55 dark:bg-rose-950/90 dark:text-rose-50"
+          >
+            SLA 24h estourado
+          </Badge>
+        )}
+      </div>
     </div>
   );
 }
@@ -1823,6 +2246,45 @@ function DetailLinha({ rotulo, valor }: { rotulo: string; valor: ReactNode }) {
   );
 }
 
+/** Mini-componente: campo da Empresa parseada (Nome / CNPJ / UUID) com copy. */
+function EmpresaField({ label, value }: { label: string; value: string }) {
+  const [copied, setCopied] = useState(false);
+  const copy = async () => {
+    if (!value) return;
+    try {
+      await navigator.clipboard.writeText(value);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1500);
+    } catch {
+      /* ignore */
+    }
+  };
+  return (
+    <div className="min-w-0 space-y-[4px]">
+      <span className="text-[10px] font-medium uppercase tracking-wide text-[var(--color-muted-foreground)]">
+        {label}
+      </span>
+      <div className="flex items-start gap-[6px] rounded-[6px] border border-[var(--color-border)]/60 bg-[var(--color-background)] px-[8px] py-[6px]">
+        <p className="min-w-0 flex-1 break-words text-[12px] text-[var(--color-foreground)]">
+          {value || '—'}
+        </p>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className="h-[26px] w-[26px] shrink-0"
+          disabled={!value}
+          title={copied ? 'Copiado!' : `Copiar ${label}`}
+          aria-label={`Copiar ${label}`}
+          onClick={() => void copy()}
+        >
+          {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 function ChamadoDetailDialog({
   chamado,
   open,
@@ -1852,8 +2314,6 @@ function ChamadoDetailDialog({
 }) {
   const [responsavelUserId, setResponsavelUserId] = useState('');
   const [saving, setSaving] = useState(false);
-  const [notifying, setNotifying] = useState(false);
-  const [empresaCopied, setEmpresaCopied] = useState(false);
   const [timelineOpen, setTimelineOpen] = useState(true);
   const [pegarCardConfirmOpen, setPegarCardConfirmOpen] = useState(false);
 
@@ -1943,33 +2403,11 @@ function ChamadoDetailDialog({
     void executarPegarCard();
   };
 
-  const notify = async () => {
-    const antes = chamado;
-    try {
-      setNotifying(true);
-      const updated = await suporteService.notificarUsuario(chamado.id);
-      onUpdated(updated);
-      await logSuporteChamadoChanges(antes, updated, getKanbanStageLabel);
-      bumpTimeline();
-    } catch {
-      onError('Erro ao notificar usuário.');
-    } finally {
-      setNotifying(false);
-    }
-  };
+  // `notify` removido junto com o botão "Notificar usuário".
+  // `copiarEmpresa` removido — cada EmpresaField tem seu próprio botão copy.
 
   const empresaTexto = (chamado.empresa ?? '').trim();
-
-  const copiarEmpresa = async () => {
-    if (!empresaTexto) return;
-    try {
-      await navigator.clipboard.writeText(empresaTexto);
-      setEmpresaCopied(true);
-      window.setTimeout(() => setEmpresaCopied(false), 2000);
-    } catch {
-      onError('Não foi possível copiar para a área de transferência.');
-    }
-  };
+  const empresaParsed = parseEmpresa(empresaTexto);
 
   return (
     <>
@@ -2006,23 +2444,15 @@ function ChamadoDetailDialog({
               Empresa
             </span>
             <div className="rounded-[8px] border border-[var(--color-border)] bg-[var(--color-muted)]/20 p-[12px]">
-              <div className="flex items-start justify-between gap-[10px]">
-                <p className="text-sm text-[var(--color-foreground)] break-words min-w-0 flex-1">
-                  {empresaTexto || '—'}
-                </p>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  className="h-8 w-8 shrink-0 -mt-[4px]"
-                  disabled={!empresaTexto}
-                  title={empresaCopied ? 'Copiado!' : 'Copiar empresa'}
-                  aria-label="Copiar nome da empresa"
-                  onClick={() => void copiarEmpresa()}
-                >
-                  {empresaCopied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
-                </Button>
-              </div>
+              {empresaParsed ? (
+                <div className="grid gap-[10px] sm:grid-cols-3">
+                  <EmpresaField label="Nome" value={empresaParsed.nome} />
+                  <EmpresaField label="CNPJ" value={empresaParsed.cnpj} />
+                  <EmpresaField label="UUID" value={empresaParsed.uuid} />
+                </div>
+              ) : (
+                <p className="text-sm text-[var(--color-muted-foreground)]">—</p>
+              )}
             </div>
           </div>
 
@@ -2200,19 +2630,8 @@ function ChamadoDetailDialog({
             >
               Pegar Card
             </Button>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="min-h-[36px] flex-1 basis-0 min-w-0 justify-center text-center whitespace-normal px-[8px] py-[8px]"
-              disabled={notifying}
-              onClick={() => void notify()}
-            >
-              <span className="inline-flex items-center justify-center gap-[6px]">
-                <Bell className="h-4 w-4 shrink-0" />
-                {notifying ? '…' : 'Notificar usuário'}
-              </span>
-            </Button>
+            {/* Botão "Notificar usuário" removido por pedido. O método continua
+                no service caso seja usado em outro contexto. */}
             {!chamadoEncerradoNoQuadro(chamado) ? (
               <Button
                 type="button"

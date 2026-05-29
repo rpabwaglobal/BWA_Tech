@@ -79,6 +79,14 @@ class ChamadoSuporte(models.Model):
         ordering = ['-data_abertura']
         verbose_name = 'Chamado de suporte'
         verbose_name_plural = 'Chamados de suporte'
+        # Índices pra acelerar filtros do por_usuario (que faz iexact em
+        # usuario_email + filter por tipo_id/status). count() + slice eram
+        # lentos sem isso.
+        indexes = [
+            models.Index(fields=['usuario_email'], name='suporte_email_idx'),
+            models.Index(fields=['tipo', 'status'], name='suporte_tipo_status_idx'),
+            models.Index(fields=['-data_abertura'], name='suporte_aberta_desc_idx'),
+        ]
 
     def __str__(self):
         return f'#{self.pk} {self.usuario_email}'

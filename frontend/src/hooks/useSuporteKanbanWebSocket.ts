@@ -20,10 +20,13 @@ function buildSuporteKanbanWsUrl(token: string): string {
 export function useSuporteKanbanWebSocket(opts: {
   enabled: boolean;
   onChamadoUpsert: (row: ChamadoSuporte) => void;
+  onChamadoDeleted?: (id: number) => void;
 }) {
-  const { enabled, onChamadoUpsert } = opts;
+  const { enabled, onChamadoUpsert, onChamadoDeleted } = opts;
   const cbRef = useRef(onChamadoUpsert);
   cbRef.current = onChamadoUpsert;
+  const delRef = useRef(onChamadoDeleted);
+  delRef.current = onChamadoDeleted;
 
   useEffect(() => {
     if (!enabled) return;
@@ -79,11 +82,18 @@ export function useSuporteKanbanWebSocket(opts: {
           const msg = JSON.parse(event.data as string) as {
             type?: string;
             event?: string;
-            data?: ChamadoSuporte;
+            data?: ChamadoSuporte | { id?: number };
           };
           if (msg.type !== 'suporte') return;
+          if (msg.event === 'chamado_deleted') {
+            // O backend pode disparar deleted como { id } ou { data: { id } }.
+            const data = msg.data as ChamadoSuporte | { id?: number } | undefined;
+            const id = typeof data?.id === 'number' ? data.id : undefined;
+            if (id != null && delRef.current) delRef.current(id);
+            return;
+          }
           if (msg.event !== 'chamado_created' && msg.event !== 'chamado_updated') return;
-          const row = msg.data;
+          const row = msg.data as ChamadoSuporte | undefined;
           if (row && typeof row.id === 'number') {
             cbRef.current(row);
           }
@@ -101,8 +111,28 @@ export function useSuporteKanbanWebSocket(opts: {
 
     connect();
 
+    // Quando a aba volta a ficar visível, força recálculo: se já atingimos
+    // maxReconnectAttempts dormindo numa aba background, queremos uma nova
+    // chance imediata. Sem isso, o WS pode ficar morto pra sempre depois de
+    // ~24s de tela apagada.
+    const handleVisibility = () => {
+      if (document.visibilityState !== 'visible' || cancelled) return;
+      // Se o socket está saudável, nada a fazer.
+      if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
+        return;
+      }
+      reconnectAttempts = 0;
+      if (reconnectTimeout) {
+        clearTimeout(reconnectTimeout);
+        reconnectTimeout = null;
+      }
+      connect();
+    };
+    document.addEventListener('visibilitychange', handleVisibility);
+
     return () => {
       cancelled = true;
+      document.removeEventListener('visibilitychange', handleVisibility);
       if (reconnectTimeout) clearTimeout(reconnectTimeout);
       clearPing();
       ws?.close();

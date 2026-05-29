@@ -133,7 +133,9 @@ class ChamadoSuporteWriteSerializer(serializers.ModelSerializer):
         return super().create(validated_data)
 
 
-ALLOWED_PATCH_FIELDS = frozenset({'status', 'responsavel_solucao', 'descricao_resolucao'})
+ALLOWED_PATCH_FIELDS = frozenset({
+    'status', 'responsavel_solucao', 'descricao_resolucao', 'tipo',
+})
 
 
 class ChamadoSuportePatchSerializer(serializers.Serializer):
@@ -143,11 +145,17 @@ class ChamadoSuportePatchSerializer(serializers.Serializer):
     )
     responsavel_solucao = serializers.CharField(allow_null=True, allow_blank=True, required=False)
     descricao_resolucao = serializers.CharField(allow_null=True, allow_blank=True, required=False)
+    # `tipo` é FK pra SuporteTipo. Aceito como pk (id) — usado pelo multi-select
+    # do frontend pra mover chamados entre as tabs RPA / Easy / Dashboards.
+    tipo = serializers.PrimaryKeyRelatedField(
+        queryset=SuporteTipo.objects.all(),
+        required=False,
+    )
 
     def validate(self, attrs):
         if not attrs:
             raise serializers.ValidationError(
-                'Informe ao menos um dos campos: status, responsavel_solucao, descricao_resolucao.',
+                'Informe ao menos um dos campos: status, responsavel_solucao, descricao_resolucao, tipo.',
             )
         for key in attrs:
             if key not in ALLOWED_PATCH_FIELDS:
