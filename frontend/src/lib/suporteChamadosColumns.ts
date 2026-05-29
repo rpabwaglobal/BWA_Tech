@@ -1,6 +1,7 @@
 import type { ChamadoSuporte } from '@/services/suporteService';
 import { catalogNome, hasPendenciaMarker, stripPendenciaMarker } from '@/services/suporteService';
 import { formatDateTime } from '@/lib/dateUtils';
+import { parseDescricao, parseEmpresa } from '@/lib/suporteParsers';
 
 export type SuporteColumnGroup = 'ticket' | 'solicitante';
 
@@ -107,10 +108,20 @@ export const SUPORTE_CHAMADOS_COLUMN_DEFS: SuporteColumnDefinition[] = [
     getValue: ({ chamado }) => catalogNome(chamado.motivo),
   },
   {
+    // Item selecionado vem como prefixo "[Item selecionado: X]" dentro da
+    // descrição — extrai pra coluna própria pra Excel/CSV ficarem legíveis.
+    id: 'chamado.item_selecionado',
+    label: 'Item selecionado',
+    group: 'ticket',
+    getValue: ({ chamado }) => parseDescricao(chamado.descricao).robotName ?? '',
+  },
+  {
     id: 'chamado.descricao',
     label: 'Descrição',
     group: 'ticket',
-    getValue: ({ chamado }) => chamado.descricao ?? '',
+    // Descrição "limpa" — sem o prefixo [Item selecionado: …] nem as quebras
+    // de linha mortas que vinham logo após.
+    getValue: ({ chamado }) => parseDescricao(chamado.descricao).cleanText,
   },
   {
     id: 'chamado.responsavel_solucao',
@@ -174,10 +185,23 @@ export const SUPORTE_CHAMADOS_COLUMN_DEFS: SuporteColumnDefinition[] = [
     getValue: ({ chamado }) => chamado.usuario_setor ?? '',
   },
   {
+    // Empresa vem como "NOME||CNPJ||UUID||N" — split em 3 colunas legíveis.
     id: 'chamado.empresa',
     label: 'Empresa',
     group: 'solicitante',
-    getValue: ({ chamado }) => chamado.empresa ?? '',
+    getValue: ({ chamado }) => parseEmpresa(chamado.empresa)?.nome ?? chamado.empresa ?? '',
+  },
+  {
+    id: 'chamado.empresa_cnpj',
+    label: 'CNPJ',
+    group: 'solicitante',
+    getValue: ({ chamado }) => parseEmpresa(chamado.empresa)?.cnpj ?? '',
+  },
+  {
+    id: 'chamado.empresa_uuid',
+    label: 'UUID da empresa',
+    group: 'solicitante',
+    getValue: ({ chamado }) => parseEmpresa(chamado.empresa)?.uuid ?? '',
   },
 ];
 

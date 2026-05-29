@@ -2496,7 +2496,7 @@ function ChamadoDetailDialog({
             </span>
             <div className="rounded-[8px] border border-[var(--color-border)] bg-[var(--color-muted)]/20 p-[12px]">
               {empresaParsed ? (
-                <div className="grid gap-[10px] sm:grid-cols-3">
+                <div className="flex flex-col gap-[10px]">
                   <EmpresaField label="Nome" value={empresaParsed.nome} />
                   <EmpresaField label="CNPJ" value={empresaParsed.cnpj} />
                   <EmpresaField label="UUID" value={empresaParsed.uuid} />
@@ -2520,16 +2520,30 @@ function ChamadoDetailDialog({
             </div>
           </div>
 
-          <div className="space-y-[6px]">
-            <span className="text-[11px] font-medium uppercase tracking-wide text-[var(--color-muted-foreground)]">
-              Descrição do problema ocorrido
-            </span>
-            <div className="rounded-[8px] border border-[var(--color-border)] bg-[var(--color-muted)]/20 p-[12px]">
-              <p className="text-sm whitespace-pre-wrap break-words text-[var(--color-foreground)]">
-                {chamado.descricao?.trim() ? chamado.descricao : '—'}
-              </p>
-            </div>
-          </div>
+          {(() => {
+            // Mesmo split usado na exportação: "Item selecionado" sai do
+            // prefixo "[Item selecionado: X]" e a descrição fica só com o
+            // texto real do problema.
+            const { robotName, cleanText } = parseDescricao(chamado.descricao);
+            return (
+              <div className="space-y-[6px]">
+                <span className="text-[11px] font-medium uppercase tracking-wide text-[var(--color-muted-foreground)]">
+                  Descrição do problema ocorrido
+                </span>
+                <div className="rounded-[8px] border border-[var(--color-border)] bg-[var(--color-muted)]/20 p-[12px] space-y-[10px]">
+                  <DetailLinha rotulo="Item selecionado" valor={robotName ?? '—'} />
+                  <div className="space-y-[4px]">
+                    <span className="text-[11px] font-medium uppercase tracking-wide text-[var(--color-muted-foreground)]">
+                      Descrição
+                    </span>
+                    <p className="text-sm whitespace-pre-wrap break-words text-[var(--color-foreground)]">
+                      {cleanText.trim() ? cleanText : '—'}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
 
           <div className="space-y-[6px]">
             <span className="text-[11px] font-medium uppercase tracking-wide text-[var(--color-muted-foreground)]">
