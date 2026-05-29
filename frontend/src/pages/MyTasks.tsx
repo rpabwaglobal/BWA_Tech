@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Archive,
@@ -70,6 +70,7 @@ type DraftItem = UserNoteItem & { _key: string; parentKey: string | null };
 /** Limite de profundidade visual da árvore. Frontend impede ir além;
  * backend não força (defesa em profundidade). */
 const MAX_INDENT_DEPTH = 5;
+
 
 type DraftNote = {
   id?: number;
@@ -414,32 +415,15 @@ function ItemBlock({
     }
   };
 
-  // Posição absoluta do conector em L (pseudo-tree). Largura = step do indent.
-  const STEP = 18;
+  // Step do indent. Toda a "árvore" visual (trunk + arms) é desenhada por
+  // um único <svg> por pai no overlay do NoteEditor — ItemBlock só preocupa
+  // com paddingLeft e conteúdo.
+  const STEP = 26;
   return (
     <div
       className="group relative flex items-center gap-1"
       style={{ paddingLeft: `${indent * STEP}px` }}
     >
-      {/* Conector em L ligando este filho ao pai imediato (acima e à esquerda).
-          Vertical sobe do meio do filho até o topo; horizontal vai do canto
-          inferior-esquerdo do pai até o início do filho. Pintada por
-          border-left + border-bottom com border-bottom-left-radius. */}
-      {indent > 0 && (
-        <span
-          aria-hidden
-          className="pointer-events-none absolute border-[var(--color-muted-foreground)]/30"
-          style={{
-            left: `${(indent - 1) * STEP + 8}px`,
-            top: '-2px',
-            bottom: '50%',
-            width: `${STEP - 6}px`,
-            borderLeftWidth: '1px',
-            borderBottomWidth: '1px',
-            borderBottomLeftRadius: '6px',
-          }}
-        />
-      )}
       <DragHandle
         ref={(el) => dragHandleRef?.(el)}
         {...(dragListeners as Record<string, (e: React.SyntheticEvent) => void>)}
@@ -453,13 +437,19 @@ function ItemBlock({
           className="mt-1.5 h-4 w-4 shrink-0 self-start cursor-pointer rounded border-border accent-primary"
         />
       ) : (
-        // Bolinha "marcador" pra alinhar visualmente com checkbox; clica pra converter pra todo
+        // Marcador "-" tipo bullet pra texto. Always visible. Click converte
+        // pra item de lista (todo). Em vez de um caractere (em-dash render
+        // baixo/grosso, depende da fonte), desenho um traço crisp via CSS:
+        // <span> de 8×1px com bg=currentColor, centrado verticalmente no
+        // 16px do button (mesmo y do checkbox, 14px do topo).
         <button
           type="button"
           onClick={() => onConvert('todo')}
           title="Converter em item de lista"
-          className="mt-1.5 h-4 w-4 shrink-0 self-start rounded-sm border border-dashed border-[var(--color-muted-foreground)]/40 opacity-0 transition-opacity group-hover:opacity-100"
-        />
+          className="mt-1.5 h-4 w-4 shrink-0 self-start flex items-center justify-center text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]"
+        >
+          <span aria-hidden className="block h-px w-2 bg-current" />
+        </button>
       )}
       <Textarea
         ref={textareaRef}
@@ -599,6 +589,10 @@ function SortableNoteCardWrapper({
       layout
       transition={{ type: 'spring', stiffness: 380, damping: 32 }}
       ref={setNodeRef}
+      // mb-3 dá espaço vertical entre cards na MESMA coluna (CSS columns não
+      // tem `gap` vertical eficaz). break-inside-avoid impede o browser de
+      // quebrar um card no meio entre colunas (estilo Google Keep).
+      className="mb-3 break-inside-avoid"
       style={style}
       {...attributes}
       {...(listeners as Record<string, (e: React.SyntheticEvent) => void>)}
@@ -685,7 +679,73 @@ function NoteCard({
   const visibleItems = sortedItems.slice(0, MAX_VISIBLE);
   const hiddenCount = sortedItems.length - visibleItems.length;
   const isDark = useIsDark();
-  const INDENT_STEP = 14;
+  // Step generoso pra afastar o texto da curva do L; preview também.
+  const INDENT_STEP = 22;
+
+  // Branches medidos por pai (mesma estratégia SVG do editor).
+  const ulRef = useRef<HTMLUListElement | null>(null);
+  const liRefs = useRef<Map<number, HTMLLIElement>>(new Map());
+  const [branches, setBranches] = useState<Array<{
+    key: number; top: number; left: number; width: number; height: number; childYs: number[];
+  }>>([]);
+
+  useLayoutEffect(() => {
+    const ul = ulRef.current;
+    if (!ul) return;
+    const ulRect = ul.getBoundingClientRect();
+    // mt-1 (4px) + half marker (8px) — center y dentro do <li>
+    const MARKER_Y = 12;
+    const ARM_W = INDENT_STEP - 12;
+    const next: typeof branches = [];
+
+    for (const item of visibleItems) {
+      if (item.id == null) continue;
+      const directChildren = visibleItems.filter((it) => it.parent === item.id);
+      if (directChildren.length === 0) continue;
+      const parentEl = liRefs.current.get(item.id);
+      if (!parentEl) continue;
+      const parentMarkerY =
+        parentEl.getBoundingClientRect().top - ulRect.top + MARKER_Y;
+
+      const childYs: number[] = [];
+      for (const child of directChildren) {
+        if (child.id == null) continue;
+        const childEl = liRefs.current.get(child.id);
+        if (!childEl) continue;
+        const childMarkerY =
+          childEl.getBoundingClientRect().top - ulRect.top + MARKER_Y;
+        childYs.push(childMarkerY - parentMarkerY);
+      }
+      if (childYs.length === 0) continue;
+
+      const parentDepth = depthOf(item);
+      next.push({
+        key: item.id,
+        top: parentMarkerY,
+        // Marker do pai começa em x=0 no slot (sem drag handle no preview);
+        // centro do marcador ≈ 8px.
+        left: parentDepth * INDENT_STEP + 8,
+        width: ARM_W,
+        height: Math.max(...childYs),
+        childYs,
+      });
+    }
+
+    setBranches((prev) => {
+      const same =
+        prev.length === next.length &&
+        prev.every((p, i) => {
+          const n = next[i];
+          return (
+            p.key === n.key && p.top === n.top && p.left === n.left &&
+            p.width === n.width && p.height === n.height &&
+            p.childYs.length === n.childYs.length &&
+            p.childYs.every((y, k) => y === n.childYs[k])
+          );
+        });
+      return same ? prev : next;
+    });
+  });
 
   return (
     <div
@@ -714,33 +774,48 @@ function NoteCard({
             <h3 className="pr-8 text-sm font-medium leading-snug break-words">{note.title}</h3>
           )}
           {visibleItems.length > 0 && (
-            <ul className="space-y-1.5">
+            <ul ref={ulRef} className="relative space-y-1.5">
+              {/* Overlay: 1 SVG por pai com trunk + arms. */}
+              {branches.map((b) => (
+                <svg
+                  key={`br-${b.key}`}
+                  aria-hidden
+                  className="pointer-events-none absolute overflow-visible text-[var(--color-muted-foreground)]/30"
+                  style={{
+                    top: `${b.top}px`,
+                    left: `${b.left}px`,
+                    width: `${b.width + 1}px`,
+                    height: `${b.height + 1}px`,
+                  }}
+                >
+                  <line
+                    x1={0.5} y1={0} x2={0.5} y2={b.height}
+                    stroke="currentColor" strokeWidth={1}
+                  />
+                  {b.childYs.map((y, i) => (
+                    <line
+                      key={i}
+                      x1={0.5} y1={y} x2={b.width} y2={y}
+                      stroke="currentColor" strokeWidth={1}
+                    />
+                  ))}
+                </svg>
+              ))}
               {visibleItems.map((it, idx) => {
                 const depth = depthOf(it);
-                // Conector em L pros filhos (mesmo visual do editor).
-                const connector = depth > 0 ? (
-                  <span
-                    aria-hidden
-                    className="pointer-events-none absolute border-[var(--color-muted-foreground)]/30"
-                    style={{
-                      left: `${(depth - 1) * INDENT_STEP + 6}px`,
-                      top: '-2px',
-                      bottom: '50%',
-                      width: `${INDENT_STEP - 4}px`,
-                      borderLeftWidth: '1px',
-                      borderBottomWidth: '1px',
-                      borderBottomLeftRadius: '5px',
-                    }}
-                  />
-                ) : null;
                 if (it.kind === 'todo') {
                   return (
                     <li
                       key={it.id ?? `idx-${idx}`}
+                      ref={(el) => {
+                        if (it.id == null) return;
+                        if (el) liRefs.current.set(it.id, el);
+                        else liRefs.current.delete(it.id);
+                      }}
                       className="relative flex items-start gap-2 text-sm"
                       style={{ paddingLeft: `${depth * INDENT_STEP}px` }}
                     >
-                      {connector}
+
                       <input
                         type="checkbox"
                         checked={it.done}
@@ -766,11 +841,23 @@ function NoteCard({
                 return (
                   <li
                     key={it.id ?? `idx-${idx}`}
-                    className="relative whitespace-pre-wrap break-words text-sm text-muted-foreground"
+                    ref={(el) => {
+                      if (it.id == null) return;
+                      if (el) liRefs.current.set(it.id, el);
+                      else liRefs.current.delete(it.id);
+                    }}
+                    className="relative flex items-start gap-2 text-sm text-muted-foreground"
                     style={{ paddingLeft: `${depth * INDENT_STEP}px` }}
                   >
-                    {connector}
-                    {it.text}
+
+                    {/* Traço crisp via CSS (não caractere). mt-[11px] alinha
+                        com o centro da primeira linha de texto (text-sm,
+                        leading-snug ≈ 22px → centro y=11). */}
+                    <span
+                      aria-hidden
+                      className="mt-[11px] block h-px w-2 shrink-0 bg-current"
+                    />
+                    <span className="whitespace-pre-wrap break-words">{it.text}</span>
                   </li>
                 );
               })}
@@ -849,6 +936,20 @@ function NoteEditor({
     useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   );
+  // Refs pra medir o DOM e desenhar os trunks contínuos.
+  const itemsContainerRef = useRef<HTMLDivElement | null>(null);
+  const itemRefs = useRef<Map<string, HTMLDivElement>>(new Map());
+  // Branches medidos: para cada PAI com filhos diretos, um SVG com trunk
+  // vertical + arms horizontais pra cada filho direto. Posicionado no
+  // overlay sobre a lista de items.
+  const [branches, setBranches] = useState<Array<{
+    key: string;
+    top: number;        // y absoluto da marca do pai dentro do container
+    left: number;       // x absoluto da coluna do pai dentro do container
+    width: number;      // largura do SVG (= comprimento do braço)
+    height: number;     // altura do SVG (= trunk até o último filho direto)
+    childYs: number[];  // y de cada filho direto, RELATIVO ao top do SVG
+  }>>([]);
 
   useEffect(() => {
     if (open && initial) {
@@ -861,6 +962,67 @@ function NoteEditor({
     () => new Map(draft.items.map((it) => [it._key, it] as const)),
     [draft.items],
   );
+
+  // Mede DOM e calcula, pra cada PAI com filhos diretos, um branch SVG:
+  // trunk vertical do marcador do pai até o último filho direto + um arm
+  // horizontal apontando pra cada filho direto. Grandchildren ganham seu
+  // próprio branch (sub-trunk em outra coluna). Roda em useLayoutEffect
+  // pra evitar flicker.
+  useLayoutEffect(() => {
+    if (!open) return;
+    const container = itemsContainerRef.current;
+    if (!container) return;
+    const containerRect = container.getBoundingClientRect();
+    const MARKER_Y_FROM_OUTER = 20; // InsertGap(6) + mt-1.5 (6) + half marker (8)
+    const STEP_PX = 26;
+    const ARM_W = STEP_PX - 12; // gap de 12px do trunk até o marcador do filho
+
+    const next: typeof branches = [];
+    for (const item of draft.items) {
+      const directChildren = draft.items.filter((it) => it.parentKey === item._key);
+      if (directChildren.length === 0) continue;
+      const parentEl = itemRefs.current.get(item._key);
+      if (!parentEl) continue;
+      const parentTop = parentEl.getBoundingClientRect().top - containerRect.top;
+      const parentMarkerY = parentTop + MARKER_Y_FROM_OUTER;
+
+      const childYs: number[] = [];
+      for (const child of directChildren) {
+        const childEl = itemRefs.current.get(child._key);
+        if (!childEl) continue;
+        const childMarkerY =
+          childEl.getBoundingClientRect().top - containerRect.top + MARKER_Y_FROM_OUTER;
+        childYs.push(childMarkerY - parentMarkerY);
+      }
+      if (childYs.length === 0) continue;
+
+      const parentDepth = indentOf(item, byKey);
+      next.push({
+        key: item._key,
+        top: parentMarkerY,
+        left: parentDepth * STEP_PX + 20,
+        width: ARM_W,
+        height: Math.max(...childYs),
+        childYs,
+      });
+    }
+
+    setBranches((prev) => {
+      const same =
+        prev.length === next.length &&
+        prev.every((p, i) => {
+          const n = next[i];
+          return (
+            p.key === n.key && p.top === n.top && p.left === n.left &&
+            p.width === n.width && p.height === n.height &&
+            p.childYs.length === n.childYs.length &&
+            p.childYs.every((y, k) => y === n.childYs[k])
+          );
+        });
+      return same ? prev : next;
+    });
+  });
+
 
   /** Insere um novo item em `index` (default: fim). Retorna o `_key` criado. */
   const insertItem = (
@@ -1030,8 +1192,45 @@ function NoteEditor({
               items={draft.items.map((it) => it._key)}
               strategy={verticalListSortingStrategy}
             >
+              <div ref={itemsContainerRef} className="relative">
+                {/* Overlay: 1 SVG por pai com filhos diretos — desenha trunk
+                    vertical + arms horizontais. Único elemento por branch
+                    (em vez de N spans). */}
+                {branches.map((b) => (
+                  <svg
+                    key={`br-${b.key}`}
+                    aria-hidden
+                    className="pointer-events-none absolute overflow-visible text-[var(--color-muted-foreground)]/30"
+                    style={{
+                      top: `${b.top}px`,
+                      left: `${b.left}px`,
+                      width: `${b.width + 1}px`,
+                      height: `${b.height + 1}px`,
+                    }}
+                  >
+                    {/* Trunk vertical (x=0.5 pra crispness em 1px) */}
+                    <line
+                      x1={0.5} y1={0} x2={0.5} y2={b.height}
+                      stroke="currentColor" strokeWidth={1}
+                    />
+                    {/* Arms horizontais — um por filho direto */}
+                    {b.childYs.map((y, i) => (
+                      <line
+                        key={i}
+                        x1={0.5} y1={y} x2={b.width} y2={y}
+                        stroke="currentColor" strokeWidth={1}
+                      />
+                    ))}
+                  </svg>
+                ))}
               {draft.items.map((it, idx) => (
-                <div key={it._key}>
+                <div
+                  key={it._key}
+                  ref={(el) => {
+                    if (el) itemRefs.current.set(it._key, el);
+                    else itemRefs.current.delete(it._key);
+                  }}
+                >
                   {/* Gap pra inserir item ACIMA deste */}
                   <InsertGap onInsert={(kind) => insertItem(kind, idx, it.parentKey)} />
                   <SortableItemBlock
@@ -1053,6 +1252,7 @@ function NoteEditor({
                   />
                 </div>
               ))}
+              </div>
             </SortableContext>
             {/* Gap final pra inserir item ao FIM */}
             <InsertGap onInsert={(kind) => insertItem(kind)} />
@@ -1601,7 +1801,7 @@ export default function MyTasks() {
                         items={pinned.map((n) => n.id)}
                         strategy={rectSortingStrategy}
                       >
-                        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                        <div className="gap-3 columns-1 sm:columns-2 lg:columns-3 xl:columns-4">
                           {pinned.map((note) => (
                             <SortableNoteCardWrapper
                               key={note.id}
@@ -1657,9 +1857,11 @@ export default function MyTasks() {
                       items={others.map((n) => n.id)}
                       strategy={rectSortingStrategy}
                     >
-                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                      <div className="gap-3 columns-1 sm:columns-2 lg:columns-3 xl:columns-4">
                         {filter === 'active' && !search && !selectionMode && (
-                          <CreateNoteCard onClick={() => setCreatingOpen(true)} />
+                          <div className="mb-3 break-inside-avoid">
+                            <CreateNoteCard onClick={() => setCreatingOpen(true)} />
+                          </div>
                         )}
                         {others.map((note) => (
                           <SortableNoteCardWrapper
