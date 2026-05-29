@@ -1114,7 +1114,7 @@ export default function Support() {
   );
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-[16px] overflow-hidden">
+    <div className="flex h-[calc(100vh-64px-64px)] max-h-[calc(100vh-64px-64px)] min-h-0 min-w-0 flex-col gap-[16px] overflow-hidden">
       {error && (
         <div
           className="shrink-0 rounded-[10px] border border-red-200 bg-red-50 px-[14px] py-[10px] text-sm text-red-800 dark:border-red-900 dark:bg-red-950/30 dark:text-red-200"
