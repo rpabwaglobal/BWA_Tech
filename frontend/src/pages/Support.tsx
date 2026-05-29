@@ -512,15 +512,18 @@ export default function Support() {
   }, [showCardColors]);
 
   // Carrega catálogo de tipos e resolve IDs dos 3 tabs (RPA, Easy, Dashboards).
+  // Match case-insensitive porque o portal externo pode ter nomes com caixa
+  // diferente (ex.: "rpa" vs "RPA").
   useEffect(() => {
     let cancelled = false;
     void suporteService.fetchCatalog().then((cat) => {
       if (cancelled) return;
       const map: Record<string, number> = {};
+      const tabNamesLower = TABS.map((t) => [t.tipoNome.toLowerCase(), t.tipoNome] as const);
       for (const tipo of cat.tipos) {
-        if (TABS.some((t) => t.tipoNome === tipo.nome)) {
-          map[tipo.nome] = tipo.id;
-        }
+        const tipoNomeLower = (tipo.nome ?? '').toLowerCase();
+        const match = tabNamesLower.find(([lower]) => lower === tipoNomeLower);
+        if (match) map[match[1]] = tipo.id;
       }
       setTipoIdByName(map);
     }).catch(() => {
@@ -710,14 +713,38 @@ export default function Support() {
 
   /** Filtro adicional pela tab atual (RPA / Easy / Dashboards). Chamados de
    * outros tipos (ex.: "Infraestrutura" antigo) ficam ocultos das 3 tabs.
-   * Se ainda não resolvemos o id da tab, mostra vazio. */
+   *
+   * Match defensivo: compara por id E por nome (case-insensitive). O portal
+   * externo pode retornar chamado.tipo como {id, nome} com id que NÃO bate
+   * com o catálogo carregado (versões diferentes do portal/migração), então
+   * casar pelo nome serve de fallback. Também: se NENHUM dos 3 tabs tem id
+   * resolvido (catálogo legado sem RPA/Easy/Dashboards) e estamos na RPA,
+   * mostra todos os chamados — evita tela em branco quando o portal não
+   * conhece a nova categorização. */
   const tabFilteredItems = useMemo(() => {
     const tabSpec = TABS.find((t) => t.key === currentTab);
-    const tabTipoId = tabSpec ? tipoIdByName[tabSpec.tipoNome] : undefined;
-    if (tabTipoId == null) return [] as ChamadoSuporte[];
+    if (!tabSpec) return [] as ChamadoSuporte[];
+    const tabTipoId = tipoIdByName[tabSpec.tipoNome];
+    const tabTipoNomeLower = tabSpec.tipoNome.toLowerCase();
+    const catalogHasAnyTab = TABS.some((t) => tipoIdByName[t.tipoNome] != null);
+    // Fallback: catálogo não tem nenhum dos nossos tipos → mostra tudo na RPA
+    // (tab default) e vazio nas demais. Evita a página ficar muda em prod
+    // antes de o portal ganhar Easy/Dashboards.
+    if (!catalogHasAnyTab) {
+      const filtered = currentTab === 'rpa' ? filteredItems : [];
+      return filtered.slice().sort((a, b) => {
+        const da = a.data_atualizacao ?? a.data_abertura ?? '';
+        const db = b.data_atualizacao ?? b.data_abertura ?? '';
+        return db.localeCompare(da);
+      });
+    }
     const filtered = filteredItems.filter((c) => {
       const tipoId = typeof c.tipo === 'number' ? c.tipo : c.tipo?.id;
-      return tipoId === tabTipoId;
+      if (tabTipoId != null && tipoId === tabTipoId) return true;
+      // Match por nome (caso o id do chamado não bata com o id do catálogo).
+      const tipoNome = typeof c.tipo === 'object' ? c.tipo?.nome : undefined;
+      if (tipoNome && tipoNome.toLowerCase() === tabTipoNomeLower) return true;
+      return false;
     });
     // Ordena por data_atualizacao desc pra que o slice da paginação
     // (colunas finalizado/inviabilizado) sempre mostre os MAIS RECENTES
