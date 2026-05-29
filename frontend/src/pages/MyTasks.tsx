@@ -598,14 +598,70 @@ function SortableNoteCardWrapper({
   return (
     <div
       ref={setNodeRef}
-      // mb-3 = espaço entre cards na coluna; break-inside-avoid = não quebra
-      // card entre colunas no layout CSS columns (masonry estilo Keep).
-      className="mb-3 break-inside-avoid"
       style={style}
       {...attributes}
       {...(listeners as Record<string, (e: React.SyntheticEvent) => void>)}
     >
       {children()}
+    </div>
+  );
+}
+
+/** Breakpoints (px do viewport → nº de colunas) usados pelo Masonry. */
+const NOTES_MASONRY_BREAKPOINTS = { default: 1, 640: 2, 1024: 3, 1280: 4 };
+
+function useColumnCount(breakpoints: { default: number; [width: number]: number }): number {
+  const sortedKeys = useMemo(
+    () =>
+      Object.keys(breakpoints)
+        .filter((k) => k !== 'default')
+        .map(Number)
+        .sort((a, b) => b - a),
+    [breakpoints],
+  );
+  const compute = useCallback(() => {
+    if (typeof window === 'undefined') return breakpoints.default;
+    const w = window.innerWidth;
+    for (const bp of sortedKeys) {
+      if (w >= bp) return breakpoints[bp];
+    }
+    return breakpoints.default;
+  }, [breakpoints, sortedKeys]);
+  const [cols, setCols] = useState<number>(compute);
+  useEffect(() => {
+    const handler = () => setCols(compute());
+    window.addEventListener('resize', handler);
+    return () => window.removeEventListener('resize', handler);
+  }, [compute]);
+  return cols;
+}
+
+/** Masonry round-robin: distribui filhos em N colunas (i % N). Cada coluna é
+ *  um flex flex-col vertical. NÃO usa CSS columns — assim o transform do
+ *  dnd-kit pode mover items dentro de cada coluna sem o browser recalcular
+ *  layout e distorcer cards adjacentes. */
+function Masonry({
+  children,
+  breakpoints,
+  gap = '12px',
+}: {
+  children: React.ReactNode[];
+  breakpoints: { default: number; [width: number]: number };
+  gap?: string;
+}) {
+  const cols = useColumnCount(breakpoints);
+  const columns = useMemo(() => {
+    const arr: React.ReactNode[][] = Array.from({ length: cols }, () => []);
+    children.forEach((child, i) => arr[i % cols].push(child));
+    return arr;
+  }, [children, cols]);
+  return (
+    <div className="flex w-full items-start" style={{ gap }}>
+      {columns.map((col, i) => (
+        <div key={i} className="flex flex-1 min-w-0 flex-col" style={{ gap }}>
+          {col}
+        </div>
+      ))}
     </div>
   );
 }
@@ -1894,7 +1950,7 @@ export default function MyTasks() {
                         items={pinned.map((n) => n.id)}
                         strategy={rectSortingStrategy}
                       >
-                        <div className="gap-3 columns-1 sm:columns-2 lg:columns-3 xl:columns-4">
+                        <Masonry breakpoints={NOTES_MASONRY_BREAKPOINTS}>
                           {pinned.map((note) => (
                             <SortableNoteCardWrapper
                               key={note.id}
@@ -1922,7 +1978,7 @@ export default function MyTasks() {
                               )}
                             </SortableNoteCardWrapper>
                           ))}
-                        </div>
+                        </Masonry>
                       </SortableContext>
                       <DragOverlay
                         dropAnimation={{
@@ -1963,7 +2019,7 @@ export default function MyTasks() {
                       items={others.map((n) => n.id)}
                       strategy={rectSortingStrategy}
                     >
-                      <div className="gap-3 columns-1 sm:columns-2 lg:columns-3 xl:columns-4">
+                      <Masonry breakpoints={NOTES_MASONRY_BREAKPOINTS}>
                         {others.map((note) => (
                           <SortableNoteCardWrapper
                             key={note.id}
@@ -1991,7 +2047,7 @@ export default function MyTasks() {
                             )}
                           </SortableNoteCardWrapper>
                         ))}
-                      </div>
+                      </Masonry>
                     </SortableContext>
                     <DragOverlay
                       dropAnimation={{
