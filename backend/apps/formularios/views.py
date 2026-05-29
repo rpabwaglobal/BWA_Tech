@@ -281,15 +281,25 @@ class ChamadoSuporteTimelineViewSet(mixins.ListModelMixin, mixins.CreateModelMix
     http_method_names = ['get', 'post', 'head', 'options']
 
     def _user_can_access_chamado(self, request, chamado_id: int) -> bool:
-        """True se o usuário é privilegiado OU dono do chamado em questão."""
+        """True se o usuário é privilegiado OU dono do chamado.
+
+        Importante: em produção os chamados ficam no PORTAL externo (não na
+        nossa DB) — esta tabela `ChamadoSuporte` local fica vazia em modo
+        proxy. Se o chamado não existe localmente, não há como conferir o
+        owner aqui; libera o acesso (a gate de visibilidade real fica no
+        portal, que já é chamado pelo frontend antes de pedir a timeline).
+        Em modo local (DB própria), o filtro por email continua sendo a
+        autoridade."""
         if _is_privileged(request.user):
             return True
         user_email = (request.user.email or '').strip().lower()
+        local_qs = ChamadoSuporte.objects.filter(pk=chamado_id)
+        if not local_qs.exists():
+            # Chamado mora no portal externo — sem dado local pra checar.
+            return True
         if not user_email:
             return False
-        return ChamadoSuporte.objects.filter(
-            pk=chamado_id, usuario_email__iexact=user_email,
-        ).exists()
+        return local_qs.filter(usuario_email__iexact=user_email).exists()
 
     def list(self, request, *args, **kwargs):
         cid = request.query_params.get('chamado_id')

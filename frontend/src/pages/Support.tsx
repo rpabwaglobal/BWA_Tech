@@ -2372,7 +2372,6 @@ function ChamadoDetailDialog({
   useEffect(() => {
     if (!chamado) return;
     setResponsavelUserId(userIdFromResponsavelNome(users, chamado.responsavel_solucao));
-    setEmpresaCopied(false);
     setTimelineOpen(true);
     setPegarCardConfirmOpen(false);
   }, [chamado, users]);
