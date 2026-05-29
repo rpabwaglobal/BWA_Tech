@@ -128,11 +128,17 @@ type StageKey = (typeof STAGES)[number]['key'];
 const PAGED_STAGES: ReadonlySet<StageKey> = new Set(['finalizado', 'inviabilizado']);
 const SUPORTE_PAGE_SIZE = 50;
 
-/** Tabs visíveis e mapeamento pro nome do SuporteTipo no backend. */
+/** Tabs visíveis. `tipoNome` precisa bater EXATO com o `nome` do SuporteTipo
+ * no portal externo (case-insensitive). Hoje o portal tem:
+ *   - "Robô (RPA)" (id=1) → tab RPA
+ *   - "Dashboard"  (id=2) → tab Dashboards
+ *   - "Agente de IA" (id=3) → tab IA
+ * "Easy" ainda não existe no portal — tab fica vazia até criarem. */
 const TABS = [
-  { key: 'rpa' as const, label: 'RPA', tipoNome: 'RPA' },
+  { key: 'rpa' as const, label: 'RPA', tipoNome: 'Robô (RPA)' },
   { key: 'easy' as const, label: 'Easy', tipoNome: 'Easy' },
-  { key: 'dashboards' as const, label: 'Dashboards', tipoNome: 'Dashboards' },
+  { key: 'dashboards' as const, label: 'Dashboards', tipoNome: 'Dashboard' },
+  { key: 'ia' as const, label: 'IA', tipoNome: 'Agente de IA' },
 ];
 type TabKey = (typeof TABS)[number]['key'];
 
