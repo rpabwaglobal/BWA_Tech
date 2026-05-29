@@ -578,10 +578,17 @@ function SortableNoteCardWrapper({
     attributes,
     listeners,
   } = useSortable({ id: noteId });
-  // Receita padrão dnd-kit + DragOverlay: aplicar transform/transition do
-  // useSortable em TODOS os items (dnd-kit retorna null pro source ativo
-  // automaticamente; pros outros, retorna o translate que abre espaço).
-  // Source ativo: visibility:hidden — espaço preservado, sem ghost.
+  // Sem framer-motion aqui — `layout`/`layoutId` brigavam com o transform
+  // do dnd-kit e causavam distorção do card (esticava pra ocupar o slot
+  // anterior). Agora só dnd-kit puro: animação suave de empurrar vem do
+  // `transition` que o useSortable retorna pra cada item enquanto o drag
+  // está ativo. Source fica invisível (visibility:hidden mantém espaço)
+  // e o clone (DragPreviewCard via <DragOverlay>) segue o cursor sem
+  // ser afetado por nada do layout.
+  // Nota: a animação shared-element de pin↔unpin via layoutId foi removida
+  // pelo mesmo motivo. Se quisermos de volta, melhor encapsular num
+  // motion.div ao redor do container das sections (não no item).
+  void layoutId;
   const style: React.CSSProperties = {
     transform: CSS.Transform.toString(transform),
     transition,
@@ -589,12 +596,7 @@ function SortableNoteCardWrapper({
     cursor: isDragging ? 'grabbing' : 'grab',
   };
   return (
-    <motion.div
-      // layoutId só fora de drag — pin/unpin via framer-motion não interfere
-      // com o drag. Durante drag, sem framer.
-      layoutId={isDragging ? undefined : layoutId}
-      layout={!isDragging}
-      transition={{ type: 'spring', stiffness: 380, damping: 32 }}
+    <div
       ref={setNodeRef}
       // mb-3 = espaço entre cards na coluna; break-inside-avoid = não quebra
       // card entre colunas no layout CSS columns (masonry estilo Keep).
@@ -604,7 +606,7 @@ function SortableNoteCardWrapper({
       {...(listeners as Record<string, (e: React.SyntheticEvent) => void>)}
     >
       {children()}
-    </motion.div>
+    </div>
   );
 }
 
