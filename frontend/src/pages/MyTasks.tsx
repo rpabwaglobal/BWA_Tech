@@ -423,7 +423,7 @@ function ItemBlock({
   const STEP = 26;
   return (
     <div
-      className="group relative flex items-center gap-1"
+      className="group relative flex min-w-0 items-center gap-1"
       style={{ paddingLeft: `${indent * STEP}px` }}
     >
       <DragHandle
@@ -464,7 +464,7 @@ function ItemBlock({
         rows={1}
         // wrap=soft + break-words = quebra de linha visual sem inserir \n.
         className={cn(
-          'min-h-[28px] resize-none overflow-hidden border-0 bg-transparent px-1 py-0.5 text-sm leading-snug whitespace-pre-wrap break-words shadow-none focus-visible:ring-0 focus-visible:ring-offset-0',
+          'min-h-[28px] min-w-0 flex-1 resize-none overflow-hidden border-0 bg-transparent px-1 py-0.5 text-sm leading-snug whitespace-pre-wrap break-words [overflow-wrap:anywhere] shadow-none focus-visible:ring-0 focus-visible:ring-offset-0',
           item.kind === 'todo' && item.done && 'line-through text-muted-foreground',
         )}
       />
@@ -599,6 +599,7 @@ function SortableNoteCardWrapper({
     <div
       ref={setNodeRef}
       style={style}
+      className="min-w-0 w-full"
       {...attributes}
       {...(listeners as Record<string, (e: React.SyntheticEvent) => void>)}
     >
@@ -875,7 +876,7 @@ function NoteCard({
     <div
       style={getNoteStyle(note.color, isDark)}
       className={cn(
-        'group rounded-lg border border-[var(--color-border)] shadow-sm transition-shadow hover:shadow-md bg-[var(--color-card)]',
+        'group min-w-0 w-full overflow-hidden rounded-lg border border-[var(--color-border)] shadow-sm transition-shadow hover:shadow-md bg-[var(--color-card)]',
         selected && 'ring-2 ring-[var(--color-primary)] border-[var(--color-primary)]',
       )}
     >
@@ -893,12 +894,14 @@ function NoteCard({
             {note.pinned ? <PinOff className="h-4 w-4" /> : <Pin className="h-4 w-4" />}
           </button>
         )}
-        <div className="p-3 space-y-2">
+        <div className="min-w-0 p-3 space-y-2">
           {note.title && (
-            <h3 className="pr-8 text-sm font-medium leading-snug break-words">{note.title}</h3>
+            <h3 className="min-w-0 pr-8 text-sm font-medium leading-snug break-words [overflow-wrap:anywhere]">
+              {note.title}
+            </h3>
           )}
           {visibleItems.length > 0 && (
-            <ul ref={ulRef} className="relative space-y-1.5">
+            <ul ref={ulRef} className="relative min-w-0 space-y-1.5">
               {/* Overlay: 1 SVG por pai com trunk + arms. */}
               {branches.map((b) => (
                 <svg
@@ -936,7 +939,7 @@ function NoteCard({
                         if (el) liRefs.current.set(it.id, el);
                         else liRefs.current.delete(it.id);
                       }}
-                      className="relative flex items-start gap-2 text-sm"
+                      className="relative flex min-w-0 items-start gap-2 text-sm"
                       style={{ paddingLeft: `${depth * INDENT_STEP}px` }}
                     >
 
@@ -953,7 +956,7 @@ function NoteCard({
                       />
                       <span
                         className={cn(
-                          'break-words',
+                          'min-w-0 flex-1 break-words [overflow-wrap:anywhere]',
                           it.done && 'line-through text-muted-foreground',
                         )}
                       >
@@ -970,7 +973,7 @@ function NoteCard({
                       if (el) liRefs.current.set(it.id, el);
                       else liRefs.current.delete(it.id);
                     }}
-                    className="relative flex items-start gap-2 text-sm text-muted-foreground"
+                    className="relative flex min-w-0 items-start gap-2 text-sm text-muted-foreground"
                     style={{ paddingLeft: `${depth * INDENT_STEP}px` }}
                   >
 
@@ -981,7 +984,9 @@ function NoteCard({
                       aria-hidden
                       className="mt-[11px] block h-px w-2 shrink-0 bg-current"
                     />
-                    <span className="whitespace-pre-wrap break-words">{it.text}</span>
+                    <span className="min-w-0 flex-1 whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
+                      {it.text}
+                    </span>
                   </li>
                 );
               })}
