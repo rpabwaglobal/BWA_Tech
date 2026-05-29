@@ -17,9 +17,11 @@ import {
 } from 'lucide-react';
 import {
   DndContext,
+  DragOverlay,
   KeyboardSensor,
   PointerSensor,
   closestCenter,
+  useDndMonitor,
   useSensor,
   useSensors,
   type DragEndEvent,
@@ -33,7 +35,7 @@ import {
   rectSortingStrategy,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { LayoutGroup, motion } from 'framer-motion';
+import { LayoutGroup, motion, useMotionValue, useSpring } from 'framer-motion';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
@@ -577,33 +579,85 @@ function SortableNoteCardWrapper({
     listeners,
   } = useSortable({ id: noteId });
   const style: React.CSSProperties = {
-    transform: CSS.Transform.toString(transform),
+    // Source NÃO usa o transform do dnd-kit (DragOverlay cuida disso). Isso
+    // evita o card "esticar" / brigar com o reflow do CSS columns. Os outros
+    // cards SIM aplicam o transform pra abrir espaço (efeito empurrar).
+    transform: isDragging ? undefined : CSS.Transform.toString(transform),
     transition,
-    opacity: isDragging ? 0.4 : 1,
-    // Cursor "grab" no card inteiro pra deixar claro que arrasta.
+    // Source fica invisível mantendo o espaço — outros cards reflowem ao
+    // redor; ao soltar, o card volta a aparecer na nova posição.
+    opacity: isDragging ? 0 : 1,
     cursor: isDragging ? 'grabbing' : 'grab',
   };
   return (
     <motion.div
-      // Desabilita layout/layoutId enquanto arrasta — sem isso, framer-motion
-      // tenta animar a posição a cada frame com `layout`, brigando com o
-      // `transform` que o dnd-kit aplica pra seguir o ponteiro. O resultado
-      // é o card "vibrando", duplicado, ou stretched durante o drag.
-      // Quando solta (isDragging=false), o layout volta e a animação de pin
-      // ↔ unpin via layoutId funciona normal.
+      // Layout/layoutId off durante drag (briga com transforms do dnd-kit).
       layoutId={isDragging ? undefined : layoutId}
       layout={!isDragging}
       transition={{ type: 'spring', stiffness: 380, damping: 32 }}
       ref={setNodeRef}
-      // mb-3 dá espaço vertical entre cards na MESMA coluna (CSS columns não
-      // tem `gap` vertical eficaz). break-inside-avoid impede o browser de
-      // quebrar um card no meio entre colunas (estilo Google Keep).
+      // mb-3 = espaço entre cards na coluna; break-inside-avoid = não quebra
+      // card entre colunas no layout CSS columns (masonry estilo Keep).
       className="mb-3 break-inside-avoid"
       style={style}
       {...attributes}
       {...(listeners as Record<string, (e: React.SyntheticEvent) => void>)}
     >
       {children()}
+    </motion.div>
+  );
+}
+
+/** Card preview renderizado dentro do <DragOverlay> enquanto o usuário
+ *  arrasta. Não é o mesmo elemento da grade (esse fica invisível com
+ *  opacity:0 mantendo o espaço). Aplica tilt suave baseado na velocidade
+ *  horizontal do drag — sensação de "pendurado balançando". */
+function DragPreviewCard({ note }: { note: UserNote }) {
+  // Velocidade horizontal mapeada em rotação (graus). Spring amortece pra
+  // ficar fluido em vez de "tremido".
+  const rotate = useMotionValue(0);
+  const rotateSpring = useSpring(rotate, { stiffness: 240, damping: 22 });
+  const prevDx = useRef(0);
+
+  useDndMonitor({
+    onDragMove: (e) => {
+      // delta.x do dnd-kit é cumulativo desde o início do drag; pegamos a
+      // diferença em relação ao frame anterior pra estimar velocidade.
+      const vx = e.delta.x - prevDx.current;
+      prevDx.current = e.delta.x;
+      // Clamp em ±6° pra não ficar exagerado.
+      const target = Math.max(-6, Math.min(6, vx * 0.6));
+      rotate.set(target);
+    },
+    onDragEnd: () => {
+      rotate.set(0);
+      prevDx.current = 0;
+    },
+    onDragCancel: () => {
+      rotate.set(0);
+      prevDx.current = 0;
+    },
+  });
+
+  return (
+    <motion.div
+      style={{
+        rotate: rotateSpring,
+        cursor: 'grabbing',
+        boxShadow: '0 12px 30px rgba(0,0,0,0.35)',
+        // Não escala — usuário pediu pra "não ficar maior".
+      }}
+    >
+      <NoteCard
+        note={note}
+        // Callbacks no-op — overlay é só visual.
+        onClick={() => undefined}
+        onTogglePin={() => undefined}
+        onToggleArchive={() => undefined}
+        onDelete={() => undefined}
+        onChangeColor={() => undefined}
+        onToggleItem={() => undefined}
+      />
     </motion.div>
   );
 }
@@ -1561,6 +1615,14 @@ export default function MyTasks() {
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   );
 
+  // ID da nota sendo arrastada — alimenta o <DragOverlay> com o clone que
+  // segue o cursor. O original vira placeholder invisível enquanto isso.
+  const [activeNoteId, setActiveNoteId] = useState<number | null>(null);
+  const activeNote = useMemo(
+    () => (activeNoteId != null ? notes.find((n) => n.id === activeNoteId) ?? null : null),
+    [activeNoteId, notes],
+  );
+
   /** Reordena as notes de uma section (pinned ou outras) e dispara PATCH de
    * `order` em paralelo. Atualização otimista — em caso de erro, reverte. */
   const reorderNotes = useCallback(
@@ -1791,7 +1853,10 @@ export default function MyTasks() {
                     <DndContext
                       sensors={cardsDndSensors}
                       collisionDetection={closestCenter}
+                      onDragStart={(e) => setActiveNoteId(Number(e.active.id))}
+                      onDragCancel={() => setActiveNoteId(null)}
                       onDragEnd={(e) => {
+                        setActiveNoteId(null);
                         if (e.over && e.active.id !== e.over.id) {
                           void reorderNotes(
                             'pinned',
@@ -1835,6 +1900,16 @@ export default function MyTasks() {
                           ))}
                         </div>
                       </SortableContext>
+                      <DragOverlay
+                        dropAnimation={{
+                          duration: 220,
+                          easing: 'cubic-bezier(0.25, 1, 0.5, 1)',
+                        }}
+                      >
+                        {activeNote && pinned.some((n) => n.id === activeNote.id) ? (
+                          <DragPreviewCard note={activeNote} />
+                        ) : null}
+                      </DragOverlay>
                     </DndContext>
                   </section>
                 )}
@@ -1847,7 +1922,10 @@ export default function MyTasks() {
                   <DndContext
                     sensors={cardsDndSensors}
                     collisionDetection={closestCenter}
+                    onDragStart={(e) => setActiveNoteId(Number(e.active.id))}
+                    onDragCancel={() => setActiveNoteId(null)}
                     onDragEnd={(e) => {
+                      setActiveNoteId(null);
                       if (e.over && e.active.id !== e.over.id) {
                         void reorderNotes(
                           'others',
@@ -1891,6 +1969,16 @@ export default function MyTasks() {
                         ))}
                       </div>
                     </SortableContext>
+                    <DragOverlay
+                      dropAnimation={{
+                        duration: 220,
+                        easing: 'cubic-bezier(0.25, 1, 0.5, 1)',
+                      }}
+                    >
+                      {activeNote && others.some((n) => n.id === activeNote.id) ? (
+                        <DragPreviewCard note={activeNote} />
+                      ) : null}
+                    </DragOverlay>
                   </DndContext>
                 </section>
               </div>
