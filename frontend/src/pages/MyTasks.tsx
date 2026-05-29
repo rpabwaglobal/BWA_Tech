@@ -1667,13 +1667,11 @@ export default function MyTasks() {
                             noteId={note.id}
                             layoutId={`note-${note.id}`}
                           >
-                            {({ dragHandleRef, dragListeners }) => (
+                            {() => (
                               <NoteCard
                                 note={note}
                                 selectionMode={selectionMode}
                                 selected={selectedNoteIds.includes(note.id)}
-                                dragHandleRef={dragHandleRef}
-                                dragListeners={dragListeners}
                                 onClick={() =>
                                   selectionMode
                                     ? toggleNoteSelected(note.id)
