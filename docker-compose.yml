@@ -108,6 +108,12 @@ services:
       CSRF_TRUSTED_ORIGINS: ${CSRF_TRUSTED_ORIGINS}
     command: ["celery", "-A", "config.celery", "worker", "--loglevel=INFO", "--concurrency=1", "--prefetch-multiplier=1"]
     restart: unless-stopped
+    # CRÍTICO: o worker escreve os arquivos de relatório aqui (apps.reports.tasks
+    # → BaseReport.render → job.file.save). Sem este volume, o backend gunicorn
+    # não consegue ler os arquivos gerados pelo worker (FileNotFoundError em
+    # /api/reports/<id>/download/ e /preview/).
+    volumes:
+      - backend_media:/app/backend/media
     security_opt:
       - no-new-privileges:true
 
@@ -130,6 +136,10 @@ services:
     # ainda não tinha permissão consistente para apagar/rotacionar o .bak).
     command: ["celery", "-A", "config.celery", "beat", "--loglevel=INFO", "--schedule=/tmp/celerybeat-schedule"]
     restart: unless-stopped
+    # Beat não escreve relatórios hoje, mas se um dia uma task agendada
+    # precisar mexer em media/ (cleanup de reports, p.ex.), o volume já tá lá.
+    volumes:
+      - backend_media:/app/backend/media
     security_opt:
       - no-new-privileges:true
 
