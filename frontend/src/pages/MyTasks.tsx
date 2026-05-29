@@ -1727,7 +1727,6 @@ export default function MyTasks() {
             {filter === 'active' && !selectionMode && (
               <Button
                 type="button"
-                size="sm"
                 onClick={() => setCreatingOpen(true)}
                 className="shrink-0"
                 style={{
@@ -1744,7 +1743,6 @@ export default function MyTasks() {
             <Button
               type="button"
               variant={selectionMode ? 'default' : 'outline'}
-              size="sm"
               onClick={() => {
                 if (selectionMode) exitSelectionMode();
                 else setSelectionMode(true);
