@@ -139,6 +139,9 @@ const TABS = [
   { key: 'easy' as const, label: 'Easy', tipoNome: 'Easy' },
   { key: 'dashboards' as const, label: 'Dashboards', tipoNome: 'Dashboard' },
   { key: 'ia' as const, label: 'IA', tipoNome: 'Agente de IA' },
+  // "Todos": tab agregadora — mostra TODOS os chamados, sem filtro por tipo.
+  // tipoNome '' sinaliza pra `tabFilteredItems` pular o filtro de tipo.
+  { key: 'todos' as const, label: 'Todos', tipoNome: '' },
 ];
 type TabKey = (typeof TABS)[number]['key'];
 
@@ -730,9 +733,20 @@ export default function Support() {
   const tabFilteredItems = useMemo(() => {
     const tabSpec = TABS.find((t) => t.key === currentTab);
     if (!tabSpec) return [] as ChamadoSuporte[];
+    // Tab "Todos": mostra todos os chamados (sem filtro por tipo). tipoNome
+    // vazio é o marcador acordado em TABS.
+    if (!tabSpec.tipoNome) {
+      return filteredItems.slice().sort((a, b) => {
+        const da = a.data_atualizacao ?? a.data_abertura ?? '';
+        const db = b.data_atualizacao ?? b.data_abertura ?? '';
+        return db.localeCompare(da);
+      });
+    }
     const tabTipoId = tipoIdByName[tabSpec.tipoNome];
     const tabTipoNomeLower = tabSpec.tipoNome.toLowerCase();
-    const catalogHasAnyTab = TABS.some((t) => tipoIdByName[t.tipoNome] != null);
+    const catalogHasAnyTab = TABS.some(
+      (t) => t.tipoNome && tipoIdByName[t.tipoNome] != null,
+    );
     // Fallback: catálogo não tem nenhum dos nossos tipos → mostra tudo na RPA
     // (tab default) e vazio nas demais. Evita a página ficar muda em prod
     // antes de o portal ganhar Easy/Dashboards.
@@ -796,6 +810,10 @@ export default function Support() {
 
   // Lista também respeita a tab atual.
   const visibleChamadosForList = tabFilteredItems;
+  // Exportação SEMPRE traz todos os chamados (após busca + filtro de
+  // responsável) — independente da tab atual. Decisão de produto: o usuário
+  // quase sempre quer um dump completo pra Excel, não a fatia visível.
+  const chamadosToExport = filteredItems;
   const selectedColumnDefsSafe = SUPORTE_CHAMADOS_COLUMN_DEFS.filter((c) =>
     selectedColumnIds.includes(c.id),
   );
@@ -813,7 +831,7 @@ export default function Support() {
   const handleExportCSV = (delimiter: ',' | ';') => {
     if (!selectedColumnDefsSafe.length) return;
     const headers = selectedColumnDefsSafe.map((c) => c.label);
-    const rows = visibleChamadosForList.map((chamado) =>
+    const rows = chamadosToExport.map((chamado) =>
       selectedColumnDefsSafe.map((col) => exportValueToString(col.getValue({ chamado }))),
     );
     const suffix = delimiter === ';' ? ' - ponto-e-virgula' : ' - virgula';
@@ -823,7 +841,7 @@ export default function Support() {
   const handleExportXLSX = async () => {
     if (!selectedColumnDefsSafe.length) return;
     const headers = selectedColumnDefsSafe.map((c) => c.label);
-    const rows = visibleChamadosForList.map((chamado) =>
+    const rows = chamadosToExport.map((chamado) =>
       selectedColumnDefsSafe.map((col) => exportValueToString(col.getValue({ chamado }))),
     );
     await exportCardsToXLSX({
@@ -1258,12 +1276,13 @@ export default function Support() {
                     Exportar tickets
                   </p>
                   <p className="mb-2 px-2 text-[11px] leading-snug text-[var(--color-muted-foreground)]">
-                    Usa os filtros atuais e as colunas marcadas na lista.
+                    Exporta TODOS os chamados (ignora a tab atual). Respeita
+                    busca, filtro de responsável e as colunas marcadas na lista.
                   </p>
                   <DropdownMenuItem
                     className="gap-2 rounded-md py-2.5"
                     onClick={() => handleExportCSV(',')}
-                    disabled={visibleChamadosForList.length === 0 || selectedColumnDefsSafe.length === 0}
+                    disabled={chamadosToExport.length === 0 || selectedColumnDefsSafe.length === 0}
                   >
                     <FileSpreadsheet className="h-4 w-4 shrink-0 text-green-600" />
                     <span className="flex-1 text-left">{`CSV separado por ","`}</span>
@@ -1272,7 +1291,7 @@ export default function Support() {
                   <DropdownMenuItem
                     className="gap-2 rounded-md py-2.5"
                     onClick={() => handleExportCSV(';')}
-                    disabled={visibleChamadosForList.length === 0 || selectedColumnDefsSafe.length === 0}
+                    disabled={chamadosToExport.length === 0 || selectedColumnDefsSafe.length === 0}
                   >
                     <FileSpreadsheet className="h-4 w-4 shrink-0 text-green-600" />
                     <span className="flex-1 text-left">{`CSV separado por ";"`}</span>
@@ -1283,7 +1302,7 @@ export default function Support() {
                     onClick={() => {
                       void handleExportXLSX();
                     }}
-                    disabled={visibleChamadosForList.length === 0 || selectedColumnDefsSafe.length === 0}
+                    disabled={chamadosToExport.length === 0 || selectedColumnDefsSafe.length === 0}
                   >
                     <FileSpreadsheet className="h-4 w-4 shrink-0 text-emerald-700" />
                     <span className="flex-1 text-left">Planilha (.xlsx)</span>
@@ -1629,7 +1648,7 @@ export default function Support() {
             <span className="text-[11px] uppercase tracking-wide text-[var(--color-muted-foreground)]">
               Mover para
             </span>
-            {TABS.filter((t) => t.key !== currentTab).map((t) => {
+            {TABS.filter((t) => t.key !== currentTab && t.tipoNome).map((t) => {
               const targetTipoId = tipoIdByName[t.tipoNome];
               return (
                 <Button
