@@ -1114,7 +1114,7 @@ export default function Support() {
   );
 
   return (
-    <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-[16px] p-[16px] md:p-[24px] overflow-hidden">
+    <div className="flex h-[calc(100vh-64px-64px)] min-h-0 min-w-0 flex-col gap-[16px] overflow-hidden p-[16px] md:p-[24px]">
       {error && (
         <div
           className="shrink-0 rounded-[10px] border border-red-200 bg-red-50 px-[14px] py-[10px] text-sm text-red-800 dark:border-red-900 dark:bg-red-950/30 dark:text-red-200"
@@ -1348,7 +1348,7 @@ export default function Support() {
         </div>
       ) : null}
 
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
         {loading && items.length === 0 ? (
           <div className="flex flex-1 items-center justify-center text-[var(--color-muted-foreground)]">
             <Loader2 className="mr-[10px] h-5 w-5 animate-spin" />
@@ -1452,8 +1452,8 @@ export default function Support() {
             onDragStart={handleDragStart}
             onDragEnd={(ev) => void handleDragEnd(ev)}
           >
-            <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-              <div className="flex min-h-0 min-w-0 w-full flex-1 gap-[14px] overflow-x-auto pb-[12px] items-stretch">
+            <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+              <div className="flex min-h-0 min-w-0 w-full flex-1 items-stretch gap-[14px] overflow-x-auto overflow-y-hidden pb-[12px]">
                 {STAGES.map((stage) => (
                   <SupportColumn
                     key={stage.key}
@@ -1744,16 +1744,18 @@ function SupportColumn({
   // Paginação automática: dispara onLoadMore quando o sentinel no fundo da
   // coluna entra na viewport. rootMargin de 240px = pré-carrega antes do
   // usuário chegar de fato no fim (sensação de "infinito").
+  const scrollRef = useRef<HTMLDivElement | null>(null);
   const sentinelRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     if (!paginated || !hasMore) return;
     const el = sentinelRef.current;
-    if (!el) return;
+    const root = scrollRef.current;
+    if (!el || !root) return;
     const observer = new IntersectionObserver(
       (entries) => {
         if (entries.some((e) => e.isIntersecting)) onLoadMore();
       },
-      { rootMargin: '240px 0px 240px 0px' },
+      { root, rootMargin: '240px 0px 240px 0px' },
     );
     observer.observe(el);
     return () => observer.disconnect();
@@ -1787,7 +1789,10 @@ function SupportColumn({
           {totalCount}
         </Badge>
       </div>
-      <div className="min-h-0 flex-1 space-y-[8px] overflow-y-auto p-[8px]">
+      <div
+        ref={scrollRef}
+        className="min-h-0 flex-1 space-y-[8px] overflow-y-auto overscroll-contain p-[8px] [scrollbar-gutter:stable]"
+      >
         <SortableContext items={chamados.map((c) => dragId(c.id))} strategy={verticalListSortingStrategy}>
           {chamados.map((c) => (
             <SortableChamadoCard
