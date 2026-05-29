@@ -585,8 +585,14 @@ function SortableNoteCardWrapper({
   };
   return (
     <motion.div
-      layoutId={layoutId}
-      layout
+      // Desabilita layout/layoutId enquanto arrasta — sem isso, framer-motion
+      // tenta animar a posição a cada frame com `layout`, brigando com o
+      // `transform` que o dnd-kit aplica pra seguir o ponteiro. O resultado
+      // é o card "vibrando", duplicado, ou stretched durante o drag.
+      // Quando solta (isDragging=false), o layout volta e a animação de pin
+      // ↔ unpin via layoutId funciona normal.
+      layoutId={isDragging ? undefined : layoutId}
+      layout={!isDragging}
       transition={{ type: 'spring', stiffness: 380, damping: 32 }}
       ref={setNodeRef}
       // mb-3 dá espaço vertical entre cards na MESMA coluna (CSS columns não
