@@ -1114,7 +1114,7 @@ export default function Support() {
   );
 
   return (
-    <div className="flex h-[calc(100vh-64px-64px)] min-h-0 min-w-0 flex-col gap-[16px] overflow-hidden p-[16px] md:p-[24px]">
+    <div className="flex min-h-0 flex-1 flex-col gap-[16px] overflow-hidden">
       {error && (
         <div
           className="shrink-0 rounded-[10px] border border-red-200 bg-red-50 px-[14px] py-[10px] text-sm text-red-800 dark:border-red-900 dark:bg-red-950/30 dark:text-red-200"
@@ -1356,7 +1356,7 @@ export default function Support() {
           </div>
         ) : viewMode === 'lista' ? (
           <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-            <div className="flex flex-col flex-1 min-h-0 min-w-0 mt-[16px] px-[8px] pb-[8px]">
+            <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
               {selectedColumnDefsSafe.length === 0 ? (
                 <div className="flex flex-1 min-h-0 items-center justify-center text-center px-[16px] text-sm text-[var(--color-muted-foreground)]">
                   Selecione ao menos uma coluna em{' '}
@@ -1453,7 +1453,7 @@ export default function Support() {
             onDragEnd={(ev) => void handleDragEnd(ev)}
           >
             <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-              <div className="flex min-h-0 min-w-0 w-full flex-1 items-stretch gap-[14px] overflow-x-auto overflow-y-hidden pb-[12px]">
+              <div className="flex min-h-0 min-w-0 w-full flex-1 items-stretch gap-[14px] overflow-x-auto overflow-y-hidden">
                 {STAGES.map((stage) => (
                   <SupportColumn
                     key={stage.key}
