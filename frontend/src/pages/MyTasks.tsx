@@ -1727,10 +1727,15 @@ export default function MyTasks() {
             {filter === 'active' && !selectionMode && (
               <Button
                 type="button"
-                variant="default"
                 size="sm"
                 onClick={() => setCreatingOpen(true)}
                 className="shrink-0"
+                style={{
+                  background: 'linear-gradient(135deg, #754c99, #8fd0d7)',
+                  color: '#ffffff',
+                  border: 'none',
+                  boxShadow: '0 4px 14px rgba(117,76,153,0.35)',
+                }}
               >
                 <Plus className="h-4 w-4 mr-2" />
                 Criar anotação
