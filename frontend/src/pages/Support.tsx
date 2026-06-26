@@ -81,6 +81,8 @@ import {
   catalogNome,
   hasPendenciaMarker,
   formatFormulariosApiError,
+  getChamadoAnexoUrl,
+  normalizeChamadoSuporte,
   type ChamadoSuporte,
   type PatchChamadoSuportePayload,
   type CatalogoSuporteResponse,
@@ -582,8 +584,9 @@ export default function Support() {
   }, []);
 
   const mergeRemoteChamado = useCallback((row: ChamadoSuporte) => {
-    setItems((prev) => upsertChamadoLista(prev, row));
-    setDetailChamado((cur) => (cur?.id === row.id ? row : cur));
+    const normalized = normalizeChamadoSuporte(row);
+    setItems((prev) => upsertChamadoLista(prev, normalized));
+    setDetailChamado((cur) => (cur?.id === normalized.id ? normalized : cur));
   }, []);
 
   const removeRemoteChamado = useCallback((id: number) => {
@@ -2445,6 +2448,7 @@ function ChamadoDetailDialog({
   if (!chamado) return null;
 
   const encerradoNoQuadro = chamadoEncerradoNoQuadro(chamado);
+  const anexoUrl = getChamadoAnexoUrl(chamado);
 
   const persistResponsavelSeAlterado = async (nextUserId: string) => {
     if (encerradoNoQuadro) return;
@@ -2609,12 +2613,12 @@ function ChamadoDetailDialog({
               Anexo
             </span>
             <div className="rounded-[8px] border border-[var(--color-border)] bg-[var(--color-muted)]/20 p-[12px]">
-              {chamado.anexo_url ? (
+              {anexoUrl ? (
                 <a
-                  href={chamado.anexo_url}
+                  href={anexoUrl}
                   target="_blank"
                   rel="noreferrer"
-                  className="inline-flex items-center gap-[6px] text-sm text-[var(--color-primary)]"
+                  className="inline-flex items-center gap-[6px] text-sm text-[var(--color-primary)] break-all"
                 >
                   <ExternalLink className="h-4 w-4 shrink-0" />
                   Abrir anexo

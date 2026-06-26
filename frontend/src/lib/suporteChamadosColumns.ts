@@ -1,5 +1,5 @@
 import type { ChamadoSuporte } from '@/services/suporteService';
-import { catalogNome, hasPendenciaMarker, stripPendenciaMarker } from '@/services/suporteService';
+import { catalogNome, getChamadoAnexoUrl, hasPendenciaMarker, stripPendenciaMarker } from '@/services/suporteService';
 import { formatDateTime } from '@/lib/dateUtils';
 import { parseDescricao, parseEmpresa } from '@/lib/suporteParsers';
 
@@ -145,7 +145,7 @@ export const SUPORTE_CHAMADOS_COLUMN_DEFS: SuporteColumnDefinition[] = [
     id: 'chamado.anexo_url',
     label: 'URL do anexo',
     group: 'ticket',
-    getValue: ({ chamado }) => chamado.anexo_url ?? '',
+    getValue: ({ chamado }) => getChamadoAnexoUrl(chamado) ?? '',
   },
   {
     id: 'chamado.usuario_notificado',

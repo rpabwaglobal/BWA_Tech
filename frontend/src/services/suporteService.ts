@@ -24,6 +24,7 @@ export type ChamadoSuporte = {
   tipo: number | SuporteCatalogRef;
   item: number | SuporteCatalogRef;
   motivo: number | SuporteCatalogRef;
+  /** URL do anexo (campo canónico no SPA e no Django local). */
   anexo_url?: string | null;
   status: SuporteStatusApi;
   usuario_notificado?: boolean;
@@ -33,6 +34,36 @@ export type ChamadoSuporte = {
   data_abertura?: string;
   data_atualizacao?: string;
 };
+
+/** Resposta bruta do portal externo — usa `anexo` em vez de `anexo_url`. */
+type ChamadoSuportePortalRaw = ChamadoSuporte & { anexo?: string | null };
+
+/** URL do anexo independente do nome do campo na API de origem. */
+export function getChamadoAnexoUrl(
+  chamado: Pick<ChamadoSuporte, 'anexo_url'> & { anexo?: string | null },
+): string | null {
+  const url = String(chamado.anexo_url ?? chamado.anexo ?? '').trim();
+  return url || null;
+}
+
+/** Normaliza chamado vindo do portal (`anexo`) para o contrato interno (`anexo_url`). */
+export function normalizeChamadoSuporte(raw: ChamadoSuportePortalRaw): ChamadoSuporte {
+  const { anexo: _anexo, ...rest } = raw;
+  return { ...rest, anexo_url: getChamadoAnexoUrl(raw) };
+}
+
+function normalizeChamadoList(data: ChamadoSuportePortalRaw[]): ChamadoSuporte[] {
+  return data.map(normalizeChamadoSuporte);
+}
+
+/** Payload de criação para o portal (campo `anexo`, não `anexo_url`). */
+function toPortalCreateBody(payload: CreateChamadoSuportePayload): Record<string, unknown> {
+  const { anexo_url, ...rest } = payload;
+  const body: Record<string, unknown> = { ...rest };
+  const url = (anexo_url ?? '').trim();
+  if (url) body.anexo = url;
+  return body;
+}
 
 export type CreateChamadoSuportePayload = {
   usuario_nome: string;
@@ -206,26 +237,29 @@ export const suporteService = {
         ? { usuario_email: usuarioEmail }
         : undefined;
     const { data } = await formulariosApi.get<
-      ChamadoSuporte[] | { results?: ChamadoSuporte[]; count?: number }
+      ChamadoSuportePortalRaw[] | { results?: ChamadoSuportePortalRaw[]; count?: number }
     >('suporte/por-usuario/', {
       params,
     });
-    if (Array.isArray(data)) return data;
-    if (data && typeof data === 'object' && Array.isArray(data.results)) return data.results;
+    if (Array.isArray(data)) return normalizeChamadoList(data);
+    if (data && typeof data === 'object' && Array.isArray(data.results)) {
+      return normalizeChamadoList(data.results);
+    }
     return [];
   },
 
   async create(payload: CreateChamadoSuportePayload): Promise<ChamadoSuporte> {
-    const { data } = await formulariosApi.post<ChamadoSuporte>('suporte/', payload);
-    return data;
+    const body = usesLocalFormulariosBackend() ? payload : toPortalCreateBody(payload);
+    const { data } = await formulariosApi.post<ChamadoSuportePortalRaw>('suporte/', body);
+    return normalizeChamadoSuporte(data);
   },
 
   async patch(id: number, payload: PatchChamadoSuportePayload): Promise<ChamadoSuporte> {
-    const { data } = await formulariosApi.patch<ChamadoSuporte>(
+    const { data } = await formulariosApi.patch<ChamadoSuportePortalRaw>(
       `suporte/${id}/`,
       stripNullishPatchPayload(payload),
     );
-    return data;
+    return normalizeChamadoSuporte(data);
   },
 
   /** Atalho pra mover chamado entre tabs (PATCH tipo + item compatível + status atual). */
@@ -271,16 +305,20 @@ export const suporteService = {
     if (params.limit != null) cleaned.limit = params.limit;
     if (params.offset != null) cleaned.offset = params.offset;
     const { data } = await formulariosApi.get<
-      ChamadoSuporte[] | ListByUsuarioPagedResponse
+      ChamadoSuportePortalRaw[] | ListByUsuarioPagedResponse & { results?: ChamadoSuportePortalRaw[] }
     >('suporte/por-usuario/', { params: cleaned });
-    return data;
+    if (Array.isArray(data)) return normalizeChamadoList(data);
+    if (data && typeof data === 'object' && Array.isArray(data.results)) {
+      return { count: data.count ?? data.results.length, results: normalizeChamadoList(data.results) };
+    }
+    return data as ListByUsuarioPagedResponse;
   },
 
   async notificarUsuario(id: number): Promise<ChamadoSuporte> {
-    const { data } = await formulariosApi.patch<ChamadoSuporte>(
+    const { data } = await formulariosApi.patch<ChamadoSuportePortalRaw>(
       `suporte/${id}/notificar-usuario/`,
       { usuario_notificado: true },
     );
-    return data;
+    return normalizeChamadoSuporte(data);
   },
 };
