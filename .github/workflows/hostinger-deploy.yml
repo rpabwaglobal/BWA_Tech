@@ -12,10 +12,15 @@ name: Deploy to Hostinger VPS
 #  6. Volumes nomeados (postgres_data, etc.) são preservados — dados intactos
 #
 # Pré-requisitos no GitHub (Settings → Secrets and variables → Actions):
-#  - Secret  VPS_HOST       = 187.77.53.184
-#  - Secret  VPS_USER       = root
-#  - Secret  VPS_SSH_KEY    = chave PRIVADA SSH (conteúdo do id_ed25519 ou similar)
-#  - Secret  VPS_SSH_PORT   = 22 (opcional, default 22)
+#  - Secret  VPS_HOST         = IP da VPS
+#  - Secret  VPS_USER         = root
+#  - Secret  VPS_SSH_KEY      = chave PRIVADA SSH (conteúdo do id_ed25519 ou similar)
+#  - Secret  VPS_SSH_PORT     = 22 (opcional, default 22)
+#  - Secret  GHCR_PULL_TOKEN  = PAT com escopo read:packages (classic) ou Packages read (fine-grained)
+#  - Secret  GHCR_USERNAME    = usuário GitHub dono do PAT (não use o nome da org)
+#
+# Alternativa sem PAT: tornar o pacote público em
+#  GitHub → Packages → bwa_tech → Package settings → Change visibility → Public
 #
 # Pré-requisito na VPS (UMA VEZ): adicionar a chave PÚBLICA correspondente em
 #  /root/.ssh/authorized_keys
@@ -47,14 +52,26 @@ jobs:
     steps:
       - name: Deploy via SSH
         uses: appleboy/ssh-action@v1.0.3
+        env:
+          GHCR_PULL_TOKEN: ${{ secrets.GHCR_PULL_TOKEN }}
+          GHCR_USERNAME: ${{ secrets.GHCR_USERNAME }}
         with:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
           port: ${{ secrets.VPS_SSH_PORT || 22 }}
+          envs: GHCR_PULL_TOKEN,GHCR_USERNAME
           script: |
             set -e
             export COMPOSE_PROJECT_NAME=bwa_tech
+
+            # Imagem no GHCR é privada por padrão — login obrigatório antes do pull
+            if [ -z "${GHCR_PULL_TOKEN:-}" ] || [ -z "${GHCR_USERNAME:-}" ]; then
+              echo "ERRO: defina os secrets GHCR_PULL_TOKEN e GHCR_USERNAME no repositório."
+              echo "      Ou torne o pacote ghcr.io/rpabwaglobal/bwa_tech público."
+              exit 1
+            fi
+            echo "$GHCR_PULL_TOKEN" | docker login ghcr.io -u "$GHCR_USERNAME" --password-stdin
 
             # Clona o repo se ainda não existe, ou atualiza se já tem
             if [ ! -d /opt/bwa_tech/.git ]; then
