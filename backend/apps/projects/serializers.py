@@ -25,6 +25,19 @@ from .models import (
 )
 from apps.accounts.serializers import UserSerializer
 from apps.accounts.profile_picture_utils import get_profile_picture_url
+from .dev_time_format import format_minutos_uteis, format_segundos_corridos
+
+
+class DevTimeFormattedMixin:
+    """Expõe valores brutos no banco e campos formatados para exibição."""
+    dias_corridos_desenvolvimento = serializers.SerializerMethodField()
+    horas_uteis_desenvolvimento = serializers.SerializerMethodField()
+
+    def get_dias_corridos_desenvolvimento(self, obj):
+        return format_segundos_corridos(obj.segundos_corridos_desenvolvimento)
+
+    def get_horas_uteis_desenvolvimento(self, obj):
+        return format_minutos_uteis(obj.minutos_uteis_desenvolvimento)
 
 
 def format_user_name(user):
@@ -324,7 +337,7 @@ class CardPinSerializer(serializers.ModelSerializer):
         return pin
 
 
-class CardSerializer(serializers.ModelSerializer):
+class CardSerializer(DevTimeFormattedMixin, serializers.ModelSerializer):
     projeto_detail = ProjectSerializer(source='projeto', read_only=True)
     responsavel_name = serializers.SerializerMethodField()
     responsavel_role = serializers.SerializerMethodField()
@@ -392,6 +405,14 @@ class CardSerializer(serializers.ModelSerializer):
         if not KanbanStage.objects.filter(key=value).exists():
             raise serializers.ValidationError('Status inválido.')
         return value
+
+    def validate(self, attrs):
+        status = attrs.get('status')
+        if status is None and self.instance is not None:
+            status = self.instance.status
+        if status == CardStatus.A_DESENVOLVER:
+            attrs['data_inicio'] = None
+        return attrs
     
     def validate_complexidade_custom_items(self, value):
         """Garantir que sempre seja uma lista"""
@@ -714,12 +735,20 @@ class CardSerializer(serializers.ModelSerializer):
                  'criado_por', 'criado_por_name', 'criado_por_profile_picture_url',
                  'status', 'status_display', 'prioridade', 'prioridade_display',
                  'data_inicio', 'data_fim', 'finalizado_em',
+                 'segundos_corridos_desenvolvimento', 'dias_corridos_desenvolvimento',
+                 'dias_uteis_desenvolvimento',
+                 'minutos_uteis_desenvolvimento', 'horas_uteis_desenvolvimento',
                  'complexidade_selected_items', 'complexidade_selected_development', 'complexidade_custom_items',
                  'card_comment', 'links', 'events_count', 'created_at', 'updated_at']
-        read_only_fields = ['created_at', 'updated_at', 'criado_por', 'finalizado_em']
+        read_only_fields = [
+            'created_at', 'updated_at', 'criado_por', 'finalizado_em',
+            'segundos_corridos_desenvolvimento', 'dias_corridos_desenvolvimento',
+            'dias_uteis_desenvolvimento',
+            'minutos_uteis_desenvolvimento', 'horas_uteis_desenvolvimento',
+        ]
 
 
-class CardKanbanSerializer(serializers.ModelSerializer):
+class CardKanbanSerializer(DevTimeFormattedMixin, serializers.ModelSerializer):
     """
     Serializer otimizado pra renderizar cards no KANBAN da SprintDetails.
 
@@ -768,6 +797,9 @@ class CardKanbanSerializer(serializers.ModelSerializer):
             'responsavel_profile_picture_url',
             'status', 'status_display', 'prioridade', 'prioridade_display',
             'data_inicio', 'data_fim', 'finalizado_em',
+            'segundos_corridos_desenvolvimento', 'dias_corridos_desenvolvimento',
+            'dias_uteis_desenvolvimento',
+            'minutos_uteis_desenvolvimento', 'horas_uteis_desenvolvimento',
             'complexidade_selected_items', 'complexidade_selected_development',
             'complexidade_custom_items',
             'card_comment', 'links', 'events_count',
@@ -776,7 +808,7 @@ class CardKanbanSerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
 
-class CardMetricsSerializer(serializers.ModelSerializer):
+class CardMetricsSerializer(DevTimeFormattedMixin, serializers.ModelSerializer):
     """
     Serializer SLIM do Card para a página de Métricas.
 
@@ -814,6 +846,11 @@ class CardMetricsSerializer(serializers.ModelSerializer):
             'data_inicio',
             'data_fim',
             'finalizado_em',
+            'segundos_corridos_desenvolvimento',
+            'dias_corridos_desenvolvimento',
+            'dias_uteis_desenvolvimento',
+            'minutos_uteis_desenvolvimento',
+            'horas_uteis_desenvolvimento',
             'created_at',
             'updated_at',
         ]

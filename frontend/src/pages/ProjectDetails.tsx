@@ -1748,7 +1748,8 @@ export default function ProjectDetails() {
       : fullCard.status;
     
     // Se o card está em desenvolvimento e não tem data_inicio, preencher automaticamente
-    let dataInicio = fullCard.data_inicio || '';
+    let dataInicio =
+      targetStatus === 'a_desenvolver' ? '' : fullCard.data_inicio || '';
     if (targetStatus === 'em_desenvolvimento' && !dataInicio) {
       const now = new Date();
       const year = now.getFullYear();
@@ -2147,7 +2148,10 @@ export default function ProjectDetails() {
         prioridade: cardFormData.prioridade,
         status: cardFormData.status,
         responsavel: cardFormData.responsavel || null,
-        data_inicio: cardFormData.data_inicio || null,
+        data_inicio:
+          cardFormData.status === 'a_desenvolver'
+            ? null
+            : cardFormData.data_inicio || null,
         data_fim: cardFormData.data_fim || null,
         projeto: id!,
         // Incluir dados de estimativa de complexidade
@@ -3073,6 +3077,8 @@ export default function ProjectDetails() {
                       }
                       
                       setCardFormData(prev => ({ ...prev, status: newStatus, data_inicio: dataInicio, data_fim: dataFim }));
+                    } else if (newStatus === 'a_desenvolver') {
+                      setCardFormData((prev) => ({ ...prev, status: newStatus, data_inicio: '' }));
                     } else {
                       setCardFormData({ ...cardFormData, status: newStatus });
                     }
@@ -3348,18 +3354,7 @@ export default function ProjectDetails() {
                   value={cardFormData.data_fim}
                   onChange={(e) => {
                     const newDataFim = e.target.value;
-                    // Se não tem data_inicio, preencher automaticamente com data/hora atual
-                    let newDataInicio = cardFormData.data_inicio;
-                    if (!newDataInicio) {
-                      const now = new Date();
-                      const year = now.getFullYear();
-                      const month = String(now.getMonth() + 1).padStart(2, '0');
-                      const day = String(now.getDate()).padStart(2, '0');
-                      const hours = String(now.getHours()).padStart(2, '0');
-                      const minutes = String(now.getMinutes()).padStart(2, '0');
-                      newDataInicio = `${year}-${month}-${day}T${hours}:${minutes}`;
-                    }
-                    setCardFormData({ ...cardFormData, data_fim: newDataFim, data_inicio: newDataInicio });
+                    setCardFormData({ ...cardFormData, data_fim: newDataFim });
                   }}
                   disabled={Boolean(
                     editingCard && 
@@ -3399,6 +3394,26 @@ export default function ProjectDetails() {
                 )}
               </div>
             </div>
+
+            {editingCard?.finalizado_em && (
+              <div className="rounded-[8px] border border-[var(--color-border)] bg-[var(--color-card)]/40 p-[16px] space-y-[8px]">
+                <h4 className="text-sm font-semibold text-[var(--color-foreground)]">Tempo em desenvolvimento</h4>
+                <div className="grid grid-cols-3 gap-[16px] text-sm">
+                  <div>
+                    <span className="text-xs text-[var(--color-muted-foreground)]">Dias corridos</span>
+                    <p className="font-medium">{editingCard.dias_corridos_desenvolvimento ?? '—'}</p>
+                  </div>
+                  <div>
+                    <span className="text-xs text-[var(--color-muted-foreground)]">Dias úteis</span>
+                    <p className="font-medium">{editingCard.dias_uteis_desenvolvimento ?? '—'}</p>
+                  </div>
+                  <div>
+                    <span className="text-xs text-[var(--color-muted-foreground)]">Horas úteis</span>
+                    <p className="font-medium">{editingCard.horas_uteis_desenvolvimento ?? '—'}</p>
+                  </div>
+                </div>
+              </div>
+            )}
 
             {cardFormError && (
               <div className="p-[8px] text-sm text-[var(--color-destructive)] bg-red-50 border border-red-200 rounded-[8px] whitespace-pre-line">

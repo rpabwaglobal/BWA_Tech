@@ -90,7 +90,7 @@ export function CardLogsModal({ cardId, isOpen, onClose, refreshTrigger }: CardL
           case 'alteracoes':
             return log.tipo_evento === 'atualizado' || log.tipo_evento === 'responsavel_alterado';
           case 'movimentacoes':
-            return log.tipo_evento === 'movimentado';
+            return log.tipo_evento === 'movimentado' || log.tipo_evento === 'transferido_sprint';
           case 'comentarios':
             return log.tipo_evento === 'comentario';
           case 'pendencias':
@@ -116,6 +116,7 @@ export function CardLogsModal({ cardId, isOpen, onClose, refreshTrigger }: CardL
       case 'criado':
         return 'bg-green-500';
       case 'movimentado':
+      case 'transferido_sprint':
         return 'bg-blue-500';
       case 'pendencia':
         return 'bg-orange-500';
@@ -136,6 +137,7 @@ export function CardLogsModal({ cardId, isOpen, onClose, refreshTrigger }: CardL
       case 'criado':
         return 'text-green-600 bg-green-500/10';
       case 'movimentado':
+      case 'transferido_sprint':
         return 'text-blue-600 bg-blue-500/10';
       case 'pendencia':
         return 'text-orange-600 bg-orange-500/10';
@@ -316,6 +318,7 @@ export function CardLogsModal({ cardId, isOpen, onClose, refreshTrigger }: CardL
                           <span className={`text-xs font-semibold px-[8px] py-[4px] rounded-full ${getTagColor(log.tipo_evento)}`}>
                             {log.tipo_evento === 'criado' ? 'Card Criado' :
                              log.tipo_evento === 'movimentado' ? 'Card Movimentado' :
+                             log.tipo_evento === 'transferido_sprint' ? 'Transferido de Sprint' :
                              log.tipo_evento === 'comentario' ? 'Comentário' :
                              log.tipo_evento === 'alteracao' || log.tipo_evento === 'atualizado' ? 'Alteração no Card' :
                              (log.tipo_evento_display || log.tipo_evento)}

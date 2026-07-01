@@ -59,6 +59,11 @@ export type Card = {
   data_fim?: string | null;
   /** Instant em que o card passou a finalizado pela última vez (API). */
   finalizado_em?: string | null;
+  segundos_corridos_desenvolvimento?: number | null;
+  dias_corridos_desenvolvimento?: string | null;
+  dias_uteis_desenvolvimento?: number | null;
+  minutos_uteis_desenvolvimento?: number | null;
+  horas_uteis_desenvolvimento?: string | null;
   complexidade_selected_items?: string[];
   complexidade_selected_development?: string | null;
   complexidade_custom_items?: Array<{ id: string; label: string; hours: number }>;

@@ -22,6 +22,7 @@ export const ROUTES = {
   suporte: '/suporte',
   diaGeek: '/dia-geek',
   configuracoes: '/configuracoes',
+  administracao: '/administracao',
 } as const;
 
 /** Item ativo no menu lateral (rota exata ou detalhe sob o mesmo prefixo). */

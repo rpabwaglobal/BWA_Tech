@@ -3,7 +3,7 @@ Relatório de Atrasos & Gargalos.
 
 Combina dois pontos de dor:
 1. Cards atrasados (entregues fora do prazo OU em aberto com data_fim passada)
-2. Cycle time mais lento por área e por etapa
+2. Tempo em desenvolvimento mais lento por área (entregas atrasadas)
 
 Filtros: period_start / period_end (opcional)
 """
@@ -16,7 +16,10 @@ from django.utils import timezone
 
 from apps.projects.models import Card, CardArea
 
+from apps.projects.dev_time_format import format_minutos_uteis, format_segundos_corridos
+
 from .base import BaseReport, FilterDisplay, TableColumn
+from .dev_time_stats import accumulate_card_dev_time, bucket_averages, _new_bucket
 
 
 def _parse_date(v: str | None) -> datetime | None:
@@ -81,29 +84,26 @@ class Report(BaseReport):
             progress_start=45, progress_end=65, chunk_size=100,
         )
 
-        self.set_progress(60, 'Calculando cycle time por área...')
-        ms_day = 86400
-        per_area: dict[str, dict[str, Any]] = {}
-        for c in late_delivered_qs:
-            if not (c.data_inicio and c.finalizado_em):
-                continue
-            secs = (c.finalizado_em - c.data_inicio).total_seconds()
-            if secs < 0:
-                continue
-            a = per_area.setdefault(c.area, {'sum': 0, 'count': 0})
-            a['sum'] += secs
-            a['count'] += 1
+        self.set_progress(60, 'Calculando tempo em desenvolvimento por área...')
         area_labels = {a[0]: a[1] for a in CardArea.choices}
+        per_area: dict[str, dict[str, Any]] = {}
+        for c in late_delivered:
+            if c.segundos_corridos_desenvolvimento is None:
+                continue
+            a = per_area.setdefault(c.area, {
+                'area': area_labels.get(c.area, c.area),
+                **_new_bucket(),
+            })
+            accumulate_card_dev_time(a, c)
         cycle_by_area = sorted(
             [
                 {
-                    'area': area_labels.get(k, k),
-                    'count': v['count'],
-                    'avg_days': round(v['sum'] / v['count'] / ms_day, 1) if v['count'] else 0,
+                    'area': v['area'],
+                    **bucket_averages(v),
                 }
-                for k, v in per_area.items()
+                for v in per_area.values()
             ],
-            key=lambda r: -r['avg_days'],
+            key=lambda r: -(r.get('avg_segundos_corridos') or 0),
         )
 
         self.set_progress(90, 'Finalizando...')
@@ -140,6 +140,9 @@ class Report(BaseReport):
             TableColumn('responsavel', 'Responsável', width=22),
             TableColumn('data_fim', 'Prazo', format='dd/mm/yyyy hh:mm', width=18),
             TableColumn('finalizado_em', 'Finalizado em', format='dd/mm/yyyy hh:mm', width=18),
+            TableColumn('dias_corridos_desenvolvimento', 'Dias corridos (dev)', width=16),
+            TableColumn('dias_uteis_desenvolvimento', 'Dias úteis (dev)', width=14),
+            TableColumn('horas_uteis_desenvolvimento', 'Horas úteis (dev)', width=16),
             TableColumn('atraso_dias', 'Atraso (dias)', width=14),
         ]
 
@@ -158,6 +161,15 @@ class Report(BaseReport):
                 ) if c.responsavel_id else '',
                 'data_fim': _to_naive(c.data_fim),
                 'finalizado_em': _to_naive(c.finalizado_em),
+                'dias_corridos_desenvolvimento': (
+                    format_segundos_corridos(c.segundos_corridos_desenvolvimento)
+                    if c.segundos_corridos_desenvolvimento is not None else None
+                ),
+                'dias_uteis_desenvolvimento': c.dias_uteis_desenvolvimento,
+                'horas_uteis_desenvolvimento': (
+                    format_minutos_uteis(c.minutos_uteis_desenvolvimento)
+                    if c.minutos_uteis_desenvolvimento is not None else None
+                ),
                 'atraso_dias': atraso,
             })
         for c in data['open_late']:
@@ -172,6 +184,9 @@ class Report(BaseReport):
                 ) if c.responsavel_id else '',
                 'data_fim': _to_naive(c.data_fim),
                 'finalizado_em': None,
+                'dias_corridos_desenvolvimento': None,
+                'dias_uteis_desenvolvimento': None,
+                'horas_uteis_desenvolvimento': None,
                 'atraso_dias': atraso,
             })
         return rows

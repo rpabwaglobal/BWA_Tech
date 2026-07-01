@@ -43,6 +43,28 @@ from .serializers import (
 )
 
 
+def _move_project_cards_status(project, from_stage_key, to_stage_key, user=None):
+    """
+    Move cards entre etapas do Kanban.
+    Quando envolve finalizado, salva um a um para disparar signals (finalizado_em + métricas).
+    """
+    cards_qs = Card.objects.filter(projeto=project, status=from_stage_key)
+    involves_finalizado = (
+        from_stage_key == CardStatus.FINALIZADO
+        or to_stage_key == CardStatus.FINALIZADO
+    )
+    if involves_finalizado:
+        moved = 0
+        for card in cards_qs:
+            card.status = to_stage_key
+            if user is not None:
+                card._request_user = user
+            card.save()
+            moved += 1
+        return moved
+    return cards_qs.update(status=to_stage_key)
+
+
 class SprintViewSet(viewsets.ModelViewSet):
     queryset = Sprint.objects.all()
     serializer_class = SprintSerializer
@@ -457,7 +479,7 @@ class ProjectViewSet(viewsets.ModelViewSet):
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
-            Card.objects.filter(projeto=project, status=stage_key).update(status=move_to_key)
+            _move_project_cards_status(project, stage_key, move_to_key, user=request.user)
 
         cfg.delete()
         return Response({'detail': 'Etapa removida.'})
@@ -504,7 +526,7 @@ class ProjectViewSet(viewsets.ModelViewSet):
         if not cards:
             return Response({'detail': 'Nenhum card encontrado para mover.', 'moved_count': 0})
 
-        Card.objects.filter(projeto=project, status=from_stage_key).update(status=to_stage_key)
+        _move_project_cards_status(project, from_stage_key, to_stage_key, user=request.user)
 
         logs = [
             CardLog(
@@ -797,6 +819,8 @@ class CardViewSet(viewsets.ModelViewSet):
             .only(
                 'id', 'nome', 'status', 'area', 'tipo', 'responsavel',
                 'data_inicio', 'data_fim', 'finalizado_em',
+                'segundos_corridos_desenvolvimento', 'dias_uteis_desenvolvimento',
+                'minutos_uteis_desenvolvimento',
                 'created_at', 'updated_at',
                 'projeto__id', 'projeto__nome',
                 'projeto__is_system', 'projeto__arquivado',

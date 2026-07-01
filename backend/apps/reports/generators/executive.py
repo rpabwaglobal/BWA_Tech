@@ -21,6 +21,7 @@ from apps.formularios.models import ChamadoSuporte, ChamadoSuporteStatus
 from apps.suggestions.models import ProjectSuggestion
 
 from .base import BaseReport, FilterDisplay, TableColumn
+from .dev_time_stats import aggregate_dev_time
 
 
 def _parse_date(v: str | None) -> datetime | None:
@@ -65,14 +66,8 @@ class Report(BaseReport):
         on_time = sum(1 for c in with_due if c.finalizado_em <= c.data_fim)
         on_time_pct = round(on_time * 100 / len(with_due), 1) if with_due else None
 
-        # Cycle time
-        ms_day = 86400
-        cycles = [
-            (c.finalizado_em - c.data_inicio).total_seconds()
-            for c in delivered_list
-            if c.data_inicio and c.finalizado_em and (c.finalizado_em - c.data_inicio).total_seconds() >= 0
-        ]
-        avg_cycle = round(sum(cycles) / len(cycles) / ms_day, 1) if cycles else None
+        # Tempo médio em desenvolvimento (campos persistidos)
+        dev_time = aggregate_dev_time(delivered_list)
 
         # Sprint ativa
         active_sprint = Sprint.objects.filter(finalizada=False).order_by('-data_inicio').first()
@@ -133,7 +128,10 @@ class Report(BaseReport):
             'on_time': on_time,
             'on_time_pct': on_time_pct,
             'late_total': (len(with_due) - on_time) if with_due else 0,
-            'avg_cycle': avg_cycle,
+            'avg_cycle': dev_time.get('avg_dias_corridos'),
+            'avg_dias_uteis': dev_time.get('avg_dias_uteis'),
+            'avg_horas_uteis': dev_time.get('avg_horas_uteis'),
+            'dev_time_count': dev_time.get('count', 0),
             'active_sprint': active_sprint,
             'active_projects': active_projects,
             'open_late': open_late,

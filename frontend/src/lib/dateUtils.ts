@@ -184,3 +184,31 @@ export function isCardAtrasado(card: { status: string; data_fim?: string | null 
   
   return dataFim < agora;
 }
+
+/** Formata segundos corridos como "2d 5h", "12h", "45min". */
+export function formatSegundosCorridos(seconds?: number | null): string {
+  if (seconds == null) return '—';
+  if (seconds <= 0) return '0h';
+  const days = Math.floor(seconds / 86400);
+  let remainder = seconds % 86400;
+  const hours = Math.floor(remainder / 3600);
+  remainder %= 3600;
+  const minutes = Math.floor(remainder / 60);
+  if (days && hours) return `${days}d ${hours}h`;
+  if (days) return `${days}d`;
+  if (hours && minutes) return `${hours}h ${minutes}min`;
+  if (hours) return `${hours}h`;
+  if (minutes) return `${minutes}min`;
+  return '0h';
+}
+
+/** Formata minutos úteis como "1h 30min", "45min", "9h". */
+export function formatMinutosUteis(minutes?: number | null): string {
+  if (minutes == null) return '—';
+  if (minutes <= 0) return '0min';
+  const hours = Math.floor(minutes / 60);
+  const mins = minutes % 60;
+  if (hours && mins) return `${hours}h ${mins}min`;
+  if (hours) return `${hours}h`;
+  return `${mins}min`;
+}

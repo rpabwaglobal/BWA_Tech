@@ -32,6 +32,18 @@
         <div class="kpi-label">Inviabilizados</div>
         <div class="kpi-value" style="color: #6b6478;">{{ inviabilizados }}</div>
       </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Média dias corridos (dev)</div>
+        <div class="kpi-value">{% if avg_dias_corridos %}{{ avg_dias_corridos }}{% else %}—{% endif %}</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Média dias úteis (dev)</div>
+        <div class="kpi-value">{% if avg_dias_uteis is not None %}{{ avg_dias_uteis }}{% else %}—{% endif %}</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Média horas úteis (dev)</div>
+        <div class="kpi-value">{% if avg_horas_uteis %}{{ avg_horas_uteis }}{% else %}—{% endif %}</div>
+      </div>
     </div>
   </div>
 
@@ -62,6 +74,10 @@
             <th style="width: 10%;">Prioridade</th>
             <th style="width: 14%;">Responsável</th>
             <th style="width: 12%;">Prazo</th>
+            <th style="width: 10%;">Finalizado</th>
+            <th style="width: 5%;">D.corr.</th>
+            <th style="width: 5%;">D.úteis</th>
+            <th style="width: 5%;">H.úteis</th>
           </tr>
         </thead>
         <tbody>
@@ -76,9 +92,13 @@
                 {% if c.responsavel %}{{ c.responsavel.first_name }} {{ c.responsavel.last_name }}{% else %}<span class="muted">—</span>{% endif %}
               </td>
               <td>{{ c.data_fim|date:"d/m/Y"|default:"—" }}</td>
+              <td>{{ c.finalizado_em|date:"d/m/Y"|default:"—" }}</td>
+              <td>{{ c.segundos_corridos_desenvolvimento|format_segundos_corridos_filter }}</td>
+              <td>{{ c.dias_uteis_desenvolvimento|default:"—" }}</td>
+              <td>{{ c.minutos_uteis_desenvolvimento|format_minutos_uteis_filter }}</td>
             </tr>
           {% empty %}
-            <tr><td colspan="7" class="muted" style="text-align:center;">Sem cards neste projeto.</td></tr>
+            <tr><td colspan="10" class="muted" style="text-align:center;">Sem cards neste projeto.</td></tr>
           {% endfor %}
         </tbody>
       </table>

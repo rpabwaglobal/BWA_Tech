@@ -1,4 +1,5 @@
 {% extends 'reports/base.html' %}
+{% load reports_extras %}
 
 {% block content %}
   <div class="section">
@@ -16,6 +17,9 @@
             <th style="width: 8%;">Prioridade</th>
             <th style="width: 12%;">Responsável</th>
             <th style="width: 6%;">Prazo</th>
+            <th style="width: 5%;">D.corr.</th>
+            <th style="width: 5%;">D.úteis</th>
+            <th style="width: 5%;">H.úteis</th>
           </tr>
         </thead>
         <tbody>
@@ -38,6 +42,9 @@
                 {% endif %}
               </td>
               <td>{{ c.data_fim|date:"d/m/Y"|default:"—" }}</td>
+              <td>{{ c.segundos_corridos_desenvolvimento|format_segundos_corridos_filter }}</td>
+              <td>{{ c.dias_uteis_desenvolvimento|default:"—" }}</td>
+              <td>{{ c.minutos_uteis_desenvolvimento|format_minutos_uteis_filter }}</td>
             </tr>
           {% endfor %}
         </tbody>

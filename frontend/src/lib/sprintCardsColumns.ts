@@ -1,4 +1,5 @@
 import type { Card as CardType, ProjectDetail } from '@/services/cardService';
+import { formatMinutosUteis, formatSegundosCorridos } from '@/lib/dateUtils';
 
 export type ColumnGroup = 'card' | 'projeto' | 'sprint';
 
@@ -50,6 +51,10 @@ export const SPRINT_CARDS_COLUMN_DEFS: ColumnDefinition[] = [
   { id: 'card.prioridade_display', label: 'Card Prioridade (Display)', group: 'card', getValue: ({ card }) => card.prioridade_display },
   { id: 'card.data_inicio', label: 'Card Data Início', group: 'card', getValue: ({ card }) => card.data_inicio },
   { id: 'card.data_fim', label: 'Card Data Fim', group: 'card', getValue: ({ card }) => card.data_fim },
+  { id: 'card.finalizado_em', label: 'Card Finalizado em', group: 'card', getValue: ({ card }) => card.finalizado_em },
+  { id: 'card.dias_corridos_desenvolvimento', label: 'Dias corridos (dev)', group: 'card', getValue: ({ card }) => card.dias_corridos_desenvolvimento ?? formatSegundosCorridos(card.segundos_corridos_desenvolvimento) },
+  { id: 'card.dias_uteis_desenvolvimento', label: 'Dias úteis (dev)', group: 'card', getValue: ({ card }) => card.dias_uteis_desenvolvimento ?? '' },
+  { id: 'card.horas_uteis_desenvolvimento', label: 'Horas úteis (dev)', group: 'card', getValue: ({ card }) => card.horas_uteis_desenvolvimento ?? formatMinutosUteis(card.minutos_uteis_desenvolvimento) },
   { id: 'card.complexidade_selected_items', label: 'Complexidade (selected_items)', group: 'card', getValue: ({ card }) => safeToString(card.complexidade_selected_items) },
   { id: 'card.complexidade_selected_development', label: 'Complexidade (selected_development)', group: 'card', getValue: ({ card }) => card.complexidade_selected_development },
   { id: 'card.complexidade_custom_items', label: 'Complexidade (custom_items)', group: 'card', getValue: ({ card }) => safeToString(card.complexidade_custom_items) },

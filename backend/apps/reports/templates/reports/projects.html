@@ -21,6 +21,10 @@
             <th style="width: 10%;">Prioridade</th>
             <th style="width: 14%;">Responsável</th>
             <th style="width: 10%;">Prazo</th>
+            <th style="width: 8%;">Finalizado</th>
+            <th style="width: 5%;">D.corr.</th>
+            <th style="width: 5%;">D.úteis</th>
+            <th style="width: 5%;">H.úteis</th>
           </tr>
         </thead>
         <tbody>
@@ -33,9 +37,13 @@
               <td><span class="badge badge-priority-{{ c.prioridade }}">{{ c.get_prioridade_display }}</span></td>
               <td>{% if c.responsavel %}{{ c.responsavel.first_name }} {{ c.responsavel.last_name }}{% else %}<span class="muted">—</span>{% endif %}</td>
               <td>{{ c.data_fim|date:"d/m/Y"|default:"—" }}</td>
+              <td>{{ c.finalizado_em|date:"d/m/Y"|default:"—" }}</td>
+              <td>{{ c.segundos_corridos_desenvolvimento|format_segundos_corridos_filter }}</td>
+              <td>{{ c.dias_uteis_desenvolvimento|default:"—" }}</td>
+              <td>{{ c.minutos_uteis_desenvolvimento|format_minutos_uteis_filter }}</td>
             </tr>
           {% empty %}
-            <tr><td colspan="7" class="muted" style="text-align:center;">Sem cards.</td></tr>
+            <tr><td colspan="10" class="muted" style="text-align:center;">Sem cards.</td></tr>
           {% endfor %}
         </tbody>
       </table>

@@ -15,7 +15,10 @@ from django.utils import timezone
 
 from apps.projects.models import Card, Project, Sprint
 
+from apps.projects.dev_time_format import format_minutos_uteis, format_segundos_corridos
+
 from .base import BaseReport, FilterDisplay, TableColumn
+from .dev_time_stats import aggregate_dev_time
 
 
 class Report(BaseReport):
@@ -64,6 +67,9 @@ class Report(BaseReport):
                 if c.finalizado_em > c.data_fim:
                     atrasados += 1
 
+        finalized_cards = [c for c in cards if c.status == 'finalizado' and c.finalizado_em]
+        dev_time = aggregate_dev_time(finalized_cards)
+
         return {
             'sprint': sprint,
             'projects': projects,
@@ -74,6 +80,9 @@ class Report(BaseReport):
             'em_andamento': em_andamento,
             'a_desenvolver': a_desenvolver,
             'atrasados': atrasados,
+            'avg_dias_corridos': dev_time.get('avg_dias_corridos'),
+            'avg_dias_uteis': dev_time.get('avg_dias_uteis'),
+            'avg_horas_uteis': dev_time.get('avg_horas_uteis'),
         }
 
     def filters_display(self, data: Any) -> list[FilterDisplay]:
@@ -103,6 +112,9 @@ class Report(BaseReport):
             TableColumn('responsavel', 'Responsável', width=22),
             TableColumn('data_fim', 'Prazo', format='dd/mm/yyyy hh:mm', width=18),
             TableColumn('finalizado_em', 'Finalizado em', format='dd/mm/yyyy hh:mm', width=18),
+            TableColumn('dias_corridos_desenvolvimento', 'Dias corridos (dev)', width=16),
+            TableColumn('dias_uteis_desenvolvimento', 'Dias úteis (dev)', width=14),
+            TableColumn('horas_uteis_desenvolvimento', 'Horas úteis (dev)', width=16),
         ]
 
     def table_rows(self, data: dict[str, Any]) -> list[dict[str, Any]]:
@@ -122,6 +134,15 @@ class Report(BaseReport):
                     ) if c.responsavel_id else '',
                     'data_fim': _to_naive(c.data_fim),
                     'finalizado_em': _to_naive(c.finalizado_em),
+                    'dias_corridos_desenvolvimento': (
+                        format_segundos_corridos(c.segundos_corridos_desenvolvimento)
+                        if c.segundos_corridos_desenvolvimento is not None else None
+                    ),
+                    'dias_uteis_desenvolvimento': c.dias_uteis_desenvolvimento,
+                    'horas_uteis_desenvolvimento': (
+                        format_minutos_uteis(c.minutos_uteis_desenvolvimento)
+                        if c.minutos_uteis_desenvolvimento is not None else None
+                    ),
                 })
         return rows
 

@@ -5,7 +5,7 @@ Filtros:
 - user_id (obrigatório)
 - period_start / period_end (opcional)
 
-Mostra entregas, on-time %, cycle time pessoal, distribuição por área.
+Mostra entregas, on-time %, tempo em desenvolvimento pessoal, distribuição por área.
 """
 from __future__ import annotations
 
@@ -17,7 +17,10 @@ from django.utils import timezone
 
 from apps.projects.models import Card, CardArea
 
+from apps.projects.dev_time_format import format_minutos_uteis, format_segundos_corridos
+
 from .base import BaseReport, FilterDisplay, TableColumn
+from .dev_time_stats import aggregate_dev_time
 
 
 def _parse_date(value: str | None) -> datetime | None:
@@ -81,15 +84,8 @@ class Report(BaseReport):
         late = len(with_due) - on_time
         pct = round(on_time * 100 / len(with_due), 1) if with_due else None
 
-        # Cycle time
-        ms_day = 86400
-        cycles = []
-        for c in delivered:
-            if c.data_inicio and c.finalizado_em:
-                secs = (c.finalizado_em - c.data_inicio).total_seconds()
-                if secs >= 0:
-                    cycles.append(secs)
-        avg_cycle = round(sum(cycles) / len(cycles) / ms_day, 1) if cycles else None
+        # Tempo em desenvolvimento (campos persistidos)
+        dev_time = aggregate_dev_time(delivered)
 
         # Distribuição por área
         area_labels = {a[0]: a[1] for a in CardArea.choices}
@@ -115,7 +111,9 @@ class Report(BaseReport):
             'on_time': on_time,
             'late': late,
             'on_time_pct': pct,
-            'avg_cycle': avg_cycle,
+            'avg_cycle': dev_time.get('avg_dias_corridos'),
+            'avg_dias_uteis': dev_time.get('avg_dias_uteis'),
+            'avg_horas_uteis': dev_time.get('avg_horas_uteis'),
             'area_dist': area_dist,
         }
 
@@ -149,6 +147,9 @@ class Report(BaseReport):
             TableColumn('tipo', 'Tipo', width=20),
             TableColumn('data_fim', 'Prazo', format='dd/mm/yyyy hh:mm', width=18),
             TableColumn('finalizado_em', 'Finalizado em', format='dd/mm/yyyy hh:mm', width=18),
+            TableColumn('dias_corridos_desenvolvimento', 'Dias corridos (dev)', width=16),
+            TableColumn('dias_uteis_desenvolvimento', 'Dias úteis (dev)', width=14),
+            TableColumn('horas_uteis_desenvolvimento', 'Horas úteis (dev)', width=16),
             TableColumn('on_time', 'No prazo?', width=12),
         ]
 
@@ -165,6 +166,15 @@ class Report(BaseReport):
                 'tipo': c.get_tipo_display(),
                 'data_fim': _to_naive(c.data_fim),
                 'finalizado_em': _to_naive(c.finalizado_em),
+                'dias_corridos_desenvolvimento': (
+                    format_segundos_corridos(c.segundos_corridos_desenvolvimento)
+                    if c.segundos_corridos_desenvolvimento is not None else None
+                ),
+                'dias_uteis_desenvolvimento': c.dias_uteis_desenvolvimento,
+                'horas_uteis_desenvolvimento': (
+                    format_minutos_uteis(c.minutos_uteis_desenvolvimento)
+                    if c.minutos_uteis_desenvolvimento is not None else None
+                ),
                 'on_time': on_time,
             })
         return out

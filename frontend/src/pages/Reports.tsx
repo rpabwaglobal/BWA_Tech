@@ -54,7 +54,7 @@ const REPORT_DEFS: ReportDef[] = [
   {
     id: 'user',
     title: 'Por Usuário',
-    description: 'Performance individual: cards entregues, on-time %, cycle time, distribuição por área.',
+    description: 'Performance individual: entregas, on-time %, tempo em desenvolvimento (dias/horas úteis) e distribuição por área.',
     category: 'Métricas',
     filters: ['user', 'period'],
     requiredFilters: ['user'],
@@ -71,7 +71,7 @@ const REPORT_DEFS: ReportDef[] = [
   {
     id: 'sprint',
     title: 'Sprint Detalhada',
-    description: 'Projetos e todos os cards de uma sprint, com KPIs e status.',
+    description: 'Projetos e todos os cards de uma sprint, com KPIs, status e tempo em desenvolvimento.',
     category: 'Operacional',
     filters: ['sprint'],
     requiredFilters: ['sprint'],

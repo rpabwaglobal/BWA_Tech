@@ -1,4 +1,5 @@
 {% extends 'reports/base.html' %}
+{% load reports_extras %}
 
 {% block content %}
   <div class="section">
@@ -15,13 +16,19 @@
   </div>
 
   <div class="section">
-    <h2>Cycle time mais lento por área</h2>
+    <h2>Tempo em desenvolvimento mais lento por área (entregas atrasadas)</h2>
     {% if cycle_by_area %}
       <table class="tight">
-        <thead><tr><th>Área</th><th style="width: 14%;">Cards</th><th style="width: 16%;">Média (dias)</th></tr></thead>
+        <thead><tr><th>Área</th><th style="width: 10%;">Cards</th><th style="width: 14%;">Dias corridos</th><th style="width: 14%;">Dias úteis</th><th style="width: 14%;">Horas úteis</th></tr></thead>
         <tbody>
           {% for a in cycle_by_area %}
-            <tr><td>{{ a.area }}</td><td>{{ a.count }}</td><td><strong>{{ a.avg_days }}</strong></td></tr>
+            <tr>
+              <td>{{ a.area }}</td>
+              <td>{{ a.count }}</td>
+              <td><strong>{{ a.avg_dias_corridos|default:"—" }}</strong></td>
+              <td>{{ a.avg_dias_uteis|default:"—" }}</td>
+              <td>{{ a.avg_horas_uteis|default:"—" }}</td>
+            </tr>
           {% endfor %}
         </tbody>
       </table>
@@ -35,7 +42,7 @@
     {% if late_delivered %}
       <table class="tight">
         <thead>
-          <tr><th>Card</th><th style="width: 22%;">Projeto</th><th style="width: 16%;">Responsável</th><th style="width: 10%;">Prazo</th><th style="width: 10%;">Finalizado</th></tr>
+          <tr><th>Card</th><th style="width: 18%;">Projeto</th><th style="width: 12%;">Responsável</th><th style="width: 8%;">Prazo</th><th style="width: 8%;">Finalizado</th><th style="width: 5%;">D.corr.</th><th style="width: 5%;">D.úteis</th><th style="width: 5%;">H.úteis</th></tr>
         </thead>
         <tbody>
           {% for c in late_delivered %}
@@ -45,6 +52,9 @@
               <td>{% if c.responsavel %}{{ c.responsavel.first_name }} {{ c.responsavel.last_name }}{% else %}<span class="muted">—</span>{% endif %}</td>
               <td>{{ c.data_fim|date:"d/m/Y" }}</td>
               <td><span class="badge badge-status-inviabilizado">{{ c.finalizado_em|date:"d/m/Y" }}</span></td>
+              <td>{{ c.segundos_corridos_desenvolvimento|format_segundos_corridos_filter }}</td>
+              <td>{{ c.dias_uteis_desenvolvimento|default:"—" }}</td>
+              <td>{{ c.minutos_uteis_desenvolvimento|format_minutos_uteis_filter }}</td>
             </tr>
           {% endfor %}
         </tbody>

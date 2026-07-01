@@ -6,7 +6,8 @@ Cobre as principais visões da página `/metricas`:
 - Cards finalizados por usuário (ranking)
 - Throughput por sprint
 - Volume por área
-- Cycle time médio (geral, por área, por usuário)
+- Cycle time médio (geral, por área, por usuário) — usa campos persistidos
+  dias_corridos / dias_uteis / horas_uteis de desenvolvimento
 
 Filtros (mutuamente exclusivos — frontend obriga escolher um dos dois modos):
 - period_start / period_end (opcional): filtra cards entregues nesse período
@@ -32,6 +33,7 @@ from apps.formularios.models import ChamadoSuporte, ChamadoSuporteStatus
 from apps.suggestions.models import ProjectSuggestion
 
 from .base import BaseReport, FilterDisplay, TableColumn
+from .dev_time_stats import accumulate_card_dev_time, aggregate_dev_time, bucket_averages, _new_bucket
 
 # Regra de negócio do app: cards entregues = status finalizado COM finalizado_em.
 CLOSED_STATUS = 'finalizado'
@@ -169,21 +171,15 @@ class Report(BaseReport):
             key=lambda r: -r['count'],
         )
 
-        # Cycle time
-        self.set_progress(85, 'Calculando cycle time...')
-        ms_day = 86400
-        total_seconds = 0
-        count_with_cycle = 0
+        # Tempo em desenvolvimento (campos persistidos no card)
+        self.set_progress(85, 'Calculando tempo em desenvolvimento...')
+        overall_bucket = _new_bucket()
         per_user_cycle: dict[int, dict[str, Any]] = {}
         per_area_cycle: dict[str, dict[str, Any]] = {}
         for c in closed_cards:
-            if not c.data_inicio or not c.finalizado_em:
+            if c.segundos_corridos_desenvolvimento is None:
                 continue
-            secs = (c.finalizado_em - c.data_inicio).total_seconds()
-            if secs < 0:
-                continue
-            total_seconds += secs
-            count_with_cycle += 1
+            accumulate_card_dev_time(overall_bucket, c)
             if c.responsavel_id:
                 u = per_user_cycle.setdefault(c.responsavel_id, {
                     'name': (
@@ -191,38 +187,36 @@ class Report(BaseReport):
                         or c.responsavel.username
                     ),
                     'role': c.responsavel.role if c.responsavel else '',
-                    'sum': 0,
-                    'count': 0,
+                    **_new_bucket(),
                 })
-                u['sum'] += secs
-                u['count'] += 1
-            a = per_area_cycle.setdefault(c.area, {'area': area_labels.get(c.area, c.area), 'sum': 0, 'count': 0})
-            a['sum'] += secs
-            a['count'] += 1
+                accumulate_card_dev_time(u, c)
+            a = per_area_cycle.setdefault(c.area, {
+                'area': area_labels.get(c.area, c.area),
+                **_new_bucket(),
+            })
+            accumulate_card_dev_time(a, c)
 
-        avg_overall = round((total_seconds / count_with_cycle / ms_day), 1) if count_with_cycle else 0
+        overall = bucket_averages(overall_bucket)
         cycle_by_user = sorted(
             [
                 {
                     'name': v['name'],
                     'role': v['role'],
-                    'count': v['count'],
-                    'avg_days': round(v['sum'] / v['count'] / ms_day, 1) if v['count'] else 0,
+                    **bucket_averages(v),
                 }
                 for v in per_user_cycle.values()
             ],
-            key=lambda r: r['avg_days'],
+            key=lambda r: r.get('avg_segundos_corridos') or 0,
         )
         cycle_by_area = sorted(
             [
                 {
                     'area': v['area'],
-                    'count': v['count'],
-                    'avg_days': round(v['sum'] / v['count'] / ms_day, 1) if v['count'] else 0,
+                    **bucket_averages(v),
                 }
                 for v in per_area_cycle.values()
             ],
-            key=lambda r: r['avg_days'],
+            key=lambda r: r.get('avg_segundos_corridos') or 0,
         )
 
         # Operação geral (mesma janela do report) — mantém regra dos
@@ -261,8 +255,10 @@ class Report(BaseReport):
             'throughput': throughput,
             'volume': volume,
             'cycle': {
-                'avg_overall': avg_overall,
-                'count_with_cycle': count_with_cycle,
+                'avg_overall': overall.get('avg_dias_corridos') or '—',
+                'avg_dias_uteis': overall.get('avg_dias_uteis'),
+                'avg_horas_uteis': overall.get('avg_horas_uteis'),
+                'count_with_cycle': overall.get('count', 0),
                 'by_user': cycle_by_user,
                 'by_area': cycle_by_area,
             },
@@ -313,19 +309,24 @@ class Report(BaseReport):
             TableColumn('name', 'Usuário', width=30),
             TableColumn('role', 'Cargo', width=18),
             TableColumn('count', 'Entregas', width=12),
-            TableColumn('avg_cycle_days', 'Cycle médio (dias)', width=20),
+            TableColumn('avg_dias_corridos', 'Média dias corridos (dev)', width=22),
+            TableColumn('avg_dias_uteis', 'Média dias úteis (dev)', width=20),
+            TableColumn('avg_horas_uteis', 'Média horas úteis (dev)', width=22),
         ]
 
     def table_rows(self, data: dict[str, Any]) -> list[dict[str, Any]]:
         # Junta ranking + cycle por user
-        cycle_by_name = {c['name']: c['avg_days'] for c in data['cycle']['by_user']}
+        cycle_by_name = {c['name']: c for c in data['cycle']['by_user']}
         rows: list[dict[str, Any]] = []
         for i, r in enumerate(data['ranking'], start=1):
+            cycle = cycle_by_name.get(r['name'], {})
             rows.append({
                 'rank': i,
                 'name': r['name'],
                 'role': r.get('role', ''),
                 'count': r['count'],
-                'avg_cycle_days': cycle_by_name.get(r['name'], ''),
+                'avg_dias_corridos': cycle.get('avg_dias_corridos', ''),
+                'avg_dias_uteis': cycle.get('avg_dias_uteis', ''),
+                'avg_horas_uteis': cycle.get('avg_horas_uteis', ''),
             })
         return rows

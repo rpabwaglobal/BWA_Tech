@@ -6,11 +6,76 @@ from collections import defaultdict
 from django.db import transaction
 from django.utils import timezone
 
-from .models import Sprint, Project, Card, CardStatus, ProjectStatus, ProjectKanbanStageConfig
+from .models import Sprint, Project, Card, CardStatus, ProjectStatus, ProjectKanbanStageConfig, CardLog, CardLogEventType
 
 
 def _norm_nome_projeto(nome: str) -> str:
     return (nome or "").strip().casefold()
+
+
+def data_inicio_para_status(status: str, data_inicio):
+    """
+    data_inicio representa o instante em que o card entrou em desenvolvimento.
+    Cards em 'a_desenvolver' não devem ter data de início preenchida.
+    """
+    if status == CardStatus.A_DESENVOLVER:
+        return None
+    return data_inicio
+
+
+def _copiar_logs_card(origem: Card, destino: Card) -> None:
+    """Replica o histórico da timeline do card de origem para o card na nova sprint."""
+    for log in origem.logs.all().order_by('data', 'id'):
+        novo_log = CardLog.objects.create(
+            card=destino,
+            tipo_evento=log.tipo_evento,
+            descricao=log.descricao,
+            usuario=log.usuario,
+        )
+        CardLog.objects.filter(pk=novo_log.pk).update(data=log.data)
+
+
+def _replicar_card_para_sprint(card: Card, novo_projeto: Project, sprint_origem: Sprint, sprint_destino: Sprint, usuario_fechamento=None) -> Card:
+    """
+    Cria o card na sprint destino preservando criação, início de desenvolvimento e timeline.
+    """
+    novo = Card(
+        nome=card.nome,
+        descricao=card.descricao or '',
+        script_url=card.script_url,
+        projeto=novo_projeto,
+        area=card.area,
+        tipo=card.tipo,
+        responsavel=card.responsavel,
+        criado_por=card.criado_por,
+        status=card.status,
+        prioridade=card.prioridade,
+        data_inicio=data_inicio_para_status(card.status, card.data_inicio),
+        data_fim=card.data_fim,
+        complexidade_selected_items=card.complexidade_selected_items or [],
+        complexidade_selected_development=card.complexidade_selected_development or '',
+        complexidade_custom_items=card.complexidade_custom_items or [],
+        card_comment=card.card_comment or '',
+    )
+    novo._from_sprint_replication = True
+    novo.save()
+
+    Card.objects.filter(pk=novo.pk).update(created_at=card.created_at)
+    novo.refresh_from_db()
+
+    _copiar_logs_card(card, novo)
+
+    CardLog.objects.create(
+        card=novo,
+        tipo_evento=CardLogEventType.TRANSFERIDO_SPRINT,
+        descricao=(
+            f'Card transferido da sprint "{sprint_origem.nome}" para a sprint '
+            f'"{sprint_destino.nome}" ao finalizar a sprint anterior.'
+        ),
+        usuario=usuario_fechamento,
+    )
+
+    return novo
 
 
 def merge_project_kanban_into(canonical: Project, other: Project) -> None:
@@ -160,23 +225,12 @@ def finalizar_sprint_replicacao(sprint, criado_por_user=None):
                 projetos_criados += 1
 
             for card in cards_pendentes:
-                Card.objects.create(
-                    nome=card.nome,
-                    descricao=card.descricao or '',
-                    script_url=card.script_url,
-                    projeto=novo_projeto,
-                    area=card.area,
-                    tipo=card.tipo,
-                    responsavel=card.responsavel,
-                    criado_por=criado_por_user or card.criado_por,
-                    status=card.status,
-                    prioridade=card.prioridade,
-                    data_inicio=card.data_inicio,
-                    data_fim=card.data_fim,
-                    complexidade_selected_items=card.complexidade_selected_items or [],
-                    complexidade_selected_development=card.complexidade_selected_development or '',
-                    complexidade_custom_items=card.complexidade_custom_items or [],
-                    card_comment=card.card_comment or '',
+                _replicar_card_para_sprint(
+                    card,
+                    novo_projeto,
+                    sprint,
+                    proxima,
+                    usuario_fechamento=criado_por_user,
                 )
                 cards_copiados += 1
 

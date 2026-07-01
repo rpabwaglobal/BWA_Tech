@@ -15,12 +15,14 @@ import {
   Sparkles,
   CheckSquare,
   Settings,
+  Shield,
   BarChart3,
   FileText,
   Headset,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { ROUTES, isNavRouteActive } from '@/routes';
+import { isAdminUser } from '@/lib/roles';
 
 const navigation = [
   { path: ROUTES.painel, label: 'Dashboard', icon: LayoutDashboard },
@@ -120,21 +122,39 @@ export default function Sidebar() {
               );
             })}
           </div>
-          {/* Configurações - parte de baixo */}
-          <Link
-            to={ROUTES.configuracoes}
-            className={cn(
-              "flex items-center gap-[16px] rounded-[8px] px-[16px] py-[8px] text-sm font-medium transition-colors h-[40px] mt-auto",
-              location.pathname === ROUTES.configuracoes
-                ? "bg-white/22 text-white shadow-sm"
-                : "text-white/80 hover:bg-white/10 hover:text-white",
-              collapsed && "justify-center px-[8px]"
+          {/* Configurações e Administração — parte de baixo */}
+          <div className="mt-auto space-y-[8px]">
+            <Link
+              to={ROUTES.configuracoes}
+              className={cn(
+                "flex items-center gap-[16px] rounded-[8px] px-[16px] py-[8px] text-sm font-medium transition-colors h-[40px]",
+                location.pathname === ROUTES.configuracoes
+                  ? "bg-white/22 text-white shadow-sm"
+                  : "text-white/80 hover:bg-white/10 hover:text-white",
+                collapsed && "justify-center px-[8px]"
+              )}
+              title={collapsed ? 'Configurações' : undefined}
+            >
+              <Settings className="h-[20px] w-[20px] shrink-0" />
+              {!collapsed && <span>Configurações</span>}
+            </Link>
+            {isAdminUser(user) && (
+              <Link
+                to={ROUTES.administracao}
+                className={cn(
+                  "flex items-center gap-[16px] rounded-[8px] px-[16px] py-[8px] text-sm font-medium transition-colors h-[40px]",
+                  location.pathname === ROUTES.administracao
+                    ? "bg-white/22 text-white shadow-sm"
+                    : "text-white/80 hover:bg-white/10 hover:text-white",
+                  collapsed && "justify-center px-[8px]"
+                )}
+                title={collapsed ? 'Administração' : undefined}
+              >
+                <Shield className="h-[20px] w-[20px] shrink-0" />
+                {!collapsed && <span>Administração</span>}
+              </Link>
             )}
-            title={collapsed ? 'Configurações' : undefined}
-          >
-            <Settings className="h-[20px] w-[20px] shrink-0" />
-            {!collapsed && <span>Configurações</span>}
-          </Link>
+          </div>
         </nav>
 
         {/* User */}

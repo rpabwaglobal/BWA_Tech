@@ -13,6 +13,7 @@ import type { Project } from '@/services/projectService';
 import { formatDate } from '@/lib/dateUtils';
 import { QuickCreateCardModal } from '@/components/QuickCreateCardModal';
 import { ROUTES } from '@/routes';
+import { isAdminUser } from '@/lib/roles';
 import {
   Zap,
   FolderKanban,
@@ -24,6 +25,7 @@ import {
   UserX,
   Plus,
   ListChecks,
+  Shield,
 } from 'lucide-react';
 
 type Stats = {
@@ -382,6 +384,17 @@ export default function Dashboard() {
               <ListChecks className="h-4 w-4" />
               Meus Cards
             </Button>
+            {isAdminUser(user) && (
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => navigate(ROUTES.administracao)}
+                className="gap-2"
+              >
+                <Shield className="h-4 w-4" />
+                Administração
+              </Button>
+            )}
           </div>
         </div>
       </div>

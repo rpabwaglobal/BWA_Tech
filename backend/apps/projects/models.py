@@ -339,6 +339,21 @@ class Card(models.Model):
         verbose_name='Finalizado em',
         help_text='Instante em que o card passou a finalizado pela última vez (métricas de prazo).',
     )
+    segundos_corridos_desenvolvimento = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        verbose_name='Segundos corridos em desenvolvimento',
+    )
+    dias_uteis_desenvolvimento = models.PositiveSmallIntegerField(
+        null=True,
+        blank=True,
+        verbose_name='Dias úteis em desenvolvimento',
+    )
+    minutos_uteis_desenvolvimento = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        verbose_name='Minutos úteis em desenvolvimento',
+    )
     # Campos para estimativa de complexidade
     complexidade_selected_items = models.JSONField(
         default=list,
@@ -374,6 +389,12 @@ class Card(models.Model):
     created_at = models.DateTimeField(auto_now_add=True, verbose_name='Data de Criação')
     updated_at = models.DateTimeField(auto_now=True, verbose_name='Data de Atualização')
 
+    def save(self, *args, **kwargs):
+        # data_inicio = instante em que o card entrou em desenvolvimento (não criação nem sprint).
+        if self.status == CardStatus.A_DESENVOLVER:
+            self.data_inicio = None
+        super().save(*args, **kwargs)
+
     class Meta:
         verbose_name = 'Card'
         verbose_name_plural = 'Cards'
@@ -381,6 +402,28 @@ class Card(models.Model):
 
     def __str__(self):
         return f"{self.nome} - {self.projeto.nome}"
+
+
+class CachedHoliday(models.Model):
+    """Cache local de feriados (Feriados API) para cálculo de dias úteis em Natal/RN."""
+
+    date = models.DateField(verbose_name='Data')
+    year = models.PositiveSmallIntegerField(verbose_name='Ano')
+    name = models.CharField(max_length=200, verbose_name='Nome')
+    tipo = models.CharField(max_length=20, verbose_name='Tipo')
+    ibge = models.PositiveIntegerField(default=2408102, verbose_name='Código IBGE')
+    synced_at = models.DateTimeField(auto_now=True, verbose_name='Sincronizado em')
+
+    class Meta:
+        verbose_name = 'Feriado em cache'
+        verbose_name_plural = 'Feriados em cache'
+        constraints = [
+            models.UniqueConstraint(fields=['date', 'ibge'], name='projects_cachedholiday_date_ibge_uniq'),
+        ]
+        ordering = ['date']
+
+    def __str__(self):
+        return f'{self.date} — {self.name}'
 
 
 # CardTodo e CardTodoStatus REMOVIDOS — sistema de subtarefas por card foi
@@ -430,6 +473,7 @@ class Event(models.Model):
 class CardLogEventType(models.TextChoices):
     CRIADO = 'criado', 'Card Criado'
     MOVIMENTADO = 'movimentado', 'Movimentado'
+    TRANSFERIDO_SPRINT = 'transferido_sprint', 'Transferido de Sprint'
     PENDENCIA = 'pendencia', 'Pendência'
     ATUALIZADO = 'atualizado', 'Atualizado'
     ALTERACAO = 'alteracao', 'Alteração no Card'

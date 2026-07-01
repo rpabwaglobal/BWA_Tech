@@ -13,8 +13,17 @@
         <div class="kpi-sub">{{ on_time }} no prazo · {{ late_total }} atrasados</div>
       </div>
       <div class="kpi-card">
-        <div class="kpi-label">Cycle médio</div>
-        <div class="kpi-value" style="color: var(--primary);">{% if avg_cycle is not None %}{{ avg_cycle }}<span style="font-size: 11pt; color: var(--muted);">d</span>{% else %}—{% endif %}</div>
+        <div class="kpi-label">Tempo médio (dias corridos)</div>
+        <div class="kpi-value" style="color: var(--primary);">{% if avg_cycle %}{{ avg_cycle }}{% else %}—{% endif %}</div>
+        {% if dev_time_count %}<div class="kpi-sub">{{ dev_time_count }} card(s)</div>{% endif %}
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Tempo médio (dias úteis)</div>
+        <div class="kpi-value">{% if avg_dias_uteis is not None %}{{ avg_dias_uteis }}<span style="font-size: 11pt; color: var(--muted);">d</span>{% else %}—{% endif %}</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Tempo médio (horas úteis)</div>
+        <div class="kpi-value">{% if avg_horas_uteis %}{{ avg_horas_uteis }}{% else %}—{% endif %}</div>
       </div>
       <div class="kpi-card">
         <div class="kpi-label">Projetos ativos</div>

@@ -22,6 +22,8 @@ from django.utils import timezone
 
 from apps.projects.models import Card, Project, Sprint
 
+from apps.projects.dev_time_format import format_minutos_uteis, format_segundos_corridos
+
 from .base import BaseReport, FilterDisplay, TableColumn
 
 
@@ -155,6 +157,9 @@ class Report(BaseReport):
             TableColumn('data_inicio', 'Início', format='dd/mm/yyyy hh:mm', width=18),
             TableColumn('data_fim', 'Prazo', format='dd/mm/yyyy hh:mm', width=18),
             TableColumn('finalizado_em', 'Finalizado em', format='dd/mm/yyyy hh:mm', width=18),
+            TableColumn('dias_corridos_desenvolvimento', 'Dias corridos (dev)', width=16),
+            TableColumn('dias_uteis_desenvolvimento', 'Dias úteis (dev)', width=14),
+            TableColumn('horas_uteis_desenvolvimento', 'Horas úteis (dev)', width=16),
             TableColumn('created_at', 'Criado em', format='dd/mm/yyyy hh:mm', width=18),
         ]
 
@@ -177,6 +182,15 @@ class Report(BaseReport):
                 'data_inicio': _to_naive(c.data_inicio),
                 'data_fim': _to_naive(c.data_fim),
                 'finalizado_em': _to_naive(c.finalizado_em),
+                'dias_corridos_desenvolvimento': (
+                    format_segundos_corridos(c.segundos_corridos_desenvolvimento)
+                    if c.segundos_corridos_desenvolvimento is not None else None
+                ),
+                'dias_uteis_desenvolvimento': c.dias_uteis_desenvolvimento,
+                'horas_uteis_desenvolvimento': (
+                    format_minutos_uteis(c.minutos_uteis_desenvolvimento)
+                    if c.minutos_uteis_desenvolvimento is not None else None
+                ),
                 'created_at': _to_naive(c.created_at),
             })
         return rows

@@ -15,12 +15,14 @@ import Priorities from './pages/Priorities';
 import MyTasks from './pages/MyTasks';
 import GeekDay from './pages/GeekDay';
 import Settings from './pages/Settings';
+import Admin from './pages/Admin';
 import Metrics from './pages/Metrics';
 import Reports from './pages/Reports';
 import Support from './pages/Support';
 import Layout from './components/layout/Layout';
 import { Loader2 } from 'lucide-react';
 import { ROUTES } from './routes';
+import { isAdminUser } from './lib/roles';
 
 function LegacyProjectToProjeto() {
   const { id } = useParams();
@@ -68,6 +70,23 @@ function PublicRoute({ children }: { children: React.ReactNode }) {
   }
 
   return isAuthenticated ? <Navigate to={ROUTES.painel} /> : <>{children}</>;
+}
+
+function AdminRoute({ children }: { children: React.ReactNode }) {
+  const { isAuthenticated, loading, user } = useAuth();
+
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-[var(--color-background)]">
+        <Loader2 className="h-8 w-8 animate-spin text-[var(--color-primary)]" />
+      </div>
+    );
+  }
+
+  if (!isAuthenticated) return <Navigate to={ROUTES.entrar} />;
+  if (!isAdminUser(user)) return <Navigate to={ROUTES.painel} replace />;
+
+  return <>{children}</>;
 }
 
 function AppRoutes() {
@@ -135,6 +154,14 @@ function AppRoutes() {
         <Route path={ROUTES.suporte.replace(/^\//, '')} element={<Support />} />
         <Route path="dia-geek" element={<GeekDay />} />
         <Route path={ROUTES.configuracoes.replace(/^\//, '')} element={<Settings />} />
+        <Route
+          path={ROUTES.administracao.replace(/^\//, '')}
+          element={
+            <AdminRoute>
+              <Admin />
+            </AdminRoute>
+          }
+        />
 
         {/* Legado: painel e demais rotas em inglês */}
         <Route path="dashboard" element={<Navigate to={ROUTES.painel} replace />} />
@@ -146,6 +173,7 @@ function AppRoutes() {
         <Route path="support" element={<Navigate to={ROUTES.suporte} replace />} />
         <Route path="geekday" element={<Navigate to={ROUTES.diaGeek} replace />} />
         <Route path="settings" element={<Navigate to={ROUTES.configuracoes} replace />} />
+        <Route path="admin" element={<Navigate to={ROUTES.administracao} replace />} />
         <Route path="projects" element={<Navigate to={ROUTES.projetos} replace />} />
         <Route path="projects/:id/card/:cardId" element={<LegacyProjectCardRedirect />} />
         <Route path="projects/:id" element={<LegacyProjectToProjeto />} />

@@ -73,6 +73,19 @@ def card_pre_save(sender, instance, **kwargs):
     elif instance._previous_status == CardStatus.FINALIZADO:
         instance.finalizado_em = None
 
+    from .business_time import apply_development_time_metrics
+
+    previous_data = getattr(instance, '_previous_data', None) or {}
+    status_changed = instance._previous_status != instance.status
+    data_inicio_changed = previous_data.get('data_inicio') != instance.data_inicio
+    needs_metrics_update = (
+        status_changed
+        or data_inicio_changed
+        or not instance.pk
+    )
+    if needs_metrics_update:
+        apply_development_time_metrics(instance)
+
 
 @receiver(pre_save, sender=User)
 def user_pre_save(sender, instance, **kwargs):
@@ -103,6 +116,9 @@ def card_created_or_updated(sender, instance, created, **kwargs):
             usuario = instance._request_user
         elif hasattr(_thread_locals, 'user'):
             usuario = _thread_locals.user
+
+        if getattr(instance, '_from_sprint_replication', False):
+            return
         
         # Mapeamento de valores para labels
         prioridade_labels = {

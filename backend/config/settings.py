@@ -333,6 +333,9 @@ PORTAL_BASE_URL = os.getenv('PORTAL_BASE_URL', '').strip().rstrip('/')
 PORTAL_USERNAME = os.getenv('PORTAL_USERNAME', '').strip()
 PORTAL_PASSWORD = os.getenv('PORTAL_PASSWORD', '')
 
+# Feriados API — cache de feriados de Natal/RN para métricas de dias úteis
+FERIADOS_API_KEY = os.getenv('FERIADOS_API_KEY', '').strip()
+
 # Channels — em Docker com Redis use CHANNEL_LAYER_BACKEND=redis (ver docker-compose.yml)
 if os.getenv('CHANNEL_LAYER_BACKEND', '').strip().lower() == 'redis':
     _rh = os.getenv('CHANNEL_REDIS_HOST', os.getenv('REDIS_HOST', '127.0.0.1')).strip()

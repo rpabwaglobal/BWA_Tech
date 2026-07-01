@@ -1,4 +1,5 @@
 {% extends 'reports/base.html' %}
+{% load reports_extras %}
 
 {% block content %}
   <div class="section">
@@ -18,8 +19,16 @@
         <div class="kpi-value" style="color: #991b1b;">{{ late }}</div>
       </div>
       <div class="kpi-card">
-        <div class="kpi-label">Cycle médio</div>
-        <div class="kpi-value" style="color: var(--primary);">{% if avg_cycle is not None %}{{ avg_cycle }}<span style="font-size: 10pt; color: var(--muted);">d</span>{% else %}—{% endif %}</div>
+        <div class="kpi-label">Tempo médio (dias corridos)</div>
+        <div class="kpi-value" style="color: var(--primary);">{% if avg_cycle %}{{ avg_cycle }}{% else %}—{% endif %}</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Tempo médio (dias úteis)</div>
+        <div class="kpi-value">{% if avg_dias_uteis is not None %}{{ avg_dias_uteis }}<span style="font-size: 10pt; color: var(--muted);">d</span>{% else %}—{% endif %}</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Tempo médio (horas úteis)</div>
+        <div class="kpi-value">{% if avg_horas_uteis %}{{ avg_horas_uteis }}{% else %}—{% endif %}</div>
       </div>
     </div>
   </div>
@@ -46,8 +55,9 @@
       <table class="tight">
         <thead>
           <tr>
-            <th>Card</th><th style="width: 22%;">Projeto</th><th style="width: 8%;">Área</th>
-            <th style="width: 12%;">Tipo</th><th style="width: 10%;">Prazo</th><th style="width: 10%;">Finalizado</th>
+            <th>Card</th><th style="width: 18%;">Projeto</th><th style="width: 8%;">Área</th>
+            <th style="width: 10%;">Tipo</th><th style="width: 8%;">Prazo</th><th style="width: 8%;">Finalizado</th>
+            <th style="width: 6%;">D.corr.</th><th style="width: 6%;">D.úteis</th><th style="width: 6%;">H.úteis</th>
           </tr>
         </thead>
         <tbody>
@@ -59,6 +69,9 @@
               <td>{{ c.get_tipo_display }}</td>
               <td>{{ c.data_fim|date:"d/m/Y"|default:"—" }}</td>
               <td>{{ c.finalizado_em|date:"d/m/Y" }}</td>
+              <td>{{ c.segundos_corridos_desenvolvimento|format_segundos_corridos_filter }}</td>
+              <td>{{ c.dias_uteis_desenvolvimento|default:"—" }}</td>
+              <td>{{ c.minutos_uteis_desenvolvimento|format_minutos_uteis_filter }}</td>
             </tr>
           {% endfor %}
         </tbody>
