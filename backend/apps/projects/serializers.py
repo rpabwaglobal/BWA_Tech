@@ -28,7 +28,7 @@ from apps.accounts.profile_picture_utils import get_profile_picture_url
 from .dev_time_format import format_minutos_uteis, format_segundos_corridos
 
 
-class DevTimeFormattedMixin:
+class DevTimeFormattedMixin(serializers.Serializer):
     """Expõe valores brutos no banco e campos formatados para exibição."""
     dias_corridos_desenvolvimento = serializers.SerializerMethodField()
     horas_uteis_desenvolvimento = serializers.SerializerMethodField()
