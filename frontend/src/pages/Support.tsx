@@ -131,22 +131,63 @@ type StageKey = (typeof STAGES)[number]['key'];
 const PAGED_STAGES: ReadonlySet<StageKey> = new Set(['finalizado', 'inviabilizado']);
 const SUPORTE_PAGE_SIZE = 50;
 
-/** Tabs visíveis. `tipoNome` precisa bater EXATO com o `nome` do SuporteTipo
- * no portal externo (case-insensitive). Hoje o portal tem:
- *   - "Robô (RPA)" (id=1) → tab RPA
+/** Tabs visíveis. `tipoNome` é o nome canônico no portal; `tipoAliases` cobre
+ * legados (ex.: portal renomeou "Robô (RPA)" → "Robôs (RPA)" ou seed local "RPA").
+ * Match sempre case-insensitive. Hoje o portal tem:
+ *   - "Robôs (RPA)" (id=1) → tab RPA
  *   - "Dashboard"  (id=2) → tab Dashboards
  *   - "Agente de IA" (id=3) → tab IA
  *   - "Ferramentas Easy" (id=4) → tab Easy */
 const TABS = [
-  { key: 'rpa' as const, label: 'RPA', tipoNome: 'Robô (RPA)' },
-  { key: 'easy' as const, label: 'Easy', tipoNome: 'Ferramentas Easy' },
-  { key: 'dashboards' as const, label: 'Dashboards', tipoNome: 'Dashboard' },
-  { key: 'ia' as const, label: 'IA', tipoNome: 'Agente de IA' },
+  {
+    key: 'rpa' as const,
+    label: 'RPA',
+    tipoNome: 'Robôs (RPA)',
+    tipoAliases: ['Robô (RPA)', 'RPA'],
+  },
+  { key: 'easy' as const, label: 'Easy', tipoNome: 'Ferramentas Easy', tipoAliases: ['Easy'] },
+  { key: 'dashboards' as const, label: 'Dashboards', tipoNome: 'Dashboard', tipoAliases: ['Dashboards'] },
+  { key: 'ia' as const, label: 'IA', tipoNome: 'Agente de IA', tipoAliases: ['IA'] },
   // "Todos": tab agregadora — mostra TODOS os chamados, sem filtro por tipo.
   // tipoNome '' sinaliza pra `tabFilteredItems` pular o filtro de tipo.
   { key: 'todos' as const, label: 'Todos', tipoNome: '' },
 ];
 type TabKey = (typeof TABS)[number]['key'];
+type TabSpec = (typeof TABS)[number];
+
+function normalizeSuporteTipoNome(nome: string): string {
+  return nome
+    .normalize('NFD')
+    .replace(/\p{M}/gu, '')
+    .toLowerCase()
+    .trim();
+}
+
+/** Nomes aceitos no catálogo/API para uma tab (canônico + aliases). */
+function tipoNamesForTab(tab: TabSpec): string[] {
+  if (!tab.tipoNome) return [];
+  return [tab.tipoNome, ...(tab.tipoAliases ?? [])];
+}
+
+function suporteTipoNomeMatchesTab(tipoNome: string | null | undefined, tab: TabSpec): boolean {
+  const raw = (tipoNome ?? '').trim();
+  if (!raw) return false;
+  const normalized = normalizeSuporteTipoNome(raw);
+  return tipoNamesForTab(tab).some((n) => normalizeSuporteTipoNome(n) === normalized);
+}
+
+function chamadoMatchesSuporteTab(
+  chamado: ChamadoSuporte,
+  tab: TabSpec,
+  tipoIdByName: Record<string, number>,
+): boolean {
+  if (!tab.tipoNome) return true;
+  const tipoId = typeof chamado.tipo === 'number' ? chamado.tipo : chamado.tipo?.id;
+  const tabTipoId = tipoIdByName[tab.tipoNome];
+  if (tabTipoId != null && tipoId === tabTipoId) return true;
+  const tipoNome = typeof chamado.tipo === 'object' ? chamado.tipo?.nome : undefined;
+  return suporteTipoNomeMatchesTab(tipoNome, tab);
+}
 
 function readStoredSuporteTab(): TabKey {
   try {
@@ -532,11 +573,14 @@ export default function Support() {
     void suporteService.fetchCatalog().then((cat) => {
       if (cancelled) return;
       const map: Record<string, number> = {};
-      const tabNamesLower = TABS.map((t) => [t.tipoNome.toLowerCase(), t.tipoNome] as const);
       for (const tipo of cat.tipos) {
-        const tipoNomeLower = (tipo.nome ?? '').toLowerCase();
-        const match = tabNamesLower.find(([lower]) => lower === tipoNomeLower);
-        if (match) map[match[1]] = tipo.id;
+        const catalogNome = tipo.nome ?? '';
+        for (const tab of TABS) {
+          if (!tab.tipoNome || map[tab.tipoNome] != null) continue;
+          if (suporteTipoNomeMatchesTab(catalogNome, tab)) {
+            map[tab.tipoNome] = tipo.id;
+          }
+        }
       }
       setTipoIdByName(map);
       setSuporteCatalog(cat);
@@ -748,8 +792,6 @@ export default function Support() {
         return db.localeCompare(da);
       });
     }
-    const tabTipoId = tipoIdByName[tabSpec.tipoNome];
-    const tabTipoNomeLower = tabSpec.tipoNome.toLowerCase();
     const catalogHasAnyTab = TABS.some(
       (t) => t.tipoNome && tipoIdByName[t.tipoNome] != null,
     );
@@ -764,14 +806,7 @@ export default function Support() {
         return db.localeCompare(da);
       });
     }
-    const filtered = filteredItems.filter((c) => {
-      const tipoId = typeof c.tipo === 'number' ? c.tipo : c.tipo?.id;
-      if (tabTipoId != null && tipoId === tabTipoId) return true;
-      // Match por nome (caso o id do chamado não bata com o id do catálogo).
-      const tipoNome = typeof c.tipo === 'object' ? c.tipo?.nome : undefined;
-      if (tipoNome && tipoNome.toLowerCase() === tabTipoNomeLower) return true;
-      return false;
-    });
+    const filtered = filteredItems.filter((c) => chamadoMatchesSuporteTab(c, tabSpec, tipoIdByName));
     // Ordena por data_atualizacao desc pra que o slice da paginação
     // (colunas finalizado/inviabilizado) sempre mostre os MAIS RECENTES
     // primeiro. Sem isso, um card recém-concluído pode cair fora dos 50
@@ -803,18 +838,12 @@ export default function Support() {
     const counts: Partial<Record<TabKey, number>> = {};
     for (const c of items) {
       if (chamadoToStage(c) !== 'a_desenvolver') continue;
-      const tipoIdC = typeof c.tipo === 'number' ? c.tipo : c.tipo?.id;
-      const tipoNomeC = (typeof c.tipo === 'object' ? c.tipo?.nome ?? '' : '')
-        .toLowerCase();
       for (const tab of TABS) {
         if (!tab.tipoNome) {
           counts[tab.key] = (counts[tab.key] ?? 0) + 1;
           continue;
         }
-        const tabTipoId = tipoIdByName[tab.tipoNome];
-        const matchesId = tabTipoId != null && tipoIdC === tabTipoId;
-        const matchesNome = tipoNomeC && tipoNomeC === tab.tipoNome.toLowerCase();
-        if (matchesId || matchesNome) {
+        if (chamadoMatchesSuporteTab(c, tab, tipoIdByName)) {
           counts[tab.key] = (counts[tab.key] ?? 0) + 1;
         }
       }
