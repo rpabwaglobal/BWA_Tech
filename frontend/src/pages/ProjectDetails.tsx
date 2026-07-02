@@ -1720,101 +1720,97 @@ export default function ProjectDetails() {
 
     const gen = ++openCardGenerationRef.current;
 
-    // Buscar o card completo do servidor para garantir que temos todos os dados atualizados
-    let fullCard = card;
-    try {
-      fullCard = await cardService.getById(card.id);
-    } catch (error) {
-      console.error('Erro ao carregar card completo:', error);
-      // Se falhar, usar o card do estado local
-    }
+    const applyCardToEditDialog = (fullCard: CardType) => {
+      const targetStatus = pendingStatusChange && pendingStatusChange.cardId === fullCard.id.toString()
+        ? pendingStatusChange.newStatus
+        : fullCard.status;
 
-    if (gen !== openCardGenerationRef.current) return;
+      setEditingCard(fullCard);
+      setCardDialogOpen(true);
+      setLogsModalOpen(true);
 
-    if (id && String(fullCard.projeto) !== String(id)) {
-      navigate(ROUTES.projetoCard(String(fullCard.projeto), String(fullCard.id)), { replace: true });
-      return;
-    }
-    
-    // Permitir abrir para visualização sempre
-    setEditingCard(fullCard);
-    setCardDialogOpen(true);
-    // Abrir modal de logs quando o card é aberto
-    setLogsModalOpen(true);
-    
-    // Se há um movimento pendente, usar o status de destino
-    const targetStatus = pendingStatusChange && pendingStatusChange.cardId === fullCard.id.toString() 
-      ? pendingStatusChange.newStatus 
-      : fullCard.status;
-    
-    // Se o card está em desenvolvimento e não tem data_inicio, preencher automaticamente
-    let dataInicio =
-      targetStatus === 'a_desenvolver' ? '' : fullCard.data_inicio || '';
-    if (targetStatus === 'em_desenvolvimento' && !dataInicio) {
-      const now = new Date();
-      const year = now.getFullYear();
-      const month = String(now.getMonth() + 1).padStart(2, '0');
-      const day = String(now.getDate()).padStart(2, '0');
-      const hours = String(now.getHours()).padStart(2, '0');
-      const minutes = String(now.getMinutes()).padStart(2, '0');
-      dataInicio = `${year}-${month}-${day}T${hours}:${minutes}`;
-    }
-    
-    setCardFormData({
-      nome: fullCard.nome,
-      descricao: fullCard.descricao || '',
-      script_url: fullCard.script_url || '',
-      area: fullCard.area || 'backend',
-      tipo: fullCard.tipo || 'feature',
-      prioridade: fullCard.prioridade || 'media',
-      status: targetStatus,
-      responsavel: fullCard.responsavel || '',
-      data_inicio: dataInicio,
-      data_fim: fullCard.data_fim || '',
-    });
-    setCardLinks(fullCard.links ?? []);
-    setNewLinkUrl('');
-    setNewLinkLabel('');
-    
-    // Carregar dados de estimativa de complexidade salvos
-    if (fullCard.complexidade_selected_items && fullCard.complexidade_selected_items.length > 0) {
-      setSelectedTimeItems(new Set(fullCard.complexidade_selected_items));
-    } else {
-      setSelectedTimeItems(new Set());
-    }
-    
-    setSelectedDevelopment(fullCard.complexidade_selected_development || null);
-    
-    if (fullCard.complexidade_custom_items && fullCard.complexidade_custom_items.length > 0) {
-      setCustomTimeItems(fullCard.complexidade_custom_items);
-    } else {
-      setCustomTimeItems([]);
-    }
-    
-    setCustomTimeLabel('');
-    setCustomTimeHours('');
-    setShowTimeEstimator(false);
-    setEditingTimeItemId(null);
-    setEditTimeValue('');
-    // Carregar complexidades baseadas na área do card
-    const cardArea = fullCard.area || '';
-    if (cardArea) {
-      const todos = getTodosByArea(cardArea);
-      if (todos.length > 0) {
-        setTimeEstimates(todos.map(todo => ({
-          id: todo.id,
-          label: todo.label,
-          hours: todo.hours,
-          isDevelopment: todo.id.includes('desenvolvimento')
-        })));
+      let dataInicio =
+        targetStatus === 'a_desenvolver' ? '' : fullCard.data_inicio || '';
+      if (targetStatus === 'em_desenvolvimento' && !dataInicio) {
+        const now = new Date();
+        const year = now.getFullYear();
+        const month = String(now.getMonth() + 1).padStart(2, '0');
+        const day = String(now.getDate()).padStart(2, '0');
+        const hours = String(now.getHours()).padStart(2, '0');
+        const minutes = String(now.getMinutes()).padStart(2, '0');
+        dataInicio = `${year}-${month}-${day}T${hours}:${minutes}`;
+      }
+
+      setCardFormData({
+        nome: fullCard.nome,
+        descricao: fullCard.descricao || '',
+        script_url: fullCard.script_url || '',
+        area: fullCard.area || 'backend',
+        tipo: fullCard.tipo || 'feature',
+        prioridade: fullCard.prioridade || 'media',
+        status: targetStatus,
+        responsavel: fullCard.responsavel || '',
+        data_inicio: dataInicio,
+        data_fim: fullCard.data_fim || '',
+      });
+      setCardLinks(fullCard.links ?? []);
+      setNewLinkUrl('');
+      setNewLinkLabel('');
+
+      if (fullCard.complexidade_selected_items && fullCard.complexidade_selected_items.length > 0) {
+        setSelectedTimeItems(new Set(fullCard.complexidade_selected_items));
+      } else {
+        setSelectedTimeItems(new Set());
+      }
+
+      setSelectedDevelopment(fullCard.complexidade_selected_development || null);
+
+      if (fullCard.complexidade_custom_items && fullCard.complexidade_custom_items.length > 0) {
+        setCustomTimeItems(fullCard.complexidade_custom_items);
+      } else {
+        setCustomTimeItems([]);
+      }
+
+      setCustomTimeLabel('');
+      setCustomTimeHours('');
+      setShowTimeEstimator(false);
+      setEditingTimeItemId(null);
+      setEditTimeValue('');
+      const cardArea = fullCard.area || '';
+      if (cardArea) {
+        const todos = getTodosByArea(cardArea);
+        if (todos.length > 0) {
+          setTimeEstimates(todos.map(todo => ({
+            id: todo.id,
+            label: todo.label,
+            hours: todo.hours,
+            isDevelopment: todo.id.includes('desenvolvimento')
+          })));
+        } else {
+          setTimeEstimates([]);
+        }
       } else {
         setTimeEstimates([]);
       }
-    } else {
-      setTimeEstimates([]);
+
+      setCardFormError('');
+    };
+
+    applyCardToEditDialog(card);
+
+    try {
+      const fullCard = await cardService.getById(card.id);
+      if (gen !== openCardGenerationRef.current) return;
+
+      if (id && String(fullCard.projeto) !== String(id)) {
+        navigate(ROUTES.projetoCard(String(fullCard.projeto), String(fullCard.id)), { replace: true });
+        return;
+      }
+
+      applyCardToEditDialog(fullCard);
+    } catch (error) {
+      console.error('Erro ao carregar card completo:', error);
     }
-    
-    setCardFormError('');
   };
 
   const openCreateCardDialog = () => {

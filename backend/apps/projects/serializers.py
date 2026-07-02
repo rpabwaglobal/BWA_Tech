@@ -873,7 +873,6 @@ class EventSerializer(serializers.ModelSerializer):
 
 
 class CardLogSerializer(serializers.ModelSerializer):
-    card_detail = CardSerializer(source='card', read_only=True)
     usuario_name = serializers.SerializerMethodField()
     usuario_role = serializers.SerializerMethodField()
     usuario_role_display = serializers.SerializerMethodField()
@@ -890,7 +889,7 @@ class CardLogSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = CardLog
-        fields = ['id', 'card', 'card_detail', 'tipo_evento', 'tipo_evento_display', 
+        fields = ['id', 'card', 'tipo_evento', 'tipo_evento_display', 
                  'descricao', 'usuario', 'usuario_name', 'usuario_role', 'usuario_role_display', 'data']
         read_only_fields = ['data']
 

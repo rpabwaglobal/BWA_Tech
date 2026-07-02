@@ -1096,7 +1096,7 @@ class CardLogViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         # Idem EventViewSet: filtra arquivados em listagens genéricas,
         # mantém visibilidade quando cliente filtra por card específico.
-        qs = CardLog.objects.all()
+        qs = CardLog.objects.select_related('usuario')
         if self.action == 'list' and not self.request.query_params.get('card'):
             qs = qs.filter(card__projeto__arquivado=False)
         return qs
