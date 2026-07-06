@@ -70,6 +70,25 @@ export const weeklyPriorityService = {
     return response.data || { semana_fechada: false, semana_inicio: '', data: [] };
   },
 
+  async getDefinePriorityOptions(usuarioId: string): Promise<{
+    available_cards: Array<{
+      id: string;
+      nome: string;
+      status: string;
+      status_display?: string;
+      projeto?: number;
+      projeto_detail?: { id: number; nome: string };
+      responsavel?: string | null;
+    }>;
+    selected_card_ids: string[];
+    semana_inicio: string;
+  }> {
+    const response = await api.get('/weekly-priorities/define_priority_options/', {
+      params: { usuario: usuarioId },
+    });
+    return response.data;
+  },
+
   async closeWeek(): Promise<{ message: string; semana_inicio: string; semana_fechada: boolean }> {
     const response = await api.post('/weekly-priority-config/close-week/');
     return response.data;

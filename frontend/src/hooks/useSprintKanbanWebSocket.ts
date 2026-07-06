@@ -35,12 +35,15 @@ function buildSprintKanbanWsUrl(sprintId: number | string, token: string): strin
 export function useSprintKanbanWebSocket(opts: {
   sprintId: number | string | null | undefined;
   enabled: boolean;
-  onCardMoved: (event: CardMovedEvent) => void;
+  onCardMoved?: (event: CardMovedEvent) => void;
+  /** Disparado em movimentação, troca de responsável, criação/exclusão de card. */
+  onKanbanChanged?: () => void;
 }) {
-  const { sprintId, enabled, onCardMoved } = opts;
-  // Mantém a callback atual sem reabrir a conexão a cada render
+  const { sprintId, enabled, onCardMoved, onKanbanChanged } = opts;
   const cbRef = useRef(onCardMoved);
   cbRef.current = onCardMoved;
+  const kanbanCbRef = useRef(onKanbanChanged);
+  kanbanCbRef.current = onKanbanChanged;
 
   useEffect(() => {
     if (!enabled || !sprintId) return;
@@ -95,14 +98,19 @@ export function useSprintKanbanWebSocket(opts: {
           const msg = JSON.parse(event.data as string) as Partial<CardMovedEvent> & {
             type?: string;
           };
+          if (msg.type === 'kanban_changed') {
+            kanbanCbRef.current?.();
+            return;
+          }
           if (msg.type !== 'card_moved') return;
           if (typeof msg.card_id !== 'number' || !msg.old_status || !msg.new_status) return;
-          cbRef.current({
+          cbRef.current?.({
             card_id: msg.card_id,
             old_status: msg.old_status,
             new_status: msg.new_status,
             actor_user_id: msg.actor_user_id ?? null,
           });
+          kanbanCbRef.current?.();
         } catch {
           /* ignora payload malformado */
         }

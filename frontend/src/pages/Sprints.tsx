@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { SprintPeriodHelpNote } from '@/components/SprintPeriodHelpNote';
 import { useAuth } from '@/context/AuthContext';
@@ -48,6 +48,8 @@ import {
   sprintFimDiaParaCalendario,
   sprintInicioDiaParaCalendario,
   getSprintsEmAndamentoJanela,
+  getSprintEmAndamentoPrincipal,
+  isSprintEmAndamentoJanela,
 } from '@/lib/sprintFechamento';
 import { ROUTES } from '@/routes';
 
@@ -93,6 +95,16 @@ export default function Sprints() {
   const canCreate = user?.role === 'supervisor' || user?.role === 'admin';
   const canDeleteFinished = user?.role === 'admin';
   const canFinalizar = user?.role === 'supervisor' || user?.role === 'admin';
+
+  const activeSprintPrincipal = useMemo(
+    () => getSprintEmAndamentoPrincipal(sprints),
+    [sprints],
+  );
+
+  const sprintsEmAndamentoJanela = useMemo(
+    () => getSprintsEmAndamentoJanela(sprints),
+    [sprints],
+  );
 
   useEffect(() => {
     loadData();
@@ -244,8 +256,45 @@ export default function Sprints() {
       data_inicio: '',
       fechamento_em: '',
     });
-    setSprintFormError(''); // Limpar erro ao abrir o modal
+    setSprintFormError('');
     setSprintDialogOpen(true);
+  };
+
+  const parseSprintApiError = (err: unknown): string => {
+    const errorData = (err as { response?: { data?: unknown } })?.response?.data;
+    if (!errorData) return 'Erro ao salvar sprint';
+    if (typeof errorData === 'string') return errorData;
+    if (typeof errorData === 'object' && errorData !== null) {
+      const record = errorData as Record<string, unknown>;
+      if (typeof record.detail === 'string') return record.detail;
+      if (typeof record.message === 'string') return record.message;
+      if (Array.isArray(record.non_field_errors) && record.non_field_errors[0]) {
+        return String(record.non_field_errors[0]);
+      }
+      const firstError = Object.values(record)[0];
+      if (Array.isArray(firstError) && firstError[0]) return String(firstError[0]);
+      if (typeof firstError === 'string') return firstError;
+    }
+    return 'Erro ao salvar sprint';
+  };
+
+  const wouldOverlapActiveSprintWindow = (
+    inicioIso: string,
+    fechamentoIso: string,
+    excludeId?: string,
+  ): boolean => {
+    const probe = {
+      id: excludeId ?? 'new',
+      nome: '',
+      data_inicio: inicioIso,
+      fechamento_em: fechamentoIso,
+      duracao_dias: 1,
+      supervisor: '',
+      finalizada: false,
+    } satisfies Sprint;
+    if (!isSprintEmAndamentoJanela(probe)) return false;
+    const other = sprintsEmAndamentoJanela.find((s) => String(s.id) !== String(excludeId ?? ''));
+    return Boolean(other);
   };
 
   const openEditSprintDialog = (e: React.MouseEvent, sprint: Sprint) => {
@@ -276,6 +325,25 @@ export default function Sprints() {
 
       if (!inicioIso || !fechamentoIso) {
         setSprintFormError('Preencha a data e hora de início e a data e hora de fechamento.');
+        setSprintFormLoading(false);
+        return;
+      }
+
+      if (
+        wouldOverlapActiveSprintWindow(
+          inicioIso,
+          fechamentoIso,
+          editingSprint ? String(editingSprint.id) : undefined,
+        )
+      ) {
+        const other = sprintsEmAndamentoJanela.find(
+          (s) => !editingSprint || String(s.id) !== String(editingSprint.id),
+        );
+        setSprintFormError(
+          other
+            ? `Já existe uma sprint em andamento («${other.nome}»). Finalize-a antes de abrir outra na mesma janela.`
+            : 'Já existe uma sprint em andamento. Finalize-a antes de abrir outra na mesma janela.',
+        );
         setSprintFormLoading(false);
         return;
       }
@@ -314,23 +382,7 @@ export default function Sprints() {
         );
         return;
       }
-      const errorData = err.response?.data;
-      let errorMessage = 'Erro ao salvar sprint';
-      if (errorData) {
-        if (typeof errorData === 'string') {
-          errorMessage = errorData;
-        } else if (errorData.message) {
-          errorMessage = errorData.message;
-        } else if (errorData.detail) {
-          errorMessage = errorData.detail;
-        } else {
-          const firstError = Object.values(errorData)[0];
-          if (Array.isArray(firstError)) {
-            errorMessage = firstError[0] as string;
-          }
-        }
-      }
-      setSprintFormError(errorMessage);
+      setSprintFormError(parseSprintApiError(err));
     } finally {
       setSprintFormLoading(false);
     }
@@ -358,9 +410,10 @@ export default function Sprints() {
     }
   };
 
-  const handleFinalizarSprint = (e: React.MouseEvent, sprint: Sprint) => {
-    e.stopPropagation();
-    setSprintToFinalizar(sprint);
+  const openFinalizarFromEditDialog = () => {
+    if (!editingSprint) return;
+    setSprintDialogOpen(false);
+    setSprintToFinalizar(editingSprint);
     setFinalizarError('');
     setFinalizarDialogOpen(true);
   };
@@ -475,18 +528,42 @@ export default function Sprints() {
 
   return (
     <div className="space-y-[24px]">
-      {/* Actions */}
-      <div className="flex items-center justify-between gap-[16px]">
-        <p className="text-[var(--color-muted-foreground)]">
-          Gerencie todas as sprints, prazos e histórico
-        </p>
-        {canCreate && (
-          <Button onClick={openCreateSprintDialog}>
-            <Plus className="mr-[8px] h-[16px] w-[16px]" />
-            Nova Sprint
-          </Button>
-        )}
+      {/* Cabeçalho */}
+      <div className="flex flex-col gap-[16px] sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h1 className="text-2xl font-bold text-[var(--color-foreground)]">Gerenciar Sprints</h1>
+          <p className="text-[var(--color-muted-foreground)] mt-[4px]">
+            Todas as sprints, prazos e histórico. Apenas uma sprint pode estar em andamento por vez.
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center gap-[8px]">
+          {activeSprintPrincipal && (
+            <Button
+              variant="default"
+              onClick={() => navigate(ROUTES.sprintPorId(String(activeSprintPrincipal.id)))}
+            >
+              <Zap className="mr-[8px] h-[16px] w-[16px]" />
+              Sprint em andamento
+            </Button>
+          )}
+          {canCreate && (
+            <Button variant="outline" onClick={openCreateSprintDialog}>
+              <Plus className="mr-[8px] h-[16px] w-[16px]" />
+              Nova Sprint
+            </Button>
+          )}
+        </div>
       </div>
+
+      {sprintsEmAndamentoJanela.length > 1 && (
+        <div className="flex items-start gap-[12px] rounded-[8px] border border-amber-500/40 bg-amber-500/10 p-[16px] text-sm text-[var(--color-foreground)]">
+          <AlertCircle className="mt-[2px] h-[18px] w-[18px] shrink-0 text-amber-600" />
+          <p>
+            Há {sprintsEmAndamentoJanela.length} sprints na janela ativa (dados legados).
+            Use apenas uma em andamento — finalize as demais ou ajuste as datas.
+          </p>
+        </div>
+      )}
 
       {/* Search and Filters */}
       <div className="space-y-[16px]">
@@ -639,19 +716,8 @@ export default function Sprints() {
                               </div>
                             </div>
                           </div>
-                          {((canCreate && !isSprintFinished(sprint)) || canFinalizar || (canDeleteFinished && isSprintFinished(sprint))) && (
+                          {((canCreate && !isSprintFinished(sprint)) || (canDeleteFinished && isSprintFinished(sprint))) && (
                             <div className="flex gap-[8px] opacity-0 group-hover:opacity-100 transition-opacity">
-                              {canFinalizar && !sprint.finalizada && (
-                                <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  onClick={(e) => handleFinalizarSprint(e, sprint)}
-                                  className="h-[32px] w-[32px]"
-                                  title="Finalizar sprint"
-                                >
-                                  <CheckCircle2 className="h-[16px] w-[16px] text-green-600" />
-                                </Button>
-                              )}
                               {canCreate && !isSprintFinished(sprint) && (
                                 <Button
                                   variant="ghost"
@@ -714,22 +780,26 @@ export default function Sprints() {
                             </p>
                           </div>
                           <div className="bg-[var(--color-muted)]/30 rounded-[8px] border border-[var(--color-border)] p-[16px]">
-                            <div className="flex items-center gap-[8px] mb-[8px]">
-                              <XCircle className="h-[16px] w-[16px] text-red-600" />
-                              <span className="text-xs text-[var(--color-muted-foreground)]">Entregues atrasados</span>
+                            <div className="flex flex-col gap-[6px]">
+                              <div>
+                                <div className="flex items-center gap-[8px] mb-[2px]">
+                                  <XCircle className="h-[16px] w-[16px] text-red-600" />
+                                  <span className="text-xs text-[var(--color-muted-foreground)]">Entregues atrasados</span>
+                                </div>
+                                <p className="text-2xl font-bold text-red-600 leading-none">
+                                  {sprint.cards_entregues_atrasados ?? 0}
+                                </p>
+                              </div>
+                              <div>
+                                <div className="flex items-center gap-[8px] mb-[2px]">
+                                  <AlertCircle className="h-[16px] w-[16px] text-amber-600" />
+                                  <span className="text-xs text-[var(--color-muted-foreground)]">Abertos atrasados</span>
+                                </div>
+                                <p className="text-2xl font-bold text-amber-600 leading-none">
+                                  {sprint.cards_abertos_atrasados ?? 0}
+                                </p>
+                              </div>
                             </div>
-                            <p className="text-2xl font-bold text-red-600">
-                              {sprint.cards_entregues_atrasados ?? 0}
-                            </p>
-                          </div>
-                          <div className="bg-[var(--color-muted)]/30 rounded-[8px] border border-[var(--color-border)] p-[16px]">
-                            <div className="flex items-center gap-[8px] mb-[8px]">
-                              <AlertCircle className="h-[16px] w-[16px] text-amber-600" />
-                              <span className="text-xs text-[var(--color-muted-foreground)]">Abertos atrasados</span>
-                            </div>
-                            <p className="text-2xl font-bold text-amber-600">
-                              {sprint.cards_abertos_atrasados ?? 0}
-                            </p>
                           </div>
                         </div>
                       </CardContent>
@@ -793,19 +863,8 @@ export default function Sprints() {
                                 </div>
                               </div>
                             </div>
-                            {((canCreate && !isSprintFinished(sprint)) || canFinalizar || (canDeleteFinished && isSprintFinished(sprint))) && (
+                            {((canCreate && !isSprintFinished(sprint)) || (canDeleteFinished && isSprintFinished(sprint))) && (
                               <div className="flex gap-[8px] opacity-0 group-hover:opacity-100 transition-opacity">
-                                {canFinalizar && !sprint.finalizada && (
-                                  <Button
-                                    variant="ghost"
-                                    size="icon"
-                                    onClick={(e) => handleFinalizarSprint(e, sprint)}
-                                    className="h-[32px] w-[32px]"
-                                    title="Finalizar sprint"
-                                  >
-                                    <CheckCircle2 className="h-[16px] w-[16px] text-green-600" />
-                                  </Button>
-                                )}
                                 {canCreate && !isSprintFinished(sprint) && (
                                   <Button
                                     variant="ghost"
@@ -946,19 +1005,8 @@ export default function Sprints() {
                                   </div>
                                 </div>
                               </div>
-                              {((canCreate && !isSprintFinished(sprint)) || canFinalizar || (canDeleteFinished && isSprintFinished(sprint))) && (
+                              {((canCreate && !isSprintFinished(sprint)) || (canDeleteFinished && isSprintFinished(sprint))) && (
                                 <div className="flex gap-[8px] opacity-0 group-hover:opacity-100 transition-opacity">
-                                  {canFinalizar && !sprint.finalizada && (
-                                    <Button
-                                      variant="ghost"
-                                      size="icon"
-                                      onClick={(e) => handleFinalizarSprint(e, sprint)}
-                                      className="h-[32px] w-[32px]"
-                                      title="Finalizar sprint"
-                                    >
-                                      <CheckCircle2 className="h-[16px] w-[16px] text-green-600" />
-                                    </Button>
-                                  )}
                                   {canCreate && !isSprintFinished(sprint) && (
                                     <Button
                                       variant="ghost"
@@ -1098,22 +1146,35 @@ export default function Sprints() {
               </div>
             )}
 
-            <DialogFooter>
-              <Button type="button" variant="outline" onClick={() => setSprintDialogOpen(false)}>
-                Cancelar
-              </Button>
-              <Button type="submit" disabled={sprintFormLoading}>
-                {sprintFormLoading ? (
-                  <>
-                    <Loader2 className="mr-[8px] h-[16px] w-[16px] animate-spin" />
-                    Salvando...
-                  </>
-                ) : editingSprint ? (
-                  'Salvar Alterações'
-                ) : (
-                  'Criar Sprint'
-                )}
-              </Button>
+            <DialogFooter className="flex-col gap-[12px] sm:flex-row sm:items-center sm:justify-between">
+              {editingSprint && canFinalizar && !editingSprint.finalizada && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={openFinalizarFromEditDialog}
+                  className="w-full sm:w-auto border-green-200 text-green-700 hover:bg-green-50"
+                >
+                  <CheckCircle2 className="mr-[8px] h-[16px] w-[16px]" />
+                  Finalizar sprint
+                </Button>
+              )}
+              <div className="flex w-full gap-[8px] sm:w-auto sm:justify-end">
+                <Button type="button" variant="outline" onClick={() => setSprintDialogOpen(false)}>
+                  Cancelar
+                </Button>
+                <Button type="submit" disabled={sprintFormLoading}>
+                  {sprintFormLoading ? (
+                    <>
+                      <Loader2 className="mr-[8px] h-[16px] w-[16px] animate-spin" />
+                      Salvando...
+                    </>
+                  ) : editingSprint ? (
+                    'Salvar Alterações'
+                  ) : (
+                    'Criar Sprint'
+                  )}
+                </Button>
+              </div>
             </DialogFooter>
           </form>
         </DialogContent>

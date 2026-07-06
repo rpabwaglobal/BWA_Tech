@@ -154,7 +154,7 @@ function AppRoutes() {
       >
         <Route index element={<Navigate to={ROUTES.painel} replace />} />
         <Route path={ROUTES.painel.replace(/^\//, '')} element={<Dashboard />} />
-        <Route path="sprint/gerenciar" element={<Sprints />} />
+        <Route path={ROUTES.sprintGerenciar.replace(/^\//, '')} element={<Sprints />} />
         <Route path="sprint/:sprintId/card/:cardId" element={<SprintDetails />} />
         <Route path="sprint/:sprintId" element={<SprintDetails />} />
         <Route path={ROUTES.sprint.replace(/^\//, '')} element={<SprintEntryRedirect />} />

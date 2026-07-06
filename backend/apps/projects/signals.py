@@ -319,6 +319,10 @@ def card_created_or_updated(sender, instance, created, **kwargs):
                     project_id=instance.projeto.id,
                     metadata={'card_nome': instance.nome, 'criador': criador_nome}
                 )
+
+        from .realtime import broadcast_kanban_changed
+        actor = getattr(instance, '_request_user', None)
+        broadcast_kanban_changed(instance, actor_user_id=actor.id if actor else None)
     else:
         # Card atualizado - verificar se o status mudou (card movido)
         old_status = None
@@ -458,6 +462,12 @@ def card_created_or_updated(sender, instance, created, **kwargs):
                     
                     new_resp = format_user_name(instance.responsavel) if instance.responsavel else 'Ninguém'
                     changes.append(f'Responsável: {old_resp} → {new_resp}')
+                    from .realtime import broadcast_kanban_changed
+                    actor = getattr(instance, '_request_user', None)
+                    broadcast_kanban_changed(
+                        instance,
+                        actor_user_id=actor.id if actor else None,
+                    )
                 
                 if old_data.get('data_inicio') != instance.data_inicio:
                     old_date = old_data.get('data_inicio').strftime('%d/%m/%Y %H:%M') if old_data.get('data_inicio') else 'Não definida'
@@ -729,6 +739,9 @@ def card_deleted(sender, instance, **kwargs):
             project_id=instance.projeto.id,
             metadata={'card_nome': instance.nome, 'project_nome': instance.projeto.nome}
         )
+
+    from .realtime import broadcast_kanban_changed
+    broadcast_kanban_changed(instance)
 
 
 @receiver(post_save, sender=Sprint)

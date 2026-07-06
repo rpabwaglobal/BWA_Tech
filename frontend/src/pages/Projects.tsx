@@ -993,7 +993,7 @@ export default function Projects() {
     <div className="space-y-[16px]">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-[var(--color-foreground)]">Demandas</h1>
+          <h1 className="text-2xl font-bold text-[var(--color-foreground)]">Demandas / Solicitações</h1>
           <p className="text-sm text-[var(--color-muted-foreground)] mt-1">
             Todos os projetos cadastrados no sistema
           </p>

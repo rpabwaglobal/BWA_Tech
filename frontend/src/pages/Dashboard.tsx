@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
+import { useSprintKanbanWebSocket } from '@/hooks/useSprintKanbanWebSocket';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -65,6 +66,72 @@ export default function Dashboard() {
   const [quickCreateOpen, setQuickCreateOpen] = useState(false);
   const navigate = useNavigate();
 
+  const developersRef = useRef<User[]>([]);
+  const projetosSprintsAtivasRef = useRef<Project[]>([]);
+  const refreshDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const recomputeDevelopersWithoutCards = useCallback(
+    (cardsSprintsAtivas: CardType[]) => {
+      const developers = developersRef.current;
+      const allCardsInDevelopment = cardsSprintsAtivas.filter((card) => {
+        const statusNormalized = (card.status || '').toLowerCase();
+        return statusNormalized === 'em_desenvolvimento';
+      });
+
+      const usersWithCards = new Set<string>();
+      allCardsInDevelopment.forEach((card) => {
+        if (card.responsavel) usersWithCards.add(String(card.responsavel));
+      });
+
+      const usersWithout = developers.filter(
+        (dev) =>
+          dev.role !== 'admin' &&
+          dev.role !== 'supervisor' &&
+          !usersWithCards.has(String(dev.id)),
+      );
+
+      setDevelopersWithoutCards(usersWithout);
+    },
+    [],
+  );
+
+  const refreshDevelopersWithoutCards = useCallback(async () => {
+    const projetos = projetosSprintsAtivasRef.current;
+    if (!projetos.length) {
+      setDevelopersWithoutCards(developersRef.current);
+      return;
+    }
+    try {
+      const cardsSprintsAtivas = (
+        await Promise.all(
+          projetos.map((project) => cardService.getByProject(project.id).catch(() => [])),
+        )
+      ).flat();
+      recomputeDevelopersWithoutCards(cardsSprintsAtivas);
+    } catch (error) {
+      console.error('Erro ao atualizar usuários sem card:', error);
+    }
+  }, [recomputeDevelopersWithoutCards]);
+
+  const scheduleRefreshUsersWithoutCards = useCallback(() => {
+    if (refreshDebounceRef.current) clearTimeout(refreshDebounceRef.current);
+    refreshDebounceRef.current = setTimeout(() => {
+      void refreshDevelopersWithoutCards();
+    }, 250);
+  }, [refreshDevelopersWithoutCards]);
+
+  useSprintKanbanWebSocket({
+    sprintId: activeSprintId,
+    enabled: Boolean(activeSprintId),
+    onKanbanChanged: scheduleRefreshUsersWithoutCards,
+  });
+
+  useEffect(() => {
+    return () => {
+      if (refreshDebounceRef.current) clearTimeout(refreshDebounceRef.current);
+    };
+  }, []);
+
   useEffect(() => {
     loadData();
   }, []);
@@ -78,9 +145,10 @@ export default function Dashboard() {
       ]);
       
       // Filtrar apenas usuários que não são admin nem supervisor
-      const developers = allUsers.filter(user => 
-        user.role !== 'admin' && user.role !== 'supervisor'
+      const developers = allUsers.filter(
+        (u) => u.role !== 'admin' && u.role !== 'supervisor',
       );
+      developersRef.current = developers;
 
       const activeProjects = projects.filter(
         (p) => p.status === 'em_desenvolvimento' || p.status === 'em_avaliacao'
@@ -118,6 +186,7 @@ export default function Dashboard() {
           return projectSprintId === sprintId;
         });
       });
+      projetosSprintsAtivasRef.current = projetosSprintsAtivas;
 
       // Carregar apenas cards de projetos em sprints ativas (evita baixar cards do sistema inteiro)
       const cardsSprintsAtivas = (
@@ -189,20 +258,7 @@ export default function Dashboard() {
 
       setCardsInDevelopment(cardsEmDesenvolvimento);
 
-      // "Sem card": usuário (dev, exceto admin/supervisor) que NÃO tem nenhum
-      // card atribuído EM DESENVOLVIMENTO na sprint em andamento.
-      const usersWithCards = new Set<string>();
-      allCardsInDevelopment.forEach((card) => {
-        if (card.responsavel) usersWithCards.add(String(card.responsavel));
-      });
-
-      const usersWithout = developers.filter(dev =>
-        dev.role !== 'admin' &&
-        dev.role !== 'supervisor' &&
-        !usersWithCards.has(dev.id)
-      );
-
-      setDevelopersWithoutCards(usersWithout);
+      recomputeDevelopersWithoutCards(cardsSprintsAtivas);
     } catch (error) {
       console.error('Erro ao carregar dados:', error);
     } finally {

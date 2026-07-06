@@ -30,6 +30,36 @@ def _sprint_is_active(sprint) -> bool:
     return True
 
 
+def broadcast_kanban_changed(card, actor_user_id=None) -> None:
+    """Invalida widgets (ex.: «Usuários sem card» no dashboard) para clientes
+    conectados ao Kanban da sprint em andamento."""
+    projeto = getattr(card, 'projeto', None)
+    sprint = getattr(projeto, 'sprint', None) if projeto else None
+    if not _sprint_is_active(sprint):
+        return
+
+    channel_layer = get_channel_layer()
+    if not channel_layer:
+        return
+
+    group_name = f'sprint_{sprint.id}_kanban'
+    try:
+        async_to_sync(channel_layer.group_send)(
+            group_name,
+            {
+                'type': 'kanban_changed',
+                'card_id': card.id,
+                'actor_user_id': actor_user_id,
+            },
+        )
+    except Exception:
+        logger.exception(
+            'Falha ao broadcast kanban_changed: card=%s sprint=%s',
+            card.id,
+            sprint.id,
+        )
+
+
 def broadcast_card_moved(card, old_status: str, new_status: str, actor_user_id=None) -> None:
     """Notifica todos os clientes conectados ao Kanban da sprint do card que
     um card mudou de status.
@@ -66,6 +96,7 @@ def broadcast_card_moved(card, old_status: str, new_status: str, actor_user_id=N
             'broadcast_card_moved enviado: card=%s sprint=%s %s→%s',
             card.id, sprint.id, old_status, new_status,
         )
+        broadcast_kanban_changed(card, actor_user_id=actor_user_id)
     except Exception:
         logger.exception(
             'Falha ao broadcast card_moved: card=%s sprint=%s', card.id, sprint.id,

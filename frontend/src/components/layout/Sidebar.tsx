@@ -1,8 +1,11 @@
 import { Link, useLocation } from 'react-router-dom';
+import { useEffect, useState } from 'react';
 import { useAuth } from '@/context/AuthContext';
 import { useSidebar } from '@/context/SidebarContext';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
+import { sprintService } from '@/services/sprintService';
+import { getSprintEmAndamentoPrincipal } from '@/lib/sprintFechamento';
 import {
   LayoutDashboard,
   Zap,
@@ -42,6 +45,48 @@ const navigation = [
 const supervisorNavigation = [
   { path: ROUTES.score, label: 'Score', icon: Trophy },
 ];
+
+/** Link do menu Sprints → sprint em andamento (ou gerenciar se não houver ativa). */
+function SprintNavItem({
+  collapsed,
+  isActive,
+}: {
+  collapsed: boolean;
+  isActive: boolean;
+}) {
+  const [href, setHref] = useState(ROUTES.sprint);
+
+  useEffect(() => {
+    let cancelled = false;
+    void sprintService.getAll().then((sprints) => {
+      if (cancelled) return;
+      const active = getSprintEmAndamentoPrincipal(sprints);
+      setHref(active ? ROUTES.sprintPorId(String(active.id)) : ROUTES.sprintGerenciar);
+    }).catch(() => {
+      if (!cancelled) setHref(ROUTES.sprintGerenciar);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  return (
+    <Link
+      to={href}
+      className={cn(
+        'flex items-center gap-[16px] rounded-[8px] px-[16px] py-[8px] text-sm font-medium transition-colors h-[40px]',
+        isActive
+          ? 'bg-white/22 text-white shadow-sm'
+          : 'text-white/80 hover:bg-white/10 hover:text-white',
+        collapsed && 'justify-center px-[8px]',
+      )}
+      title={collapsed ? 'Sprints' : undefined}
+    >
+      <Zap className="h-[20px] w-[20px] shrink-0" />
+      {!collapsed && <span>Sprints</span>}
+    </Link>
+  );
+}
 
 export default function Sidebar() {
   const { collapsed, toggle } = useSidebar();
@@ -109,6 +154,17 @@ export default function Sidebar() {
             {navigation.map((item) => {
               const isActive = isNavRouteActive(item.path, location.pathname);
               const Icon = item.icon;
+
+              if (item.path === ROUTES.sprint) {
+                return (
+                  <SprintNavItem
+                    key={item.path}
+                    collapsed={collapsed}
+                    isActive={isActive}
+                  />
+                );
+              }
+
               return (
                 <Link
                   key={item.path}

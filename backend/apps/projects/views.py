@@ -1466,6 +1466,159 @@ class WeeklyPriorityViewSet(viewsets.ModelViewSet):
         serializer = self.get_serializer(priorities, many=True)
         return Response(serializer.data)
 
+    @action(detail=False, methods=['get'], url_path='define_priority_options')
+    def define_priority_options(self, request):
+        """Cards disponíveis + prioridades já definidas (uma request leve para o modal)."""
+        from rest_framework.exceptions import PermissionDenied, ValidationError
+
+        if request.user.role not in ['supervisor', 'admin']:
+            raise PermissionDenied(
+                'Apenas supervisores e administradores podem definir prioridades semanais.'
+            )
+
+        usuario_id = request.query_params.get('usuario')
+        if not usuario_id:
+            raise ValidationError({'usuario': 'Parâmetro obrigatório.'})
+
+        hoje = timezone.now().date()
+        semana_inicio = hoje - timedelta(days=hoje.weekday())
+
+        cards = (
+            Card.objects.filter(
+                responsavel_id=usuario_id,
+                projeto__arquivado=False,
+            )
+            .exclude(status__in=[CardStatus.FINALIZADO, CardStatus.INVIABILIZADO])
+            .select_related('projeto')
+            .order_by('-created_at')
+        )
+
+        selected_ids = set(
+            WeeklyPriority.objects.filter(
+                usuario_id=usuario_id,
+                semana_inicio=semana_inicio,
+                card__projeto__arquivado=False,
+            ).values_list('card_id', flat=True)
+        )
+
+        available_cards = []
+        for card in cards:
+            available_cards.append({
+                'id': str(card.id),
+                'nome': card.nome,
+                'status': card.status,
+                'status_display': card.get_status_display(),
+                'projeto': card.projeto_id,
+                'projeto_detail': (
+                    {'id': card.projeto_id, 'nome': card.projeto.nome}
+                    if card.projeto_id else None
+                ),
+                'responsavel': str(card.responsavel_id) if card.responsavel_id else None,
+            })
+
+        return Response({
+            'available_cards': available_cards,
+            'selected_card_ids': [str(cid) for cid in selected_ids],
+            'semana_inicio': semana_inicio.isoformat(),
+        })
+
+    @action(detail=False, methods=['get'], url_path='priorities_view')
+    def priorities_view(self, request):
+        """Retorna usuários com prioridades semanais e cards fechados nos últimos 7 dias."""
+        from django.contrib.auth import get_user_model
+
+        User = get_user_model()
+        hoje = timezone.now().date()
+        dias_ate_segunda = hoje.weekday()
+        semana_inicio = hoje - timedelta(days=dias_ate_segunda)
+        limite_fechados = timezone.now() - timedelta(days=7)
+
+        usuarios_ativos = User.objects.filter(is_active=True).exclude(
+            role__in=['supervisor', 'admin']
+        )
+
+        config = WeeklyPriorityConfig.get_config()
+        semana_fechada = config.is_semana_fechada(semana_inicio)
+
+        priorities = WeeklyPriority.objects.filter(
+            semana_inicio=semana_inicio,
+            card__projeto__arquivado=False,
+        ).select_related('usuario', 'card', 'definido_por', 'card__projeto')
+
+        priorities_por_usuario: dict[int, list] = {}
+        priority_by_card_id: dict[int, WeeklyPriority] = {}
+        for priority in priorities:
+            user_id = int(priority.usuario.id)
+            priorities_por_usuario.setdefault(user_id, []).append(priority)
+            priority_by_card_id[priority.card_id] = priority
+
+        cards_fechados = Card.objects.filter(
+            responsavel__in=usuarios_ativos,
+            status=CardStatus.FINALIZADO,
+            projeto__arquivado=False,
+        ).filter(
+            Q(finalizado_em__gte=limite_fechados)
+            | Q(finalizado_em__isnull=True, updated_at__gte=limite_fechados)
+        ).select_related('projeto', 'responsavel')
+
+        fechados_por_usuario: dict[int, list] = {}
+        for card in cards_fechados:
+            if card.responsavel_id:
+                uid = int(card.responsavel_id)
+                fechados_por_usuario.setdefault(uid, []).append(card)
+
+        def serialize_card_with_priority(card, priority=None):
+            card_data = CardSerializer(card).data
+            if priority:
+                card_data['weekly_priority'] = {
+                    'id': str(priority.id),
+                    'is_concluido': priority.is_concluido(),
+                    'is_atrasado': priority.is_atrasado(),
+                    'semana_inicio': priority.semana_inicio.isoformat(),
+                    'semana_fim': priority.semana_fim.isoformat(),
+                }
+            return card_data
+
+        result = []
+        for usuario in usuarios_ativos:
+            user_id = int(usuario.id)
+            user_priorities = priorities_por_usuario.get(user_id, [])
+
+            cards_by_id: dict[int, dict] = {}
+            for priority in user_priorities:
+                cards_by_id[priority.card_id] = serialize_card_with_priority(
+                    priority.card, priority
+                )
+
+            for card in fechados_por_usuario.get(user_id, []):
+                if card.id not in cards_by_id:
+                    priority = priority_by_card_id.get(card.id)
+                    cards_by_id[card.id] = serialize_card_with_priority(card, priority)
+
+            cards_serializados = list(cards_by_id.values())
+
+            result.append({
+                'usuario': {
+                    'id': usuario.id,
+                    'username': usuario.username,
+                    'first_name': usuario.first_name,
+                    'last_name': usuario.last_name,
+                    'email': usuario.email,
+                    'role': usuario.role,
+                    'role_display': usuario.get_role_display(),
+                    'profile_picture_url': get_profile_picture_url(usuario, request=request),
+                },
+                'cards': cards_serializados,
+            })
+
+        result.sort(key=lambda x: (0 if x['cards'] else 1, x['usuario']['username']))
+
+        return Response({
+            'semana_fechada': semana_fechada,
+            'semana_inicio': semana_inicio.isoformat(),
+            'data': result,
+        })
+
 
 class CardDueDateChangeRequestViewSet(viewsets.ModelViewSet):
     """
@@ -1598,91 +1751,6 @@ class CardDueDateChangeRequestViewSet(viewsets.ModelViewSet):
 
         serializer = self.get_serializer(req)
         return Response(serializer.data, status=status.HTTP_200_OK)
-    
-    @action(detail=False, methods=['get'], url_path='priorities_view')
-    def priorities_view(self, request):
-        """Retorna usuários com suas prioridades semanais para a página de Prioridades"""
-        hoje = timezone.now().date()
-        # Calcular segunda-feira da semana atual
-        dias_ate_segunda = hoje.weekday()  # 0 = segunda, 6 = domingo
-        semana_inicio = hoje - timedelta(days=dias_ate_segunda)
-        semana_fim = semana_inicio + timedelta(days=4)  # Sexta-feira
-        
-        # Buscar TODOS os usuários com cargos abaixo de supervisor
-        from django.contrib.auth import get_user_model
-        User = get_user_model()
-        usuarios_ativos = User.objects.filter(
-            is_active=True
-        ).exclude(
-            role__in=['supervisor', 'admin']
-        )
-        
-        # Verificar se a semana está fechada
-        config = WeeklyPriorityConfig.get_config()
-        semana_fechada = config.is_semana_fechada(semana_inicio)
-        
-        # Buscar prioridades da semana atual — excluindo prioridades cujo
-        # card pertença a projeto arquivado (já não fazem parte da operação).
-        priorities = WeeklyPriority.objects.filter(
-            semana_inicio=semana_inicio,
-            card__projeto__arquivado=False,
-        ).select_related('usuario', 'card', 'definido_por', 'card__projeto')
-        
-        # Criar dicionário de prioridades por usuário (lista de prioridades)
-        priorities_por_usuario = {}
-        for priority in priorities:
-            user_id = int(priority.usuario.id)
-            if user_id not in priorities_por_usuario:
-                priorities_por_usuario[user_id] = []
-            priorities_por_usuario[user_id].append(priority)
-        
-        # Criar resultado incluindo TODOS os usuários
-        result = []
-        for usuario in usuarios_ativos:
-            user_priorities = priorities_por_usuario.get(int(usuario.id), [])
-            
-            if user_priorities:
-                # Serializar todos os cards das prioridades
-                cards_serializados = []
-                for priority in user_priorities:
-                    card_data = CardSerializer(priority.card).data
-                    priority_data = {
-                        'id': str(priority.id),
-                        'is_concluido': priority.is_concluido(),
-                        'is_atrasado': priority.is_atrasado(),
-                        'semana_inicio': priority.semana_inicio.isoformat(),
-                        'semana_fim': priority.semana_fim.isoformat(),
-                    }
-                    card_data['weekly_priority'] = priority_data
-                    cards_serializados.append(card_data)
-            else:
-                cards_serializados = []
-            
-            result.append({
-                'usuario': {
-                    'id': usuario.id,
-                    'username': usuario.username,
-                    'first_name': usuario.first_name,
-                    'last_name': usuario.last_name,
-                    'email': usuario.email,
-                    'role': usuario.role,
-                    'role_display': usuario.get_role_display(),
-                    'profile_picture_url': get_profile_picture_url(usuario, request=request),
-                },
-                'cards': cards_serializados
-            })
-        
-        # Ordenar: primeiro usuários com cards, depois sem cards
-        result.sort(key=lambda x: (
-            0 if x['cards'] else 1,
-            x['usuario']['username'] # Ordenar por nome de usuário se não tiver cards
-        ))
-        
-        return Response({
-            'semana_fechada': semana_fechada,
-            'semana_inicio': semana_inicio.isoformat(),
-            'data': result
-        })
 
 
 # ============================================================================

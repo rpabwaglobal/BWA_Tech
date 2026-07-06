@@ -2070,14 +2070,14 @@ export default function SprintDetails() {
                 <Clock className="h-[14px] w-[14px]" />
                 {calcularDiasTotais(sprintInicioDiaParaCalendario(sprint), sprintFimDiaParaCalendario(sprint))} dias ({calcularDiasUteis(sprintInicioDiaParaCalendario(sprint), sprintFimDiaParaCalendario(sprint))} úteis)
               </span>
-              <span className="flex items-center gap-[6px]">
-                <Badge variant="outline" className="text-[11px]">
+              <div className="flex flex-col gap-[2px] shrink-0">
+                <Badge variant="outline" className="text-[11px] w-fit">
                   Entregues atrasados: {deliveredLateCount}
                 </Badge>
-                <Badge variant="outline" className="text-[11px]">
+                <Badge variant="outline" className="text-[11px] w-fit">
                   Abertos atrasados: {openLateCount}
                 </Badge>
-              </span>
+              </div>
             </div>
           </div>
         </div>
@@ -2099,17 +2099,6 @@ export default function SprintDetails() {
                   Novo Projeto
                 </>
               )}
-            </Button>
-          )}
-          {canFinalizar && sprint && !sprint.finalizada && (
-            <Button
-              variant="outline"
-              size="default"
-              onClick={handleFinalizarSprint}
-              className="h-[40px]"
-            >
-              <CheckCircle2 className="mr-[8px] h-[16px] w-[16px] text-green-600" />
-              Finalizar sprint
             </Button>
           )}
           {sprint && isSprintEmAndamentoJanela(sprint) && (
@@ -2161,7 +2150,7 @@ export default function SprintDetails() {
             />
           </div>
 
-          {/* 2–5. Mesmo gap-[8px] que Finalizar sprint | lápis | lixeira — um único flex, sem wrapper que estique */}
+          {/* 2–5. Mesmo gap-[8px] que Gerenciar Sprints | lápis | lixeira — um único flex, sem wrapper que estique */}
           <div className="flex w-full min-w-0 flex-col gap-[8px] sm:flex-row sm:flex-wrap sm:items-stretch sm:gap-[8px] lg:w-auto lg:flex-nowrap lg:items-center lg:gap-[8px]">
           {/* 2. Opções */}
           <div className="flex shrink-0 items-center">
@@ -2963,20 +2952,36 @@ export default function SprintDetails() {
               </div>
             )}
 
-            <DialogFooter>
-              <Button type="button" variant="outline" onClick={() => setSprintDialogOpen(false)}>
-                Cancelar
-              </Button>
-              <Button type="submit" disabled={sprintFormLoading}>
-                {sprintFormLoading ? (
-                  <>
-                    <Loader2 className="mr-[8px] h-[16px] w-[16px] animate-spin" />
-                    Salvando...
-                  </>
-                ) : (
-                  'Salvar Alterações'
-                )}
-              </Button>
+            <DialogFooter className="flex-col gap-[12px] sm:flex-row sm:items-center sm:justify-between">
+              {canFinalizar && sprint && !sprint.finalizada && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => {
+                    setSprintDialogOpen(false);
+                    handleFinalizarSprint();
+                  }}
+                  className="w-full sm:w-auto border-green-200 text-green-700 hover:bg-green-50"
+                >
+                  <CheckCircle2 className="mr-[8px] h-[16px] w-[16px]" />
+                  Finalizar sprint
+                </Button>
+              )}
+              <div className="flex w-full gap-[8px] sm:w-auto sm:justify-end">
+                <Button type="button" variant="outline" onClick={() => setSprintDialogOpen(false)}>
+                  Cancelar
+                </Button>
+                <Button type="submit" disabled={sprintFormLoading}>
+                  {sprintFormLoading ? (
+                    <>
+                      <Loader2 className="mr-[8px] h-[16px] w-[16px] animate-spin" />
+                      Salvando...
+                    </>
+                  ) : (
+                    'Salvar Alterações'
+                  )}
+                </Button>
+              </div>
             </DialogFooter>
           </form>
         </DialogContent>

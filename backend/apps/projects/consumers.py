@@ -163,6 +163,14 @@ class SprintKanbanConsumer(AsyncWebsocketConsumer):
         except json.JSONDecodeError:
             pass
 
+    async def kanban_changed(self, event):
+        """Handler do dispatch `channel_layer.group_send(type='kanban_changed')`."""
+        await self.send(text_data=json.dumps({
+            'type': 'kanban_changed',
+            'card_id': event.get('card_id'),
+            'actor_user_id': event.get('actor_user_id'),
+        }))
+
     async def card_movement(self, event):
         """Handler do dispatch `channel_layer.group_send(type='card_movement')`."""
         await self.send(text_data=json.dumps({

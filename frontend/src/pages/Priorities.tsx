@@ -53,6 +53,9 @@ const isCompleted = (status: string) => {
   return status === 'finalizado';
 };
 
+const sameId = (a: string | number | null | undefined, b: string | number | null | undefined) =>
+  String(a) === String(b);
+
 /** Etapa atual do card (Kanban), para exibir junto ao projeto. */
 function cardEtapaLabel(card: { status: string; status_display?: string | null }): string {
   const d = card.status_display?.trim();
@@ -129,10 +132,13 @@ export default function Priorities() {
   const [confirmClearPrioritiesOpen, setConfirmClearPrioritiesOpen] = useState(false);
 
   // Função para carregar dados
-  const loadData = useCallback(async () => {
+  const loadData = useCallback(async (options?: { silent?: boolean }) => {
+    const silent = options?.silent ?? false;
     try {
-      setLoading(true);
-      
+      if (!silent) {
+        setLoading(true);
+      }
+
       if (periodo === 'semana') {
         // Carregar prioridades da semana
         const response = await weeklyPriorityService.getPrioritiesView();
@@ -149,9 +155,13 @@ export default function Priorities() {
     } catch (error: any) {
       console.error('Erro ao carregar prioridades:', error);
       console.error('Erro detalhado:', error.response?.data);
-      setUsersWithCards([]);
+      if (!silent) {
+        setUsersWithCards([]);
+      }
     } finally {
-      setLoading(false);
+      if (!silent) {
+        setLoading(false);
+      }
     }
   }, [periodo]);
 
@@ -176,15 +186,14 @@ export default function Priorities() {
       
       if (relevantTypes.includes(notification.tipo)) {
         console.log('[Priorities] Notificação relevante recebida, recarregando dados:', notification.tipo);
-        loadData();
+        loadData({ silent: true });
       }
     };
 
     const handleWeeklyPriorityUpdated = (event: CustomEvent) => {
       console.log('[Priorities] Prioridade semanal atualizada, recarregando dados:', event.detail);
-      // Recarregar dados quando uma prioridade semanal for atualizada
       if (periodo === 'semana') {
-        loadData();
+        loadData({ silent: true });
       }
     };
 
@@ -244,43 +253,36 @@ export default function Priorities() {
 
   // Função para abrir modal de definir prioridade
   const handleDefinePriority = async (user: UserWithCards['usuario']) => {
+    const userObj = users.find(u => sameId(u.id, user.id));
+    setSelectedUserForPriority(
+      userObj ?? ({
+        id: String(user.id),
+        username: user.username,
+        first_name: user.first_name,
+        last_name: user.last_name,
+        email: user.email,
+        role: user.role,
+      } as UserType)
+    );
+    setSelectedCardsForPriority([]);
+    setAvailableCards([]);
+    setDefinePriorityDialogOpen(true);
+    setLoadingCards(true);
+
     try {
-      setLoadingCards(true);
-      const userObj = users.find(u => u.id === user.id);
-      setSelectedUserForPriority(userObj || null);
-      
-      // Carregar cards do usuário
-      const allCards = await cardService.getAll();
-      const userCards = allCards.filter(card => 
-        card.responsavel === user.id && 
-        card.status !== 'finalizado' && 
-        card.status !== 'inviabilizado'
+      const { available_cards, selected_card_ids } =
+        await weeklyPriorityService.getDefinePriorityOptions(String(user.id));
+
+      setAvailableCards(available_cards as CardType[]);
+      const selectedIds = new Set(selected_card_ids.map(String));
+      setSelectedCardsForPriority(
+        available_cards.filter(card => selectedIds.has(String(card.id))) as CardType[]
       );
-      setAvailableCards(userCards);
-      
-      // Pre-selecionar os cards que já têm prioridade semanal definida
-      const hoje = new Date();
-      const diasAteSegunda = hoje.getDay() === 0 ? 6 : hoje.getDay() - 1;
-      const segundaFeira = new Date(hoje);
-      segundaFeira.setDate(hoje.getDate() - diasAteSegunda);
-      const semanaInicio = segundaFeira.toISOString().split('T')[0];
-      
-      const currentWeekPriorities = await weeklyPriorityService.getAll({ semana: semanaInicio });
-      const existingPriorities = currentWeekPriorities.filter(p => String(p.usuario) === String(user.id));
-      
-      if (existingPriorities.length > 0) {
-        const existingCards = existingPriorities
-          .map(p => userCards.find(c => String(c.id) === String(p.card)))
-          .filter((c): c is CardType => c !== undefined);
-        console.log('[Priorities] Pré-selecionando cards:', existingCards.map(c => c.id));
-        setSelectedCardsForPriority(existingCards);
-      } else {
-        setSelectedCardsForPriority([]);
-      }
-      
-      setDefinePriorityDialogOpen(true);
     } catch (error) {
       console.error('Erro ao carregar cards:', error);
+      setDefinePriorityDialogOpen(false);
+      setErrorMessage('Erro ao carregar cards do usuário. Tente novamente.');
+      setErrorModalOpen(true);
     } finally {
       setLoadingCards(false);
     }
@@ -300,28 +302,19 @@ export default function Priorities() {
       const semanaInicio = segundaFeira.toISOString().split('T')[0];
       
       const existingPriorities = await weeklyPriorityService.getAll({ semana: semanaInicio });
-      const existingForUser = existingPriorities.filter(p => p.usuario === selectedUserForPriority.id);
+      const existingForUser = existingPriorities.filter(p =>
+        sameId(p.usuario, selectedUserForPriority.id)
+      );
       
       // Deletar todas as prioridades
       for (const priority of existingForUser) {
         await weeklyPriorityService.delete(priority.id);
       }
-      
-      await loadData();
-      
-      // Disparar evento customizado para atualização em tempo real
-      window.dispatchEvent(
-        new CustomEvent('weeklyPriorityUpdated', {
-          detail: {
-            usuario: selectedUserForPriority.id,
-            action: 'deleted_all'
-          }
-        })
-      );
-      
+
       setDefinePriorityDialogOpen(false);
       setSelectedUserForPriority(null);
       setSelectedCardsForPriority([]);
+      await loadData({ silent: true });
       return;
     }
     
@@ -396,23 +389,11 @@ export default function Priorities() {
       for (const priority of cardsToDelete) {
         await weeklyPriorityService.delete(priority.id);
       }
-      
-      // Recarregar dados
-      await loadData();
-      
-      // Disparar evento customizado para atualização em tempo real
-      window.dispatchEvent(
-        new CustomEvent('weeklyPriorityUpdated', {
-          detail: {
-            usuario: selectedUserForPriority.id,
-            action: 'saved'
-          }
-        })
-      );
-      
+
       setDefinePriorityDialogOpen(false);
       setSelectedUserForPriority(null);
       setSelectedCardsForPriority([]);
+      await loadData({ silent: true });
     } catch (error) {
       console.error('Erro ao salvar prioridade:', error);
       setErrorMessage('Erro ao salvar prioridade. Tente novamente.');
@@ -508,19 +489,9 @@ export default function Priorities() {
       // Deletar todas as prioridades do usuário
       if (userPriorities.length > 0) {
         await Promise.all(userPriorities.map(p => weeklyPriorityService.delete(p.id)));
-        await loadData();
-        
-        // Disparar evento customizado para atualização em tempo real
-        window.dispatchEvent(
-          new CustomEvent('weeklyPriorityUpdated', {
-            detail: {
-              usuario: priorityToDelete.userId,
-              action: 'deleted'
-            }
-          })
-        );
+        await loadData({ silent: true });
       }
-      
+
       setDeletePriorityDialogOpen(false);
       setPriorityToDelete(null);
     } catch (error) {
@@ -676,7 +647,10 @@ export default function Priorities() {
                     <Button
                       variant="ghost"
                       size="icon"
-                      onClick={() => handleDefinePriority(userData.usuario)}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleDefinePriority(userData.usuario);
+                      }}
                       className="h-[24px] w-[24px]"
                       title="Editar prioridades"
                     >
@@ -718,7 +692,10 @@ export default function Priorities() {
                         <Button
                           variant="outline"
                           size="sm"
-                          onClick={() => handleDefinePriority(userData.usuario)}
+                          onClick={(e) => {
+                        e.stopPropagation();
+                        handleDefinePriority(userData.usuario);
+                      }}
                           className="mt-[8px] h-auto px-[12px] py-[6px] text-xs"
                         >
                           <Plus className="h-[12px] w-[12px] mr-[4px]" />
@@ -730,7 +707,10 @@ export default function Priorities() {
                           <Button
                             variant="ghost"
                             size="icon"
-                            onClick={() => handleDefinePriority(userData.usuario)}
+                            onClick={(e) => {
+                        e.stopPropagation();
+                        handleDefinePriority(userData.usuario);
+                      }}
                             className="h-[24px] w-[24px]"
                             title="Editar prioridade"
                           >
@@ -843,7 +823,10 @@ export default function Priorities() {
                                   <Button
                                     variant="outline"
                                     size="sm"
-                                    onClick={() => handleDefinePriority(userData.usuario)}
+                                    onClick={(e) => {
+                        e.stopPropagation();
+                        handleDefinePriority(userData.usuario);
+                      }}
                                     className="mt-[8px] h-auto px-[12px] py-[6px] text-xs"
                                   >
                                     <Plus className="h-[12px] w-[12px] mr-[4px]" />
@@ -1007,34 +990,30 @@ export default function Priorities() {
                 
                 {/* Cards concluídos da semana - seção separada que expande independentemente - sempre no final */}
                 {/* Só mostrar se a semana NÃO estiver fechada */}
-                {periodo === 'semana' && !semanaFechada && (() => {
-                  // Filtrar apenas cards concluídos que são prioridades da semana
-                  const cardsConcluidosPrioridades = cardsConcluidos.filter(card => card.weekly_priority);
-                  return (
-                    <div className="mt-[8px] border-t border-[var(--color-border)] pt-[8px]">
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          if (cardsConcluidosPrioridades.length > 0) {
-                            setSelectedUserForExpansion(userData.usuario);
-                          }
-                        }}
-                        disabled={cardsConcluidosPrioridades.length === 0}
-                        className={cn(
-                          "w-full flex items-center gap-[8px] text-sm transition-colors text-left",
-                          cardsConcluidosPrioridades.length > 0
-                            ? "text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)] cursor-pointer"
-                            : "text-[var(--color-muted-foreground)] opacity-50 cursor-not-allowed"
-                        )}
-                      >
-                        <ChevronDown className="h-[16px] w-[16px] shrink-0" />
-                        <span className="flex-1">
-                          {cardsConcluidosPrioridades.length} card{cardsConcluidosPrioridades.length !== 1 ? 's' : ''} concluído{cardsConcluidosPrioridades.length !== 1 ? 's' : ''} da prioridade{cardsConcluidosPrioridades.length > 0 ? ', expanda para detalhes' : ''}
-                        </span>
-                      </button>
-                    </div>
-                  );
-                })()}
+                {periodo === 'semana' && !semanaFechada && (
+                  <div className="mt-[8px] border-t border-[var(--color-border)] pt-[8px]">
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (cardsConcluidos.length > 0) {
+                          setSelectedUserForExpansion(userData.usuario);
+                        }
+                      }}
+                      disabled={cardsConcluidos.length === 0}
+                      className={cn(
+                        "w-full flex items-center gap-[8px] text-sm transition-colors text-left",
+                        cardsConcluidos.length > 0
+                          ? "text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)] cursor-pointer"
+                          : "text-[var(--color-muted-foreground)] opacity-50 cursor-not-allowed"
+                      )}
+                    >
+                      <ChevronDown className="h-[16px] w-[16px] shrink-0" />
+                      <span className="flex-1">
+                        {cardsConcluidos.length} card{cardsConcluidos.length !== 1 ? 's' : ''} concluído{cardsConcluidos.length !== 1 ? 's' : ''} nos últimos 7 dias{cardsConcluidos.length > 0 ? ', expanda para detalhes' : ''}
+                      </span>
+                    </button>
+                  </div>
+                )}
               </Card>
             );
           })}
@@ -1294,7 +1273,7 @@ export default function Priorities() {
                     )}
                     <div className="space-y-[8px] max-h-[50vh] overflow-y-auto">
                       {availableCards.map((card) => {
-                      const isSelected = selectedCardsForPriority.some(c => c.id === card.id);
+                      const isSelected = selectedCardsForPriority.some(c => sameId(c.id, card.id));
                       return (
                         <div
                           key={card.id}
@@ -1307,7 +1286,7 @@ export default function Priorities() {
                           onClick={() => {
                             if (isSelected) {
                               // Remover da seleção
-                              setSelectedCardsForPriority(prev => prev.filter(c => c.id !== card.id));
+                              setSelectedCardsForPriority(prev => prev.filter(c => !sameId(c.id, card.id)));
                             } else {
                               // Adicionar à seleção
                               setSelectedCardsForPriority(prev => [...prev, card]);
@@ -1623,32 +1602,25 @@ export default function Priorities() {
               </DialogTitle>
               <DialogDescription>
                 {(() => {
-                  const userCards = usersWithCards.find(u => u.usuario.id === selectedUserForExpansion.id);
+                  const userCards = usersWithCards.find(u => sameId(u.usuario.id, selectedUserForExpansion.id));
                   if (!userCards) return '';
                   
                   if (periodo === 'dia') {
                     const concluidos = userCards.cards.filter(card => isCompleted(card.status)) || [];
                     return `${concluidos.length} card${concluidos.length !== 1 ? 's' : ''} concluído${concluidos.length !== 1 ? 's' : ''} hoje`;
                   } else {
-                    // Para semana, filtrar apenas os que são prioridades da semana
-                    const concluidos = userCards.cards.filter(card => isCompleted(card.status) && card.weekly_priority) || [];
-                    return `${concluidos.length} card${concluidos.length !== 1 ? 's' : ''} concluído${concluidos.length !== 1 ? 's' : ''} da prioridade`;
+                    const concluidos = userCards.cards.filter(card => isCompleted(card.status)) || [];
+                    return `${concluidos.length} card${concluidos.length !== 1 ? 's' : ''} concluído${concluidos.length !== 1 ? 's' : ''} nos últimos 7 dias`;
                   }
                 })()}
               </DialogDescription>
             </DialogHeader>
             <div className="mt-[16px] space-y-[12px]">
               {(() => {
-                const userCards = usersWithCards.find(u => u.usuario.id === selectedUserForExpansion.id);
+                const userCards = usersWithCards.find(u => sameId(u.usuario.id, selectedUserForExpansion.id));
                 if (!userCards) return null;
                 
-                let concluidos: CardData[];
-                if (periodo === 'dia') {
-                  concluidos = userCards.cards.filter(card => isCompleted(card.status)) || [];
-                } else {
-                  // Para semana, filtrar apenas os que são prioridades da semana
-                  concluidos = userCards.cards.filter(card => isCompleted(card.status) && card.weekly_priority) || [];
-                }
+                const concluidos = userCards.cards.filter(card => isCompleted(card.status)) || [];
                 
                 if (concluidos.length === 0) {
                   return (
@@ -1667,9 +1639,16 @@ export default function Priorities() {
                     <div className="flex items-start gap-[8px]">
                       <Check className="h-[16px] w-[16px] text-green-500 shrink-0 mt-[2px]" strokeWidth={3} />
                       <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium text-green-500">
-                          {card.nome}
-                        </p>
+                        <div className="flex items-center gap-[8px] flex-wrap">
+                          <p className="text-sm font-medium text-green-500">
+                            {card.nome}
+                          </p>
+                          {card.weekly_priority && (
+                            <Badge variant="secondary" className="text-[10px] px-[6px] py-0">
+                              Prioridade da semana
+                            </Badge>
+                          )}
+                        </div>
                         {card.projeto_detail?.nome && (
                           <p className="text-xs text-[var(--color-muted-foreground)] mt-[4px]">
                             {card.projeto_detail.nome} - {cardEtapaLabel(card)}
