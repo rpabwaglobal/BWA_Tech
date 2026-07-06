@@ -19,10 +19,11 @@ import Admin from './pages/Admin';
 import Metrics from './pages/Metrics';
 import Reports from './pages/Reports';
 import Support from './pages/Support';
+import Score from './pages/Score';
 import Layout from './components/layout/Layout';
 import { Loader2 } from 'lucide-react';
 import { ROUTES } from './routes';
-import { isAdminUser } from './lib/roles';
+import { isAdminUser, isSupervisorOrAdmin } from './lib/roles';
 
 function LegacyProjectToProjeto() {
   const { id } = useParams();
@@ -85,6 +86,23 @@ function AdminRoute({ children }: { children: React.ReactNode }) {
 
   if (!isAuthenticated) return <Navigate to={ROUTES.entrar} />;
   if (!isAdminUser(user)) return <Navigate to={ROUTES.painel} replace />;
+
+  return <>{children}</>;
+}
+
+function SupervisorRoute({ children }: { children: React.ReactNode }) {
+  const { isAuthenticated, loading, user } = useAuth();
+
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-[var(--color-background)]">
+        <Loader2 className="h-8 w-8 animate-spin text-[var(--color-primary)]" />
+      </div>
+    );
+  }
+
+  if (!isAuthenticated) return <Navigate to={ROUTES.entrar} />;
+  if (!isSupervisorOrAdmin(user)) return <Navigate to={ROUTES.painel} replace />;
 
   return <>{children}</>;
 }
@@ -152,6 +170,14 @@ function AppRoutes() {
         <Route path={ROUTES.metricas.replace(/^\//, '')} element={<Metrics />} />
         <Route path={ROUTES.relatorios.replace(/^\//, '')} element={<Reports />} />
         <Route path={ROUTES.suporte.replace(/^\//, '')} element={<Support />} />
+        <Route
+          path={ROUTES.score.replace(/^\//, '')}
+          element={
+            <SupervisorRoute>
+              <Score />
+            </SupervisorRoute>
+          }
+        />
         <Route path="dia-geek" element={<GeekDay />} />
         <Route path={ROUTES.configuracoes.replace(/^\//, '')} element={<Settings />} />
         <Route

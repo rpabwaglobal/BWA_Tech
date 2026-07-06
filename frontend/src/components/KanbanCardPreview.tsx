@@ -1,4 +1,4 @@
-import { Calendar, User } from 'lucide-react';
+import { Calendar, User, ExternalLink, Trophy } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import {
   getPriorityStyle,
@@ -6,11 +6,12 @@ import {
   kanbanCardInkTextClass,
   getKanbanAreaBadgeClasses,
   kanbanMutedChipOnPastelClass,
+  kanbanScriptLinkOnPastelClass,
 } from '@/lib/priorityColors';
-import { formatDate, isCardAtrasado } from '@/lib/dateUtils';
+import { formatDateTime, isCardAtrasado } from '@/lib/dateUtils';
 import { ATRASADO_STATUS_BADGE } from '@/lib/dueDateBadgeClasses';
 import { getRoleLabel, getRoleColor } from '@/components/ui/user-select';
-import { cn } from '@/lib/utils';
+import { cn, normalizeExternalUrl } from '@/lib/utils';
 
 export interface KanbanCardPreviewData {
   id: string;
@@ -25,6 +26,8 @@ export interface KanbanCardPreviewData {
   data_fim?: string | null;
   responsavel_name?: string;
   responsavel_role?: string;
+  script_url?: string | null;
+  score_final?: string | number | null;
 }
 
 interface KanbanCardPreviewProps {
@@ -63,13 +66,17 @@ export function KanbanCardPreview({ card, className, topRightSlot, onClick }: Ka
         </div>
       )}
 
-      <div className={cn('font-medium text-sm break-words pr-7', ink)}>{card.nome}</div>
+      <div className="flex items-start justify-between gap-[8px]">
+        <div className={cn('flex items-center gap-[8px] flex-1 min-w-0', topRightSlot && 'pr-7')}>
+          <span className={cn('font-medium text-sm truncate flex-1', ink)}>{card.nome}</span>
+        </div>
+      </div>
 
       {card.data_fim && (
         <div className="flex items-center justify-between gap-[8px] mt-[6px]">
           <div className={cn('flex items-center gap-[4px] text-xs', ink)}>
             <Calendar className="h-[12px] w-[12px]" />
-            {formatDate(card.data_fim)}
+            {formatDateTime(card.data_fim)}
           </div>
           <div className="flex items-center gap-[8px]">
             {atrasado ? (
@@ -85,7 +92,7 @@ export function KanbanCardPreview({ card, className, topRightSlot, onClick }: Ka
         </div>
       )}
 
-      {(card.area_display || card.tipo_display) && (
+      {(card.area_display || card.tipo_display || card.script_url) && (
         <div className="flex flex-wrap gap-[4px] mt-[8px]">
           {card.area_display && (
             <span
@@ -99,6 +106,21 @@ export function KanbanCardPreview({ card, className, topRightSlot, onClick }: Ka
               {card.tipo_display}
             </span>
           )}
+          {card.script_url && (
+            <a
+              href={normalizeExternalUrl(card.script_url)}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={(e) => e.stopPropagation()}
+              className={cn(
+                'flex items-center gap-[2px] text-[10px] px-[6px] py-[2px] rounded-full transition-colors',
+                kanbanScriptLinkOnPastelClass,
+              )}
+            >
+              <ExternalLink className="h-[10px] w-[10px]" />
+              Script
+            </a>
+          )}
         </div>
       )}
 
@@ -107,9 +129,9 @@ export function KanbanCardPreview({ card, className, topRightSlot, onClick }: Ka
       )}
 
       <div className="flex items-center justify-between mt-[8px]">
-        <div className="flex items-center gap-[8px] min-w-0">
+        <div className="flex items-center gap-[8px] flex-wrap">
           {card.responsavel_name ? (
-            <div className={cn('flex items-center gap-[6px] text-xs min-w-0', ink)}>
+            <div className={cn('flex items-center gap-[6px] text-xs', ink)}>
               {responsavelRoleLabel && (
                 <Badge
                   variant="secondary"
@@ -127,16 +149,27 @@ export function KanbanCardPreview({ card, className, topRightSlot, onClick }: Ka
             </div>
           )}
         </div>
-        {card.prioridade && (
-          <span
-            className={cn(
-              'text-[10px] px-[6px] py-[2px] rounded-full font-medium shrink-0',
-              kanbanMutedChipOnPastelClass,
-            )}
-          >
-            {getPriorityLabel(card.prioridade)}
-          </span>
-        )}
+        <div className="flex items-center gap-[6px] shrink-0">
+          {card.score_final != null && (
+            <span
+              title={`Score: ${Number(card.score_final).toFixed(1)}`}
+              className="inline-flex items-center gap-[3px] rounded-full bg-[var(--color-primary)] px-[6px] py-[2px] text-[10px] font-semibold text-[var(--color-primary-foreground)]"
+            >
+              <Trophy className="h-[10px] w-[10px]" />
+              {Number(card.score_final).toFixed(1)}
+            </span>
+          )}
+          {card.prioridade && (
+            <span
+              className={cn(
+                'text-[10px] px-[6px] py-[2px] rounded-full font-medium',
+                kanbanMutedChipOnPastelClass,
+              )}
+            >
+              {getPriorityLabel(card.prioridade)}
+            </span>
+          )}
+        </div>
       </div>
     </div>
   );

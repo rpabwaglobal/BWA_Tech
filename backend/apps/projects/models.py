@@ -931,3 +931,220 @@ class CardPin(models.Model):
     def __str__(self):
         return f'{self.user.username} ⇩ {self.card_id}'
 
+
+# ============================================================================
+# Score (Pontuação de valor dos cards)
+# ============================================================================
+
+class SetorSolicitante(models.TextChoices):
+    """Setor que solicitou a demanda (usado na tabela de Score)."""
+    FISCAL = 'fiscal', 'Fiscal'
+    CONTABIL = 'contabil', 'Contábil'
+    MARKETING = 'marketing', 'Marketing'
+    LEGALIZACAO = 'legalizacao', 'Legalização'
+    PESSOAL = 'pessoal', 'Pessoal'
+    DIRETORIA = 'diretoria', 'Diretoria'
+    NOVOS_NEGOCIOS = 'novos_negocios', 'Novos Negócios'
+    RH = 'rh', 'RH'
+
+
+class ScoreCriterion(models.Model):
+    """Campo configurável do formulário de Score (ex.: 'Redução de esforço').
+
+    O supervisor pode adicionar / remover / editar critérios. Cada critério
+    carrega seu próprio peso e sinal, de modo que a fórmula do Score é genérica:
+
+        score = Σ ( (-1 se negativo senão +1) * peso * valor_escolhido )
+
+    Isso reproduz a planilha original
+    ``(0.3*Esforço + 0.25*Risco + 0.2*Escala) - (0.15*Complexidade + 0.1*Dependência)``
+    e continua válida quando o supervisor adiciona ou remove campos.
+    """
+    nome = models.CharField(max_length=120, verbose_name='Nome do Critério')
+    peso = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        default=0,
+        verbose_name='Peso',
+        help_text='Peso do critério na fórmula do Score (ex.: 0.30)'
+    )
+    negativo = models.BooleanField(
+        default=False,
+        verbose_name='Negativo',
+        help_text='Se marcado, o critério subtrai do Score em vez de somar'
+    )
+    ordem = models.PositiveIntegerField(default=0, verbose_name='Ordem')
+    ativo = models.BooleanField(default=True, verbose_name='Ativo')
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name='Data de Criação')
+    updated_at = models.DateTimeField(auto_now=True, verbose_name='Data de Atualização')
+
+    class Meta:
+        verbose_name = 'Critério de Score'
+        verbose_name_plural = 'Critérios de Score'
+        ordering = ['ordem', 'id']
+
+    def __str__(self):
+        return self.nome
+
+
+class ScoreCriterionOption(models.Model):
+    """Opção (valor + descrição) de um critério de Score. Ex.: 0 = 'Não ajuda'."""
+    criterion = models.ForeignKey(
+        ScoreCriterion,
+        on_delete=models.CASCADE,
+        related_name='opcoes',
+        verbose_name='Critério'
+    )
+    valor = models.IntegerField(verbose_name='Valor')
+    descricao = models.CharField(max_length=200, verbose_name='Descrição')
+    ordem = models.PositiveIntegerField(default=0, verbose_name='Ordem')
+
+    class Meta:
+        verbose_name = 'Opção de Critério'
+        verbose_name_plural = 'Opções de Critério'
+        ordering = ['ordem', 'valor']
+
+    def __str__(self):
+        return f'{self.criterion.nome}: {self.valor} — {self.descricao}'
+
+
+class CardScore(models.Model):
+    """Score atribuído a um card pelo supervisor."""
+    card = models.OneToOneField(
+        Card,
+        on_delete=models.CASCADE,
+        related_name='score',
+        verbose_name='Card'
+    )
+    setor_solicitante = models.CharField(
+        max_length=30,
+        choices=SetorSolicitante.choices,
+        null=True,
+        blank=True,
+        verbose_name='Setor Solicitante'
+    )
+    score_final = models.DecimalField(
+        max_digits=7,
+        decimal_places=2,
+        default=0,
+        verbose_name='Score Final'
+    )
+    criado_por = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='scores_criados',
+        verbose_name='Criado por'
+    )
+    atualizado_por = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='scores_atualizados',
+        verbose_name='Atualizado por'
+    )
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name='Data de Criação')
+    updated_at = models.DateTimeField(auto_now=True, verbose_name='Data de Atualização')
+
+    class Meta:
+        verbose_name = 'Score do Card'
+        verbose_name_plural = 'Scores dos Cards'
+        ordering = ['-updated_at']
+
+    def __str__(self):
+        return f'{self.card.nome} — {self.score_final}'
+
+    def calcular_score(self):
+        """Recalcula ``score_final`` a partir dos valores e pesos dos critérios ATIVOS.
+
+        Critérios inativos não entram na fórmula (ficam ocultos na tela); seus
+        valores permanecem no banco caso o critério seja reativado depois.
+        """
+        from decimal import Decimal
+        total = Decimal('0')
+        for valor in self.valores.select_related('criterion').all():
+            criterion = valor.criterion
+            if not criterion.ativo:
+                continue
+            contrib = criterion.peso * valor.valor
+            total += (-contrib) if criterion.negativo else contrib
+        self.score_final = total
+        return total
+
+
+class CardScoreValue(models.Model):
+    """Valor escolhido para um critério dentro de um CardScore.
+
+    Guarda o ``valor`` bruto (int), não uma FK para a opção, para que o histórico
+    do card permaneça íntegro mesmo se o supervisor editar/remover opções depois.
+    """
+    card_score = models.ForeignKey(
+        CardScore,
+        on_delete=models.CASCADE,
+        related_name='valores',
+        verbose_name='Score'
+    )
+    criterion = models.ForeignKey(
+        ScoreCriterion,
+        on_delete=models.CASCADE,
+        related_name='valores_atribuidos',
+        verbose_name='Critério'
+    )
+    valor = models.IntegerField(verbose_name='Valor')
+
+    class Meta:
+        verbose_name = 'Valor de Critério do Score'
+        verbose_name_plural = 'Valores de Critério do Score'
+        unique_together = [('card_score', 'criterion')]
+
+    def __str__(self):
+        return f'{self.criterion.nome} = {self.valor}'
+
+
+class ScoreHistoryAction(models.TextChoices):
+    CRIADO = 'criado', 'Score Criado'
+    EDITADO = 'editado', 'Score Editado'
+    EXCLUIDO = 'excluido', 'Score Excluído'
+
+
+class ScoreHistory(models.Model):
+    """Histórico de alterações do Score de um card (coluna 'Histórico do Score')."""
+    card = models.ForeignKey(
+        Card,
+        on_delete=models.CASCADE,
+        related_name='score_historico',
+        verbose_name='Card'
+    )
+    acao = models.CharField(
+        max_length=20,
+        choices=ScoreHistoryAction.choices,
+        verbose_name='Ação'
+    )
+    score_final = models.DecimalField(max_digits=7, decimal_places=2, default=0)
+    setor_solicitante = models.CharField(max_length=30, null=True, blank=True)
+    snapshot = models.JSONField(
+        default=list,
+        blank=True,
+        verbose_name='Snapshot',
+        help_text='Cópia dos critérios/valores no momento da alteração'
+    )
+    usuario = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='score_historico_entries',
+        verbose_name='Usuário'
+    )
+    data = models.DateTimeField(auto_now_add=True, verbose_name='Data')
+
+    class Meta:
+        verbose_name = 'Histórico de Score'
+        verbose_name_plural = 'Históricos de Score'
+        ordering = ['-data']
+
+    def __str__(self):
+        return f'{self.card.nome} — {self.get_acao_display()} ({self.data})'
+

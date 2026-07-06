@@ -69,6 +69,8 @@ export type Card = {
   complexidade_custom_items?: Array<{ id: string; label: string; hours: number }>;
   card_comment?: string | null;
   events_count?: number;
+  /** Score final do card (null se ainda não pontuado). DecimalField → string. */
+  score_final?: string | null;
   created_at?: string;
   updated_at?: string;
 };

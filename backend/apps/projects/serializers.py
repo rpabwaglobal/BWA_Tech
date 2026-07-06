@@ -22,6 +22,11 @@ from .models import (
     WeeklyPriorityConfig,
     CardArea,
     CardDueDateChangeRequest,
+    ScoreCriterion,
+    ScoreCriterionOption,
+    CardScore,
+    CardScoreValue,
+    ScoreHistory,
 )
 from apps.accounts.serializers import UserSerializer
 from apps.accounts.profile_picture_utils import get_profile_picture_url
@@ -367,6 +372,7 @@ class CardSerializer(DevTimeFormattedMixin, serializers.ModelSerializer):
     # Fallback `obj.events.count()` apenas quando o objeto não vier do queryset
     # anotado (ex.: testes ou criação manual em scripts).
     events_count = serializers.SerializerMethodField()
+    score_final = serializers.SerializerMethodField()
 
     def get_events_count(self, obj):
         # Quando o queryset usa .annotate(events_count=Count('events')),
@@ -376,6 +382,12 @@ class CardSerializer(DevTimeFormattedMixin, serializers.ModelSerializer):
         if annotated is not None:
             return annotated
         return obj.events.count()
+
+    def get_score_final(self, obj):
+        try:
+            return obj.score.score_final
+        except CardScore.DoesNotExist:
+            return None
 
     # Permite status que existam em `KanbanStage` (novo sistema), mantendo compatibilidade
     # com os status legados já persistidos.
@@ -739,7 +751,7 @@ class CardSerializer(DevTimeFormattedMixin, serializers.ModelSerializer):
                  'dias_uteis_desenvolvimento',
                  'minutos_uteis_desenvolvimento', 'horas_uteis_desenvolvimento',
                  'complexidade_selected_items', 'complexidade_selected_development', 'complexidade_custom_items',
-                 'card_comment', 'links', 'events_count', 'created_at', 'updated_at']
+                 'card_comment', 'links', 'events_count', 'score_final', 'created_at', 'updated_at']
         read_only_fields = [
             'created_at', 'updated_at', 'criado_por', 'finalizado_em',
             'segundos_corridos_desenvolvimento', 'dias_corridos_desenvolvimento',
@@ -772,6 +784,7 @@ class CardKanbanSerializer(DevTimeFormattedMixin, serializers.ModelSerializer):
     responsavel_role = serializers.SerializerMethodField()
     responsavel_profile_picture_url = serializers.SerializerMethodField()
     events_count = serializers.SerializerMethodField()
+    score_final = serializers.SerializerMethodField()
 
     def get_responsavel_name(self, obj):
         return format_user_name(obj.responsavel) if obj.responsavel_id else None
@@ -788,6 +801,12 @@ class CardKanbanSerializer(DevTimeFormattedMixin, serializers.ModelSerializer):
             return annotated
         return obj.events.count()
 
+    def get_score_final(self, obj):
+        try:
+            return obj.score.score_final
+        except CardScore.DoesNotExist:
+            return None
+
     class Meta:
         model = Card
         fields = [
@@ -802,7 +821,7 @@ class CardKanbanSerializer(DevTimeFormattedMixin, serializers.ModelSerializer):
             'minutos_uteis_desenvolvimento', 'horas_uteis_desenvolvimento',
             'complexidade_selected_items', 'complexidade_selected_development',
             'complexidade_custom_items',
-            'card_comment', 'links', 'events_count',
+            'card_comment', 'links', 'events_count', 'score_final',
             'created_at', 'updated_at',
         ]
         read_only_fields = fields
@@ -1025,3 +1044,180 @@ class ProjectKanbanStageConfigSerializer(serializers.ModelSerializer):
             'updated_at',
         ]
         read_only_fields = ['id', 'project', 'created_at', 'updated_at', 'stage']
+
+
+# ============================================================================
+# Score (Pontuação de valor dos cards)
+# ============================================================================
+
+class ScoreCriterionOptionSerializer(serializers.ModelSerializer):
+    id = serializers.IntegerField(required=False)
+
+    class Meta:
+        model = ScoreCriterionOption
+        fields = ['id', 'valor', 'descricao', 'ordem']
+
+
+class ScoreCriterionSerializer(serializers.ModelSerializer):
+    """Critério configurável do formulário de Score, com suas opções aninhadas."""
+    opcoes = ScoreCriterionOptionSerializer(many=True)
+
+    class Meta:
+        model = ScoreCriterion
+        fields = ['id', 'nome', 'peso', 'negativo', 'ordem', 'ativo', 'opcoes',
+                  'created_at', 'updated_at']
+        read_only_fields = ['created_at', 'updated_at']
+
+    def create(self, validated_data):
+        opcoes = validated_data.pop('opcoes', [])
+        criterion = ScoreCriterion.objects.create(**validated_data)
+        for op in opcoes:
+            op.pop('id', None)
+            ScoreCriterionOption.objects.create(criterion=criterion, **op)
+        return criterion
+
+    def update(self, instance, validated_data):
+        opcoes = validated_data.pop('opcoes', None)
+        for attr, value in validated_data.items():
+            setattr(instance, attr, value)
+        instance.save()
+        # Sincroniza as opções substituindo o conjunto (não quebra scores já
+        # atribuídos, pois CardScoreValue guarda o valor bruto, não uma FK).
+        if opcoes is not None:
+            instance.opcoes.all().delete()
+            for op in opcoes:
+                op.pop('id', None)
+                ScoreCriterionOption.objects.create(criterion=instance, **op)
+        return instance
+
+
+class CardScoreValueSerializer(serializers.ModelSerializer):
+    criterion_nome = serializers.CharField(source='criterion.nome', read_only=True)
+    criterion_negativo = serializers.BooleanField(source='criterion.negativo', read_only=True)
+    criterion_peso = serializers.DecimalField(
+        source='criterion.peso', max_digits=5, decimal_places=2, read_only=True
+    )
+
+    class Meta:
+        model = CardScoreValue
+        fields = ['id', 'criterion', 'criterion_nome', 'criterion_negativo',
+                  'criterion_peso', 'valor']
+
+
+class ScoreHistorySerializer(serializers.ModelSerializer):
+    usuario_nome = serializers.SerializerMethodField()
+    acao_display = serializers.CharField(source='get_acao_display', read_only=True)
+
+    class Meta:
+        model = ScoreHistory
+        fields = ['id', 'acao', 'acao_display', 'score_final', 'setor_solicitante',
+                  'snapshot', 'usuario', 'usuario_nome', 'data']
+
+    def get_usuario_nome(self, obj):
+        return format_user_name(obj.usuario)
+
+
+class CardScoreSerializer(serializers.ModelSerializer):
+    """Serializer de leitura para a tabela de Score (7.4)."""
+    valores = CardScoreValueSerializer(many=True, read_only=True)
+    card_nome = serializers.CharField(source='card.nome', read_only=True)
+    card_status = serializers.CharField(source='card.status', read_only=True)
+    card_status_display = serializers.CharField(source='card.get_status_display', read_only=True)
+    setor_solicitante_display = serializers.CharField(
+        source='get_setor_solicitante_display', read_only=True
+    )
+    criado_por_nome = serializers.SerializerMethodField()
+    atualizado_por_nome = serializers.SerializerMethodField()
+    sprint_nome = serializers.SerializerMethodField()
+    sprint_em_andamento = serializers.SerializerMethodField()
+    responsavel = serializers.IntegerField(source='card.responsavel_id', read_only=True)
+    responsavel_name = serializers.SerializerMethodField()
+    responsavel_role = serializers.SerializerMethodField()
+    historico = ScoreHistorySerializer(source='card.score_historico', many=True, read_only=True)
+
+    class Meta:
+        model = CardScore
+        fields = [
+            'id', 'card', 'card_nome', 'card_status', 'card_status_display',
+            'setor_solicitante', 'setor_solicitante_display',
+            'score_final', 'valores', 'historico',
+            'sprint_nome', 'sprint_em_andamento',
+            'responsavel', 'responsavel_name', 'responsavel_role',
+            'criado_por', 'criado_por_nome', 'atualizado_por', 'atualizado_por_nome',
+            'created_at', 'updated_at',
+        ]
+        read_only_fields = ['score_final', 'criado_por', 'atualizado_por',
+                            'created_at', 'updated_at']
+
+    def get_criado_por_nome(self, obj):
+        return format_user_name(obj.criado_por)
+
+    def get_atualizado_por_nome(self, obj):
+        return format_user_name(obj.atualizado_por)
+
+    def get_responsavel_name(self, obj):
+        return format_user_name(obj.card.responsavel) if obj.card.responsavel_id else None
+
+    def get_responsavel_role(self, obj):
+        return obj.card.responsavel.role if obj.card.responsavel_id else None
+
+    def _sprint(self, obj):
+        projeto = getattr(obj.card, 'projeto', None)
+        return getattr(projeto, 'sprint', None) if projeto else None
+
+    def get_sprint_nome(self, obj):
+        sprint = self._sprint(obj)
+        return sprint.nome if sprint else None
+
+    def get_sprint_em_andamento(self, obj):
+        sprint = self._sprint(obj)
+        if not sprint or sprint.finalizada:
+            return False
+        agora = timezone.now()
+        return sprint.data_inicio <= agora < sprint.fechamento_em
+
+
+class CardPickerSerializer(serializers.ModelSerializer):
+    """Serializer LEVE para o seletor de cards do modal de Score.
+
+    Sem ``projeto_detail`` aninhado, fotos de perfil, métricas ou events_count —
+    apenas o necessário para o preview do kanban e os filtros. Servido sem
+    paginação (uma única request), com ``select_related`` no queryset.
+    """
+    area_display = serializers.CharField(source='get_area_display', read_only=True)
+    tipo_display = serializers.CharField(source='get_tipo_display', read_only=True)
+    responsavel_name = serializers.SerializerMethodField()
+    responsavel_role = serializers.SerializerMethodField()
+    projeto_nome = serializers.CharField(source='projeto.nome', read_only=True)
+    sprint = serializers.SerializerMethodField()
+    sprint_nome = serializers.SerializerMethodField()
+    score_final = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Card
+        fields = [
+            'id', 'nome', 'descricao', 'prioridade', 'status',
+            'area', 'area_display', 'tipo', 'tipo_display',
+            'data_fim', 'script_url',
+            'responsavel', 'responsavel_name', 'responsavel_role',
+            'projeto', 'projeto_nome', 'sprint', 'sprint_nome', 'score_final',
+        ]
+
+    def get_responsavel_name(self, obj):
+        return format_user_name(obj.responsavel) if obj.responsavel_id else None
+
+    def get_responsavel_role(self, obj):
+        return obj.responsavel.role if obj.responsavel_id else None
+
+    def get_sprint(self, obj):
+        return obj.projeto.sprint_id if (obj.projeto_id and obj.projeto.sprint_id) else None
+
+    def get_sprint_nome(self, obj):
+        sprint = getattr(obj.projeto, 'sprint', None) if obj.projeto_id else None
+        return sprint.nome if sprint else None
+
+    def get_score_final(self, obj):
+        try:
+            return obj.score.score_final
+        except CardScore.DoesNotExist:
+            return None

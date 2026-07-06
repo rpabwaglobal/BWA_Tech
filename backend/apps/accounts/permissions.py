@@ -36,3 +36,13 @@ class IsAdminOrSupervisorOrGerente(permissions.BasePermission):
     """Permissão para Admin, Supervisor ou Gerente"""
     def has_permission(self, request, view):
         return request.user.is_authenticated and request.user.role in [Role.ADMIN, Role.SUPERVISOR, Role.GERENTE]
+
+
+class IsAdminOrSupervisorOrReadOnly(permissions.BasePermission):
+    """Leitura para qualquer autenticado; escrita apenas para Admin ou Supervisor."""
+    def has_permission(self, request, view):
+        if not request.user.is_authenticated:
+            return False
+        if request.method in permissions.SAFE_METHODS:
+            return True
+        return request.user.role in [Role.ADMIN, Role.SUPERVISOR]

@@ -21,6 +21,7 @@ export const ROUTES = {
   relatorios: '/relatorios',
   suporte: '/suporte',
   diaGeek: '/dia-geek',
+  score: '/score',
   configuracoes: '/configuracoes',
   administracao: '/administracao',
 } as const;

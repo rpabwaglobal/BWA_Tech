@@ -19,10 +19,11 @@ import {
   BarChart3,
   FileText,
   Headset,
+  Trophy,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { ROUTES, isNavRouteActive } from '@/routes';
-import { isAdminUser } from '@/lib/roles';
+import { isAdminUser, isSupervisorOrAdmin } from '@/lib/roles';
 
 const navigation = [
   { path: ROUTES.painel, label: 'Dashboard', icon: LayoutDashboard },
@@ -35,6 +36,11 @@ const navigation = [
   { path: ROUTES.relatorios, label: 'Relatórios', icon: FileText },
   { path: ROUTES.suporte, label: 'Suporte', icon: Headset },
   { path: ROUTES.diaGeek, label: 'Geek Day', icon: Sparkles },
+];
+
+/** Itens visíveis apenas para supervisor/admin. */
+const supervisorNavigation = [
+  { path: ROUTES.score, label: 'Score', icon: Trophy },
 ];
 
 export default function Sidebar() {
@@ -121,6 +127,28 @@ export default function Sidebar() {
                 </Link>
               );
             })}
+            {isSupervisorOrAdmin(user) &&
+              supervisorNavigation.map((item) => {
+                const isActive = isNavRouteActive(item.path, location.pathname);
+                const Icon = item.icon;
+                return (
+                  <Link
+                    key={item.path}
+                    to={item.path}
+                    className={cn(
+                      "flex items-center gap-[16px] rounded-[8px] px-[16px] py-[8px] text-sm font-medium transition-colors h-[40px]",
+                      isActive
+                        ? "bg-white/22 text-white shadow-sm"
+                        : "text-white/80 hover:bg-white/10 hover:text-white",
+                      collapsed && "justify-center px-[8px]"
+                    )}
+                    title={collapsed ? item.label : undefined}
+                  >
+                    <Icon className="h-[20px] w-[20px] shrink-0" />
+                    {!collapsed && <span>{item.label}</span>}
+                  </Link>
+                );
+              })}
           </div>
           {/* Configurações e Administração — parte de baixo */}
           <div className="mt-auto space-y-[8px]">

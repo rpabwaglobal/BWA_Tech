@@ -77,6 +77,7 @@ import {
   FileSpreadsheet,
   Download,
   Filter,
+  Trophy,
 } from 'lucide-react';
 import { calcularDiasTotais, calcularDiasUteis, formatDate, formatDateTime } from '@/lib/dateUtils';
 import { ATRASADO_STATUS_BADGE } from '@/lib/dueDateBadgeClasses';
@@ -2002,16 +2003,27 @@ export default function SprintDetails() {
             </div>
           )}
         </div>
-        <span
-          className={cn(
-            'text-[10px] px-[6px] py-[2px] rounded-full font-medium shrink-0',
-            showPriorityColorsOnCards
-              ? kanbanMutedChipOnPastelClass
-              : cn('bg-[var(--color-muted)]/50', ink),
+        <div className="flex items-center gap-[6px] shrink-0">
+          {card.score_final != null && (
+            <span
+              title={`Score: ${Number(card.score_final).toFixed(1)}`}
+              className="inline-flex items-center gap-[3px] rounded-full bg-[var(--color-primary)] px-[6px] py-[2px] text-[10px] font-semibold text-[var(--color-primary-foreground)]"
+            >
+              <Trophy className="h-[10px] w-[10px]" />
+              {Number(card.score_final).toFixed(1)}
+            </span>
           )}
-        >
-          {getPriorityLabel(card.prioridade)}
-        </span>
+          <span
+            className={cn(
+              'text-[10px] px-[6px] py-[2px] rounded-full font-medium',
+              showPriorityColorsOnCards
+                ? kanbanMutedChipOnPastelClass
+                : cn('bg-[var(--color-muted)]/50', ink),
+            )}
+          >
+            {getPriorityLabel(card.prioridade)}
+          </span>
+        </div>
       </div>
     </div>
     );

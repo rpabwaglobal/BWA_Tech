@@ -29,9 +29,16 @@ from .models import (
     WeeklyPriorityConfig,
     CardDueDateChangeRequest,
     CardLogEventType,
+    ScoreCriterion,
+    CardScore,
+    CardScoreValue,
+    ScoreHistory,
+    ScoreHistoryAction,
+    SetorSolicitante,
 )
 from .services import finalizar_sprint_replicacao
 from apps.accounts.profile_picture_utils import get_profile_picture_url
+from apps.accounts.permissions import IsAdminOrSupervisor
 from .serializers import (
     SprintSerializer, ProjectSerializer, CardSerializer, CardKanbanSerializer,
     CardMetricsSerializer,
@@ -40,6 +47,7 @@ from .serializers import (
     WeeklyPrioritySerializer, WeeklyPriorityConfigSerializer,
     CardDueDateChangeRequestSerializer,
     KanbanStageSerializer,
+    ScoreCriterionSerializer, CardScoreSerializer, CardPickerSerializer,
 )
 
 
@@ -171,7 +179,7 @@ class SprintViewSet(viewsets.ModelViewSet):
         # e annotate(events_count) (evita N+1 do SerializerMethodField).
         cards = (
             Card.objects.filter(projeto_id__in=project_ids)
-            .select_related('projeto', 'projeto__sprint', 'responsavel', 'criado_por')
+            .select_related('projeto', 'projeto__sprint', 'responsavel', 'criado_por', 'score')
             .annotate(events_count=Count('events'))
             .order_by('projeto_id', 'id')
         )
@@ -779,7 +787,7 @@ class CardViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         """Aplica filtros de permissão baseados no usuário"""
         queryset = Card.objects.select_related(
-            'projeto', 'projeto__sprint', 'criado_por', 'responsavel'
+            'projeto', 'projeto__sprint', 'criado_por', 'responsavel', 'score'
         ).annotate(events_count=Count('events'))
         # Cards de projetos arquivados somem do app inteiro em queries
         # genéricas (Kanban global, Prioridades). EXCEÇÃO: quando o cliente
@@ -1569,3 +1577,203 @@ class CardDueDateChangeRequestViewSet(viewsets.ModelViewSet):
             'semana_inicio': semana_inicio.isoformat(),
             'data': result
         })
+
+
+# ============================================================================
+# Score (Pontuação de valor dos cards)
+# ============================================================================
+
+class ScoreCriterionViewSet(viewsets.ModelViewSet):
+    """CRUD dos critérios configuráveis do formulário de Score.
+
+    Restrito a Admin/Supervisor (feature de supervisão).
+    """
+    serializer_class = ScoreCriterionSerializer
+    permission_classes = [IsAdminOrSupervisor]
+
+    def get_queryset(self):
+        qs = ScoreCriterion.objects.prefetch_related('opcoes').all()
+        if self.request.query_params.get('ativos') in ('true', '1'):
+            qs = qs.filter(ativo=True)
+        return qs
+
+    @action(detail=False, methods=['post'], url_path='reorder')
+    def reorder(self, request):
+        """Reordena os critérios pela lista de ids recebida (order[i] -> ordem=i).
+
+        Usa ``update()`` (sem disparar o signal de recompute — a ordem não afeta
+        o score)."""
+        ids = request.data.get('order', [])
+        if not isinstance(ids, list):
+            return Response({'detail': 'O campo "order" deve ser uma lista de ids.'},
+                            status=status.HTTP_400_BAD_REQUEST)
+        for idx, cid in enumerate(ids):
+            ScoreCriterion.objects.filter(pk=cid).update(ordem=idx)
+        return Response({'detail': 'ok'})
+
+
+class CardScoreViewSet(viewsets.ModelViewSet):
+    """Scores atribuídos aos cards (tabela 7.4) + edição/exclusão com histórico."""
+    serializer_class = CardScoreSerializer
+    permission_classes = [IsAdminOrSupervisor]
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filterset_fields = ['card', 'setor_solicitante']
+    search_fields = ['card__nome']
+    ordering_fields = ['score_final', 'updated_at', 'created_at']
+    ordering = ['-updated_at']
+
+    def get_queryset(self):
+        return (
+            CardScore.objects
+            .select_related(
+                'card', 'card__projeto', 'card__projeto__sprint', 'card__responsavel',
+                'criado_por', 'atualizado_por',
+            )
+            .prefetch_related(
+                'valores__criterion',
+                'card__score_historico__usuario',
+            )
+        )
+
+    @action(detail=False, methods=['get'], url_path='pickable-cards')
+    def pickable_cards(self, request):
+        """Lista leve de cards para o seletor do modal (uma request, sem paginação)."""
+        qs = (
+            Card.objects
+            .select_related('projeto', 'projeto__sprint', 'responsavel', 'score')
+            .filter(projeto__arquivado=False, projeto__is_system=False)
+            .order_by('-created_at')
+        )
+        serializer = CardPickerSerializer(qs, many=True)
+        return Response(serializer.data)
+
+    def _aplicar_valores(self, card_score, valores):
+        """Substitui os valores do score pelos informados. `valores` = lista de
+        dicts {criterion, valor}."""
+        card_score.valores.all().delete()
+        criterios = {c.id: c for c in ScoreCriterion.objects.all()}
+        for item in (valores or []):
+            try:
+                cid = int(item.get('criterion'))
+                val = int(item.get('valor'))
+            except (TypeError, ValueError):
+                continue
+            criterion = criterios.get(cid)
+            if criterion is None:
+                continue
+            CardScoreValue.objects.create(
+                card_score=card_score, criterion=criterion, valor=val
+            )
+
+    def _snapshot(self, card_score):
+        return [
+            {
+                'criterion_id': v.criterion_id,
+                'criterion_nome': v.criterion.nome,
+                'peso': str(v.criterion.peso),
+                'negativo': v.criterion.negativo,
+                'valor': v.valor,
+            }
+            for v in card_score.valores.select_related('criterion').all()
+        ]
+
+    def _registrar_historico(self, card_score, acao, usuario, snapshot=None):
+        ScoreHistory.objects.create(
+            card=card_score.card,
+            acao=acao,
+            score_final=card_score.score_final,
+            setor_solicitante=card_score.setor_solicitante,
+            snapshot=snapshot if snapshot is not None else self._snapshot(card_score),
+            usuario=usuario,
+        )
+
+    @staticmethod
+    def _validar_setor(setor):
+        """Retorna (ok, erro_response). Setor None é permitido (opcional)."""
+        if setor is not None and setor not in SetorSolicitante.values:
+            return False, Response(
+                {'detail': 'Setor solicitante inválido.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        return True, None
+
+    def create(self, request, *args, **kwargs):
+        card_id = request.data.get('card')
+        try:
+            card_id = int(card_id)
+        except (TypeError, ValueError):
+            return Response({'detail': 'O campo "card" é obrigatório e numérico.'},
+                            status=status.HTTP_400_BAD_REQUEST)
+        setor = request.data.get('setor_solicitante') or None
+        ok, erro = self._validar_setor(setor)
+        if not ok:
+            return erro
+        if not Card.objects.filter(pk=card_id).exists():
+            return Response({'detail': 'Card não encontrado.'},
+                            status=status.HTTP_404_NOT_FOUND)
+        valores = request.data.get('valores', [])
+
+        # OneToOne: um card tem no máximo um score. Se já existe, tratamos como edição.
+        card_score, created = CardScore.objects.get_or_create(
+            card_id=card_id,
+            defaults={'criado_por': request.user, 'atualizado_por': request.user},
+        )
+        with transaction.atomic():
+            card_score.setor_solicitante = setor
+            card_score.atualizado_por = request.user
+            card_score.save()
+            self._aplicar_valores(card_score, valores)
+            card_score.calcular_score()
+            card_score.save(update_fields=['score_final', 'setor_solicitante',
+                                           'atualizado_por', 'updated_at'])
+            self._registrar_historico(
+                card_score,
+                ScoreHistoryAction.CRIADO if created else ScoreHistoryAction.EDITADO,
+                request.user,
+            )
+        # Recarrega com prefetch fresco para a resposta refletir o histórico atual.
+        fresh = self.get_queryset().get(pk=card_score.pk)
+        serializer = self.get_serializer(fresh)
+        return Response(
+            serializer.data,
+            status=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
+        )
+
+    def update(self, request, *args, **kwargs):
+        card_score = self.get_object()
+        valores = request.data.get('valores', None)
+        if 'setor_solicitante' in request.data:
+            ok, erro = self._validar_setor(request.data.get('setor_solicitante') or None)
+            if not ok:
+                return erro
+        with transaction.atomic():
+            if 'setor_solicitante' in request.data:
+                card_score.setor_solicitante = request.data.get('setor_solicitante') or None
+            card_score.atualizado_por = request.user
+            card_score.save()
+            if valores is not None:
+                self._aplicar_valores(card_score, valores)
+            card_score.calcular_score()
+            card_score.save(update_fields=['score_final', 'setor_solicitante',
+                                           'atualizado_por', 'updated_at'])
+            self._registrar_historico(card_score, ScoreHistoryAction.EDITADO, request.user)
+        fresh = self.get_queryset().get(pk=card_score.pk)
+        return Response(self.get_serializer(fresh).data)
+
+    def partial_update(self, request, *args, **kwargs):
+        return self.update(request, *args, **kwargs)
+
+    def destroy(self, request, *args, **kwargs):
+        card_score = self.get_object()
+        snapshot = self._snapshot(card_score)
+        # Registra o histórico de exclusão antes de apagar o score (o card permanece).
+        ScoreHistory.objects.create(
+            card=card_score.card,
+            acao=ScoreHistoryAction.EXCLUIDO,
+            score_final=card_score.score_final,
+            setor_solicitante=card_score.setor_solicitante,
+            snapshot=snapshot,
+            usuario=request.user,
+        )
+        card_score.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)

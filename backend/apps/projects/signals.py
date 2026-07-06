@@ -14,6 +14,8 @@ from .models import (
     NotificationType,
     CardStatus,
     CardPin,
+    ScoreCriterion,
+    CardScore,
 )
 from .notification_utils import send_notification, send_notification_to_multiple_users
 
@@ -805,3 +807,21 @@ def remove_pins_when_card_finalized(sender, instance, created, **kwargs):
     terminal_statuses = (CardStatus.FINALIZADO, CardStatus.INVIABILIZADO)
     if instance.status in terminal_statuses and previous_status not in terminal_statuses:
         CardPin.objects.filter(card=instance).delete()
+
+
+@receiver(post_save, sender=ScoreCriterion)
+@receiver(post_delete, sender=ScoreCriterion)
+def recompute_card_scores_on_criterion_change(sender, instance, **kwargs):
+    """Recalcula o score_final de todos os CardScores quando um critério é
+    criado, editado (peso/sinal/ativo) ou removido — mantendo o valor consistente
+    com a fórmula atual.
+
+    Necessário porque `score_final` é denormalizado: sem isto, mudar um peso ou
+    remover um critério (que apaga os valores por cascade) deixaria os scores
+    defasados.
+    """
+    for cs in CardScore.objects.all():
+        antigo = cs.score_final
+        novo = cs.calcular_score()
+        if antigo != novo:
+            cs.save(update_fields=['score_final'])
