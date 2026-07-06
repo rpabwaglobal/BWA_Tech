@@ -1,7 +1,10 @@
+import os
+
 from rest_framework import serializers
 
 from .models import (
     ChamadoSuporte,
+    ChamadoSuporteResolucao,
     ChamadoSuporteStatus,
     ChamadoSuporteTimeline,
     ChamadoSuporteTimelineTipo,
@@ -177,6 +180,74 @@ class ChamadoSuportePatchSerializer(serializers.Serializer):
         if item is not None and not item.ativo:
             raise serializers.ValidationError({'item': 'Item inativo.'})
         return attrs
+
+
+# Extensões aceitas no arquivo de resolução: imagem, PDF, documento ou planilha.
+# SVG fica de fora de propósito (vetor de XSS quando servido inline).
+RESOLUCAO_ALLOWED_EXTENSIONS = frozenset({
+    # imagem
+    'jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp',
+    # pdf
+    'pdf',
+    # documento
+    'doc', 'docx', 'txt', 'rtf', 'odt',
+    # planilha
+    'xls', 'xlsx', 'csv', 'ods',
+})
+RESOLUCAO_MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB
+
+
+class ChamadoResolucaoSerializer(serializers.ModelSerializer):
+    """Link + arquivo de resolução de um chamado. `arquivo` é write-only; a
+    leitura expõe `arquivo_url` (URL absoluta) e `arquivo_nome`."""
+
+    # Explícito (sem UniqueValidator do modelo): a view faz upsert por chamado_id
+    # via update_or_create, então um POST repetido para o mesmo chamado é válido.
+    chamado_id = serializers.IntegerField(min_value=1)
+    arquivo_url = serializers.SerializerMethodField()
+    arquivo_nome = serializers.SerializerMethodField()
+
+    class Meta:
+        model = ChamadoSuporteResolucao
+        fields = [
+            'id',
+            'chamado_id',
+            'link',
+            'arquivo',
+            'arquivo_url',
+            'arquivo_nome',
+            'criado_em',
+            'atualizado_em',
+        ]
+        read_only_fields = ['id', 'criado_em', 'atualizado_em']
+        extra_kwargs = {
+            'arquivo': {'write_only': True, 'required': False, 'allow_null': True},
+            'link': {'required': False, 'allow_null': True, 'allow_blank': True},
+        }
+
+    def get_arquivo_url(self, obj):
+        if not obj.arquivo:
+            return None
+        request = self.context.get('request')
+        url = obj.arquivo.url
+        return request.build_absolute_uri(url) if request else url
+
+    def get_arquivo_nome(self, obj):
+        if not obj.arquivo:
+            return None
+        return os.path.basename(obj.arquivo.name)
+
+    def validate_arquivo(self, value):
+        if value in (None, ''):
+            return value
+        ext = os.path.splitext(value.name)[1].lower().lstrip('.')
+        if ext not in RESOLUCAO_ALLOWED_EXTENSIONS:
+            raise serializers.ValidationError(
+                'Tipo de arquivo não suportado. Envie imagem, documento, PDF ou planilha.',
+            )
+        if value.size > RESOLUCAO_MAX_FILE_SIZE:
+            raise serializers.ValidationError('Arquivo muito grande (máx 10 MB).')
+        return value
 
 
 def _format_user_name_timeline(user):

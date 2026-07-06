@@ -35,7 +35,6 @@ import { cardService, CARD_AREAS, CARD_TYPES, CARD_PRIORITIES, CARD_STATUSES } f
 import { userService } from '@/services/userService';
 import { cardLogService } from '@/services/cardLogService';
 import { cardPinService } from '@/services/cardPinService';
-import { getTodosByArea } from '@/constants/cardTodos';
 import { CardLogsModal, CARD_TIMELINE_LAYOUT_RESERVE_PX } from '@/components/CardLogsModal';
 import type { Sprint } from '@/services/sprintService';
 import type { Project } from '@/services/projectService';
@@ -295,126 +294,6 @@ export default function SprintDetails() {
     setCardLinks((prev) => prev.filter((_, i) => i !== idx));
   };
 
-  // Estado para o calculador de tempo
-  const [showTimeEstimator, setShowTimeEstimator] = useState(false);
-  const [selectedTimeItems, setSelectedTimeItems] = useState<Set<string>>(new Set());
-  const [selectedDevelopment, setSelectedDevelopment] = useState<string | null>(null); // Apenas uma opção de desenvolvimento
-  const [timeEstimates, setTimeEstimates] = useState<Array<{ id: string; label: string; hours: number; isDevelopment?: boolean }>>([
-    { id: 'ler_script', label: 'Ler Script E Conferir Informações Do Video', hours: 1 },
-    { id: 'solicitar_usuario', label: 'Solicitar Criação De Usuário / Vm', hours: 1 },
-    { id: 'testes_iniciais', label: 'Testes Iniciais Na Maquina', hours: 3 },
-    { id: 'configurar_projeto', label: 'Configurar Projeto Na Vm', hours: 1 },
-    { id: 'desenvolvimento_basico', label: 'Desenvolvimento Básico', hours: 8, isDevelopment: true },
-    { id: 'desenvolvimento_medio', label: 'Desenvolvimento Médio', hours: 24, isDevelopment: true },
-    { id: 'desenvolvimento_dificil', label: 'Desenvolvimento Difícil', hours: 40, isDevelopment: true },
-  ]);
-  const [customTimeItems, setCustomTimeItems] = useState<Array<{ id: string; label: string; hours: number }>>([]);
-  const [customTimeLabel, setCustomTimeLabel] = useState('');
-  const [customTimeHours, setCustomTimeHours] = useState('');
-  const [editingTimeItemId, setEditingTimeItemId] = useState<string | null>(null);
-  const [editTimeValue, setEditTimeValue] = useState('');
-
-  // Calcular tempo total
-  const calculateTotalTime = () => {
-    let total = 0;
-    selectedTimeItems.forEach((itemId) => {
-      const item = timeEstimates.find((t) => t.id === itemId);
-      if (item) {
-        total += item.hours;
-      } else {
-        const customItem = customTimeItems.find((c) => c.id === itemId);
-        if (customItem) {
-          total += customItem.hours;
-        }
-      }
-    });
-    // Adicionar desenvolvimento selecionado
-    if (selectedDevelopment) {
-      const devItem = timeEstimates.find((t) => t.id === selectedDevelopment);
-      if (devItem) {
-        total += devItem.hours;
-      }
-    }
-    return total;
-  };
-
-  const toggleTimeItem = (itemId: string) => {
-    const item = timeEstimates.find((t) => t.id === itemId);
-    
-    // Se for uma opção de desenvolvimento, garantir que apenas uma seja selecionada
-    if (item?.isDevelopment) {
-      if (selectedDevelopment === itemId) {
-        setSelectedDevelopment(null);
-      } else {
-        setSelectedDevelopment(itemId);
-      }
-      return;
-    }
-
-    // Para outras opções, permitir múltipla seleção
-    const newSet = new Set(selectedTimeItems);
-    if (newSet.has(itemId)) {
-      newSet.delete(itemId);
-    } else {
-      newSet.add(itemId);
-    }
-    setSelectedTimeItems(newSet);
-  };
-
-  const startEditingTime = (itemId: string, currentHours: number) => {
-    setEditingTimeItemId(itemId);
-    setEditTimeValue(currentHours.toString());
-  };
-
-  const saveEditedTime = (itemId: string) => {
-    if (editTimeValue) {
-      const hoursNum = parseInt(editTimeValue);
-      if (hoursNum > 0) {
-        const item = timeEstimates.find((t) => t.id === itemId);
-        if (item) {
-          setTimeEstimates(timeEstimates.map((i) =>
-            i.id === itemId ? { ...i, hours: hoursNum } : i
-          ));
-        } else {
-          setCustomTimeItems(customTimeItems.map((i) =>
-            i.id === itemId ? { ...i, hours: hoursNum } : i
-          ));
-        }
-        setEditingTimeItemId(null);
-        setEditTimeValue('');
-      }
-    }
-  };
-
-  const cancelEditingTime = () => {
-    setEditingTimeItemId(null);
-    setEditTimeValue('');
-  };
-
-  const addCustomTime = () => {
-    if (customTimeLabel && customTimeHours) {
-      const hoursNum = parseInt(customTimeHours);
-      if (hoursNum > 0) {
-        const customId = `custom_${Date.now()}`;
-        const newCustomItem = { id: customId, label: customTimeLabel, hours: hoursNum };
-        setCustomTimeItems([...customTimeItems, newCustomItem]);
-        const newSet = new Set(selectedTimeItems);
-        newSet.add(customId);
-        setSelectedTimeItems(newSet);
-        setCustomTimeLabel('');
-        setCustomTimeHours('');
-      }
-    }
-  };
-
-  const removeCustomTime = (itemId: string) => {
-    setCustomTimeItems(customTimeItems.filter((item) => item.id !== itemId));
-    const newSet = new Set(selectedTimeItems);
-    newSet.delete(itemId);
-    setSelectedTimeItems(newSet);
-  };
-
-
   // Sprint dialog state
   const [sprintDialogOpen, setSprintDialogOpen] = useState(false);
   
@@ -597,38 +476,6 @@ export default function SprintDetails() {
     });
   };
 
-
-  // Atualizar data sugerida quando a estimativa de complexidade mudar
-  useEffect(() => {
-    if (cardFormData.status === 'em_desenvolvimento' && !cardFormData.data_fim) {
-      // Calcular total de horas
-      let total = 0;
-      selectedTimeItems.forEach((itemId) => {
-        const item = timeEstimates.find((t) => t.id === itemId);
-        if (item) {
-          total += item.hours;
-        } else {
-          const customItem = customTimeItems.find((c) => c.id === itemId);
-          if (customItem) {
-            total += customItem.hours;
-          }
-        }
-      });
-      if (selectedDevelopment) {
-        const devItem = timeEstimates.find((t) => t.id === selectedDevelopment);
-        if (devItem) {
-          total += devItem.hours;
-        }
-      }
-      
-      if (total > 0) {
-        const suggestedDate = calculateSuggestedEndDate(total);
-        if (suggestedDate) {
-          setCardFormData(prev => ({ ...prev, data_fim: suggestedDate }));
-        }
-      }
-    }
-  }, [selectedTimeItems, selectedDevelopment, customTimeItems, cardFormData.status, timeEstimates]);
 
   // Card filter and sort functions
   const getFilteredAndSortedCards = (projectCards: CardType[]) => {
@@ -873,26 +720,6 @@ export default function SprintDetails() {
     setCardLinks([]);
     setNewLinkUrl('');
     setNewLinkLabel('');
-    // Limpar estimativas ao abrir dialog de criação
-    setSelectedTimeItems(new Set());
-    setSelectedDevelopment(null);
-    setCustomTimeItems([]);
-    setCustomTimeLabel('');
-    setCustomTimeHours('');
-    setTimeEstimates([]);
-    setShowTimeEstimator(false);
-    setEditingTimeItemId(null);
-    setEditTimeValue('');
-    // Resetar tempos para valores padrão
-    setTimeEstimates([
-      { id: 'ler_script', label: 'Ler Script E Conferir Informações Do Video', hours: 1 },
-      { id: 'solicitar_usuario', label: 'Solicitar Criação De Usuário / Vm', hours: 1 },
-      { id: 'testes_iniciais', label: 'Testes Iniciais Na Maquina', hours: 3 },
-      { id: 'configurar_projeto', label: 'Configurar Projeto Na Vm', hours: 1 },
-      { id: 'desenvolvimento_basico', label: 'Desenvolvimento Básico', hours: 8, isDevelopment: true },
-      { id: 'desenvolvimento_medio', label: 'Desenvolvimento Médio', hours: 24, isDevelopment: true },
-      { id: 'desenvolvimento_dificil', label: 'Desenvolvimento Difícil', hours: 40, isDevelopment: true },
-    ]);
     setCardFormError('');
     setCardDialogOpen(true);
   };
@@ -955,42 +782,6 @@ export default function SprintDetails() {
       setCardLinks(fullCard.links ?? []);
       setNewLinkUrl('');
       setNewLinkLabel('');
-
-      if (fullCard.complexidade_selected_items && fullCard.complexidade_selected_items.length > 0) {
-        setSelectedTimeItems(new Set(fullCard.complexidade_selected_items));
-      } else {
-        setSelectedTimeItems(new Set());
-      }
-
-      setSelectedDevelopment(fullCard.complexidade_selected_development || null);
-
-      if (fullCard.complexidade_custom_items && fullCard.complexidade_custom_items.length > 0) {
-        setCustomTimeItems(fullCard.complexidade_custom_items);
-      } else {
-        setCustomTimeItems([]);
-      }
-
-      setCustomTimeLabel('');
-      setCustomTimeHours('');
-      setShowTimeEstimator(false);
-      setEditingTimeItemId(null);
-      setEditTimeValue('');
-      const cardArea = fullCard.area || '';
-      if (cardArea) {
-        const todos = getTodosByArea(cardArea);
-        if (todos.length > 0) {
-          setTimeEstimates(todos.map(todo => ({
-            id: todo.id,
-            label: todo.label,
-            hours: todo.hours,
-            isDevelopment: todo.id.includes('desenvolvimento')
-          })));
-        } else {
-          setTimeEstimates([]);
-        }
-      } else {
-        setTimeEstimates([]);
-      }
 
       setCardFormError('');
     };
@@ -1177,53 +968,6 @@ export default function SprintDetails() {
     );
   };
 
-  // Calcular sugestão de data de entrega baseada na estimativa de complexidade
-  const calculateSuggestedEndDate = (hours: number): string => {
-    if (!hours || hours === 0) return '';
-    
-    const now = new Date();
-    
-    // Hora padrão de entrega: 18:00
-    const defaultHour = 18;
-    const defaultMinute = 0;
-    
-    // Considerar apenas dias úteis (segunda a sexta)
-    // Estimativa: 8 horas por dia útil
-    const diasUteis = Math.ceil(hours / 8);
-    let diasAdicionados = 0;
-    
-    // Começar a contar a partir de amanhã (hoje já começou)
-    let dataFinal = new Date(now);
-    dataFinal.setDate(dataFinal.getDate() + 1);
-    dataFinal.setHours(0, 0, 0, 0);
-    
-    // Avançar até o próximo dia útil se necessário
-    while (dataFinal.getDay() === 0 || dataFinal.getDay() === 6) {
-      dataFinal.setDate(dataFinal.getDate() + 1);
-    }
-    
-    // Contar os dias úteis necessários
-    while (diasAdicionados < diasUteis) {
-      const diaSemana = dataFinal.getDay();
-      // Se não for sábado (6) ou domingo (0), conta como dia útil
-      if (diaSemana !== 0 && diaSemana !== 6) {
-        diasAdicionados++;
-      }
-      // Se ainda não atingiu o número de dias úteis, avançar para o próximo dia
-      if (diasAdicionados < diasUteis) {
-        dataFinal.setDate(dataFinal.getDate() + 1);
-      }
-    }
-    
-    // Retornar no formato YYYY-MM-DDTHH:mm (usar hora padrão 18:00)
-    const year = dataFinal.getFullYear();
-    const month = String(dataFinal.getMonth() + 1).padStart(2, '0');
-    const day = String(dataFinal.getDate()).padStart(2, '0');
-    const hour = String(defaultHour).padStart(2, '0');
-    const minutes = String(defaultMinute).padStart(2, '0');
-    return `${year}-${month}-${day}T${hour}:${minutes}`;
-  };
-
   const handleCardSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     e.stopPropagation();
@@ -1279,19 +1023,8 @@ export default function SprintDetails() {
         const minutes = String(now.getMinutes()).padStart(2, '0');
         cardFormData.data_inicio = `${year}-${month}-${day}T${hours}:${minutes}`;
       }
-      
-      // Se não tem data_fim mas tem estimativa de complexidade, sugerir data
-      if (!cardFormData.data_fim) {
-        const totalHours = calculateTotalTime();
-        if (totalHours > 0) {
-          const suggestedDate = calculateSuggestedEndDate(totalHours);
-          if (suggestedDate) {
-            cardFormData.data_fim = suggestedDate;
-          }
-        }
-      }
     }
-    
+
     cardSubmitInFlightRef.current = true;
     setCardFormLoading(true);
 
@@ -1319,10 +1052,6 @@ export default function SprintDetails() {
         data_inicio: dataInicio,
         data_fim: dataFim,
         projeto: selectedProjectForCard!,
-        // Incluir dados de estimativa de complexidade
-        complexidade_selected_items: Array.from(selectedTimeItems).length > 0 ? Array.from(selectedTimeItems) : [],
-        complexidade_selected_development: selectedDevelopment || null,
-        complexidade_custom_items: customTimeItems.length > 0 ? customTimeItems : [],
         links: cardLinks,
       };
 
@@ -3225,26 +2954,7 @@ export default function SprintDetails() {
                   className="flex h-[40px] w-full rounded-[8px] border border-[var(--color-input)] bg-[var(--color-background)] px-[12px] py-[8px] text-sm ring-offset-[var(--color-background)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-ring)] focus-visible:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed"
                   value={cardFormData.area || ''}
                   onChange={(e) => {
-                    const newArea = e.target.value;
-                    setCardFormData({ ...cardFormData, area: newArea });
-                    // Atualizar timeEstimates com os TODOs da área selecionada
-                    const todos = getTodosByArea(newArea);
-                    if (todos.length > 0) {
-                      setTimeEstimates(todos.map(todo => ({
-                        id: todo.id,
-                        label: todo.label,
-                        hours: todo.hours,
-                        isDevelopment: todo.id.includes('desenvolvimento')
-                      })));
-                      // Limpar seleções anteriores
-                      setSelectedTimeItems(new Set());
-                      setSelectedDevelopment(null);
-                    } else {
-                      // Se não houver TODOs para a área, limpar
-                      setTimeEstimates([]);
-                      setSelectedTimeItems(new Set());
-                      setSelectedDevelopment(null);
-                    }
+                    setCardFormData({ ...cardFormData, area: e.target.value });
                   }}
                   required
                   disabled={!!(editingCard && (editingCard.status === 'finalizado' || editingCard.status === 'inviabilizado'))}
@@ -3314,16 +3024,6 @@ export default function SprintDetails() {
                     } else {
                       setCardFormData({ ...cardFormData, status: newStatus });
                     }
-                    // Se mudou para em_desenvolvimento e não tem data_fim mas tem estimativa, sugerir data
-                    if (newStatus === 'em_desenvolvimento' && !cardFormData.data_fim) {
-                      const totalHours = calculateTotalTime();
-                      if (totalHours > 0) {
-                        const suggestedDate = calculateSuggestedEndDate(totalHours);
-                        if (suggestedDate) {
-                          setCardFormData(prev => ({ ...prev, status: newStatus, data_fim: suggestedDate }));
-                        }
-                      }
-                    }
                   }}
                   required
                   disabled={!!(editingCard && (editingCard.status === 'finalizado' || editingCard.status === 'inviabilizado'))}
@@ -3353,233 +3053,6 @@ export default function SprintDetails() {
               />
             </div>
 
-            {/* Estimar Complexidade - Menu Recolhível */}
-            <div className="space-y-[8px]">
-              <button
-                type="button"
-                onClick={() => setShowTimeEstimator(!showTimeEstimator)}
-                disabled={!cardFormData.area}
-                className="flex items-center justify-between w-full p-[12px] rounded-[8px] border border-[var(--color-input)] bg-[var(--color-background)] hover:bg-[var(--color-accent)] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                <div className="flex items-center gap-[8px]">
-                  <Clock className="h-[16px] w-[16px] text-[var(--color-muted-foreground)]" />
-                  <Label className="text-sm font-medium text-[var(--color-foreground)] cursor-pointer">
-                    Estimar Complexidade
-                    {!cardFormData.area && (
-                      <span className="text-xs text-[var(--color-muted-foreground)] font-normal ml-1">
-                        (selecione uma Área)
-                      </span>
-                    )}
-                  </Label>
-                  {calculateTotalTime() > 0 && (
-                    <Badge variant="secondary" className="text-xs">
-                      {calculateTotalTime()}h
-                    </Badge>
-                  )}
-                </div>
-                {showTimeEstimator ? (
-                  <ChevronUp className="h-[16px] w-[16px] text-[var(--color-muted-foreground)]" />
-                ) : (
-                  <ChevronDown className="h-[16px] w-[16px] text-[var(--color-muted-foreground)]" />
-                )}
-              </button>
-
-              {showTimeEstimator && (
-                <div className="p-[16px] rounded-[8px] border border-[var(--color-border)] bg-[var(--color-muted)]/30 space-y-[16px]">
-                  <div className="space-y-[8px]">
-                    <p className="text-sm font-medium text-[var(--color-foreground)]">
-                      Estimar Tempo de Desenvolvimento
-                    </p>
-                    {timeEstimates.map((item) => {
-                      const isSelected = item.isDevelopment 
-                        ? selectedDevelopment === item.id 
-                        : selectedTimeItems.has(item.id);
-                      
-                      return (
-                        <div
-                          key={item.id}
-                          className="flex items-center justify-between p-[12px] rounded-[8px] border border-[var(--color-input)] bg-[var(--color-background)]"
-                        >
-                          <span className="text-sm text-[var(--color-foreground)] flex-1">
-                            {item.label}
-                          </span>
-                          <div className="flex items-center gap-[8px]">
-                            {editingTimeItemId === item.id ? (
-                              <div className="flex items-center gap-[4px]">
-                                <Input
-                                  type="number"
-                                  value={editTimeValue}
-                                  onChange={(e) => setEditTimeValue(e.target.value)}
-                                  onBlur={() => saveEditedTime(item.id)}
-                                  onKeyDown={(e) => {
-                                    if (e.key === 'Enter') {
-                                      saveEditedTime(item.id);
-                                    } else if (e.key === 'Escape') {
-                                      cancelEditingTime();
-                                    }
-                                  }}
-                                  min="0"
-                                  className="w-[60px] h-[32px] text-center text-sm"
-                                  autoFocus
-                                />
-                                <span className="text-sm text-[var(--color-foreground)]">h</span>
-                              </div>
-                            ) : (
-                              <>
-                                <button
-                                  type="button"
-                                  onClick={() => toggleTimeItem(item.id)}
-                                  className={`flex items-center justify-center w-[48px] h-[32px] rounded-[6px] border-2 transition-all ${
-                                    isSelected
-                                      ? 'border-[var(--color-primary)] bg-[var(--color-primary)]/10 text-[var(--color-primary)] font-bold'
-                                      : 'border-[var(--color-input)] bg-[var(--color-background)] hover:border-[var(--color-primary)]/50 text-[var(--color-muted-foreground)]'
-                                  }`}
-                                >
-                                  <span className="text-sm">
-                                    {item.hours}h
-                                  </span>
-                                </button>
-                                <Button
-                                  type="button"
-                                  variant="ghost"
-                                  size="icon"
-                                  onClick={() => startEditingTime(item.id, item.hours)}
-                                  className="h-[32px] w-[32px]"
-                                >
-                                  <Pencil className="h-[14px] w-[14px] text-[var(--color-muted-foreground)]" />
-                                </Button>
-                              </>
-                            )}
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-
-                  {/* Tempo Personalizado */}
-                  <div className="space-y-[8px] pt-[8px] border-t border-[var(--color-border)]">
-                    <p className="text-sm font-medium text-[var(--color-foreground)]">
-                      Tempo Personalizado
-                    </p>
-                    <div className="flex gap-[8px]">
-                      <Input
-                        type="text"
-                        placeholder="Descrição"
-                        value={customTimeLabel}
-                        onChange={(e) => setCustomTimeLabel(e.target.value)}
-                        className="flex-1"
-                      />
-                      <Input
-                        type="number"
-                        placeholder="Horas"
-                        value={customTimeHours}
-                        onChange={(e) => setCustomTimeHours(e.target.value)}
-                        min="0"
-                        className="w-[100px]"
-                      />
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="icon"
-                        onClick={addCustomTime}
-                        disabled={!customTimeHours || !customTimeLabel}
-                        className="flex-shrink-0"
-                      >
-                        <Plus className="h-[16px] w-[16px]" />
-                      </Button>
-                    </div>
-                    {customTimeItems.length > 0 && (
-                      <div className="space-y-[8px] mt-[8px]">
-                        {customTimeItems.map((item) => (
-                          <div
-                            key={item.id}
-                            className="flex items-center justify-between p-[12px] rounded-[8px] border border-[var(--color-input)] bg-[var(--color-background)]"
-                          >
-                            <div className="flex items-center gap-[8px] flex-1">
-                              <span className="text-sm text-[var(--color-foreground)]">
-                                {item.label}
-                              </span>
-                            </div>
-                            <div className="flex items-center gap-[8px]">
-                              {editingTimeItemId === item.id ? (
-                                <div className="flex items-center gap-[4px]">
-                                  <Input
-                                    type="number"
-                                    value={editTimeValue}
-                                    onChange={(e) => setEditTimeValue(e.target.value)}
-                                    onBlur={() => saveEditedTime(item.id)}
-                                    onKeyDown={(e) => {
-                                      if (e.key === 'Enter') {
-                                        saveEditedTime(item.id);
-                                      } else if (e.key === 'Escape') {
-                                        cancelEditingTime();
-                                      }
-                                    }}
-                                    min="0"
-                                    className="w-[60px] h-[32px] text-center text-sm"
-                                    autoFocus
-                                  />
-                                  <span className="text-sm text-[var(--color-foreground)]">h</span>
-                                </div>
-                              ) : (
-                                <>
-                                  <button
-                                    type="button"
-                                    onClick={() => toggleTimeItem(item.id)}
-                                    className={`flex items-center justify-center w-[48px] h-[32px] rounded-[6px] border-2 transition-all ${
-                                      selectedTimeItems.has(item.id)
-                                        ? 'border-[var(--color-primary)] bg-[var(--color-primary)]/10 text-[var(--color-primary)] font-bold'
-                                        : 'border-[var(--color-input)] bg-[var(--color-background)] hover:border-[var(--color-primary)]/50 text-[var(--color-muted-foreground)]'
-                                    }`}
-                                  >
-                                    <span className="text-sm">
-                                      {item.hours}h
-                                    </span>
-                                  </button>
-                                  <Button
-                                    type="button"
-                                    variant="ghost"
-                                    size="icon"
-                                    onClick={() => startEditingTime(item.id, item.hours)}
-                                    className="h-[32px] w-[32px]"
-                                  >
-                                    <Pencil className="h-[14px] w-[14px] text-[var(--color-muted-foreground)]" />
-                                  </Button>
-                                  <Button
-                                    type="button"
-                                    variant="ghost"
-                                    size="icon"
-                                    onClick={() => removeCustomTime(item.id)}
-                                    className="h-[32px] w-[32px]"
-                                  >
-                                    <Trash2 className="h-[14px] w-[14px] text-red-500" />
-                                  </Button>
-                                </>
-                              )}
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Total */}
-                  {calculateTotalTime() > 0 && (
-                    <div className="pt-[8px] border-t border-[var(--color-border)]">
-                      <div className="flex items-center justify-between">
-                        <span className="text-sm font-semibold text-[var(--color-foreground)]">
-                          Tempo Total Estimado:
-                        </span>
-                        <span className="text-lg font-bold text-[var(--color-primary)]">
-                          {calculateTotalTime()} horas
-                        </span>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-
             <div className="grid grid-cols-2 gap-[16px]">
               <div className="space-y-[8px]">
                 <Label htmlFor="card-data_inicio">Data e Hora de Início</Label>
@@ -3604,18 +3077,11 @@ export default function SprintDetails() {
                     setCardFormData({ ...cardFormData, data_fim: newDataFim });
                   }}
                   disabled={Boolean(
-                    editingCard && 
-                    editingCard.status === 'em_desenvolvimento' && 
-                    user?.role !== 'admin' && 
+                    editingCard &&
+                    editingCard.status === 'em_desenvolvimento' &&
+                    user?.role !== 'admin' &&
                     user?.role !== 'supervisor'
                   )}
-                  suggestedDate={(() => {
-                    const totalHours = calculateTotalTime();
-                    if (totalHours > 0) {
-                      return calculateSuggestedEndDate(totalHours);
-                    }
-                    return undefined;
-                  })()}
                 />
                 {editingCard?.responsavel && String(editingCard.responsavel) === String(user?.id) && editingCard?.data_fim && (
                   <div className="flex items-center justify-end">

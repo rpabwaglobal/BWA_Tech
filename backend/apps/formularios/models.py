@@ -92,6 +92,35 @@ class ChamadoSuporte(models.Model):
         return f'#{self.pk} {self.usuario_email}'
 
 
+class ChamadoSuporteResolucao(models.Model):
+    """Anexos de RESOLUÇÃO de um chamado: link + arquivo, adicionados ao concluir.
+
+    Guardado localmente por `chamado_id` (como a timeline) — funciona mesmo quando
+    o chamado vive no portal externo (a tabela `ChamadoSuporte` local fica vazia
+    nesse modo). Um registro por chamado; a conclusão faz upsert.
+    """
+
+    chamado_id = models.PositiveIntegerField(unique=True, db_index=True)
+    link = models.URLField(blank=True, null=True)
+    arquivo = models.FileField(upload_to='suporte_resolucao/', blank=True, null=True)
+    usuario = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        related_name='chamado_suporte_resolucoes',
+        null=True,
+        blank=True,
+    )
+    criado_em = models.DateTimeField(auto_now_add=True)
+    atualizado_em = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'Resolução de chamado de suporte'
+        verbose_name_plural = 'Resoluções de chamados de suporte'
+
+    def __str__(self):
+        return f'Resolução do chamado #{self.chamado_id}'
+
+
 class ChamadoSuporteTimelineTipo(models.TextChoices):
     CRIADO = 'criado', 'Ticket criado'
     ETAPA_ALTERADA = 'etapa_alterada', 'Etapa alterada'

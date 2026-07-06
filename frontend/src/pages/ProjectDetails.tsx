@@ -47,7 +47,6 @@ import { projectService } from '@/services/projectService';
 import { cardService, CARD_AREAS, CARD_TYPES, CARD_PRIORITIES } from '@/services/cardService';
 import type { CardLink } from '@/services/cardService';
 import { sprintService } from '@/services/sprintService';
-import { getTodosByArea } from '@/constants/cardTodos';
 import { kanbanStageService } from '@/services/kanbanStageService';
 import { cardPinService } from '@/services/cardPinService';
 import type { KanbanStage as KanbanStageType } from '@/services/kanbanStageService';
@@ -715,6 +714,34 @@ function KanbanCard({
   );
 }
 
+/**
+ * Asterisco de campo obrigatório. Quando o dado está faltando (obrigatório e
+ * vazio) fica dourado e ligeiramente maior; quando já preenchido volta ao
+ * asterisco discreto padrão.
+ */
+function RequiredMark({ missing }: { missing: boolean }) {
+  return (
+    <span
+      aria-hidden="true"
+      title={missing ? 'Campo obrigatório não preenchido' : 'Campo obrigatório'}
+      className={cn(
+        'ml-0.5 align-middle leading-none',
+        missing
+          ? 'text-[1.2em] font-bold text-[#C79200]'
+          : 'text-[var(--color-muted-foreground)]',
+      )}
+    >
+      *
+    </span>
+  );
+}
+
+/** Destaque de input obrigatório vazio: anel vermelho piscando (mesma grossura,
+ *  animando só a opacidade — sem crescer). Ver `.required-ring-blink` no index.css. */
+function requiredHighlight(missing: boolean): string {
+  return cn('rounded-[8px]', missing && 'required-ring-blink');
+}
+
 export default function ProjectDetails() {
   const { id, cardId } = useParams<{ id: string; cardId?: string }>();
   const navigate = useNavigate();
@@ -811,15 +838,50 @@ export default function ProjectDetails() {
   const [cardLinks, setCardLinks] = useState<CardLink[]>([]);
   const [newLinkUrl, setNewLinkUrl] = useState('');
   const [newLinkLabel, setNewLinkLabel] = useState('');
+  // Formulário de link recolhido por padrão: só aparece ao clicar em "Adicionar link".
+  const [showLinkForm, setShowLinkForm] = useState(false);
+  const [editingLinkIdx, setEditingLinkIdx] = useState<number | null>(null);
 
-  const handleAddCardLink = () => {
-    if (!newLinkUrl.trim()) return;
-    setCardLinks((prev) => [...prev, { url: newLinkUrl.trim(), label: newLinkLabel.trim() }]);
+  const openAddLink = () => {
+    setEditingLinkIdx(null);
+    setNewLinkUrl('');
+    setNewLinkLabel('');
+    setShowLinkForm(true);
+  };
+  const openEditLink = (idx: number) => {
+    const link = cardLinks[idx];
+    if (!link) return;
+    setEditingLinkIdx(idx);
+    setNewLinkUrl(link.url);
+    setNewLinkLabel(link.label);
+    setShowLinkForm(true);
+  };
+  const cancelLinkForm = () => {
+    setShowLinkForm(false);
+    setEditingLinkIdx(null);
     setNewLinkUrl('');
     setNewLinkLabel('');
   };
+  // Enter salva: adiciona (ou atualiza, se editando) sem precisar clicar em botão.
+  const submitCardLink = () => {
+    const url = newLinkUrl.trim();
+    if (!url) return;
+    const label = newLinkLabel.trim();
+    const wasEditing = editingLinkIdx !== null;
+    setCardLinks((prev) =>
+      wasEditing
+        ? prev.map((l, i) => (i === editingLinkIdx ? { url, label } : l))
+        : [...prev, { url, label }],
+    );
+    setNewLinkUrl('');
+    setNewLinkLabel('');
+    setEditingLinkIdx(null);
+    // Edição pontual → fecha o form. Adição → mantém aberto para incluir outro.
+    if (wasEditing) setShowLinkForm(false);
+  };
   const handleRemoveCardLink = (idx: number) => {
     setCardLinks((prev) => prev.filter((_, i) => i !== idx));
+    if (editingLinkIdx === idx) cancelLinkForm();
   };
   const [cardFormLoading, setCardFormLoading] = useState(false);
   const [cardFormError, setCardFormError] = useState('');
@@ -883,125 +945,6 @@ export default function ProjectDetails() {
   /** Modal mover: primeiro escolhe sprint, depois a lista de sprints é substituída pelos projetos */
   const [bulkMoveWizardStep, setBulkMoveWizardStep] = useState<'sprint' | 'project'>('sprint');
 
-  // Estimador de complexidade
-  const [showTimeEstimator, setShowTimeEstimator] = useState(false);
-  const [selectedTimeItems, setSelectedTimeItems] = useState<Set<string>>(new Set());
-  const [selectedDevelopment, setSelectedDevelopment] = useState<string | null>(null);
-  const [timeEstimates, setTimeEstimates] = useState([
-    { id: 'ler_script', label: 'Ler Script E Conferir Informações Do Video', hours: 1 },
-    { id: 'solicitar_usuario', label: 'Solicitar Criação De Usuário / Vm', hours: 1 },
-    { id: 'testes_iniciais', label: 'Testes Iniciais Na Maquina', hours: 3 },
-    { id: 'configurar_projeto', label: 'Configurar Projeto Na Vm', hours: 1 },
-    { id: 'desenvolvimento_basico', label: 'Desenvolvimento Básico', hours: 8, isDevelopment: true },
-    { id: 'desenvolvimento_medio', label: 'Desenvolvimento Médio', hours: 24, isDevelopment: true },
-    { id: 'desenvolvimento_dificil', label: 'Desenvolvimento Difícil', hours: 40, isDevelopment: true },
-  ]);
-  const [customTimeItems, setCustomTimeItems] = useState<Array<{ id: string; label: string; hours: number }>>([]);
-  const [customTimeLabel, setCustomTimeLabel] = useState('');
-  const [customTimeHours, setCustomTimeHours] = useState('');
-  const [editingTimeItemId, setEditingTimeItemId] = useState<string | null>(null);
-  const [editTimeValue, setEditTimeValue] = useState('');
-
-  // Calcular tempo total
-  const calculateTotalTime = () => {
-    let total = 0;
-    selectedTimeItems.forEach((itemId) => {
-      const item = timeEstimates.find((t) => t.id === itemId);
-      if (item) {
-        total += item.hours;
-      } else {
-        const customItem = customTimeItems.find((c) => c.id === itemId);
-        if (customItem) {
-          total += customItem.hours;
-        }
-      }
-    });
-    // Adicionar desenvolvimento selecionado
-    if (selectedDevelopment) {
-      const devItem = timeEstimates.find((t) => t.id === selectedDevelopment);
-      if (devItem) {
-        total += devItem.hours;
-      }
-    }
-    return total;
-  };
-
-  const toggleTimeItem = (itemId: string) => {
-    const item = timeEstimates.find((t) => t.id === itemId);
-    
-    // Se for uma opção de desenvolvimento, garantir que apenas uma seja selecionada
-    if (item?.isDevelopment) {
-      if (selectedDevelopment === itemId) {
-        setSelectedDevelopment(null);
-      } else {
-        setSelectedDevelopment(itemId);
-      }
-      return;
-    }
-
-    // Para outras opções, permitir múltipla seleção
-    const newSet = new Set(selectedTimeItems);
-    if (newSet.has(itemId)) {
-      newSet.delete(itemId);
-    } else {
-      newSet.add(itemId);
-    }
-    setSelectedTimeItems(newSet);
-  };
-
-  const startEditingTime = (itemId: string, currentHours: number) => {
-    setEditingTimeItemId(itemId);
-    setEditTimeValue(currentHours.toString());
-  };
-
-  const saveEditedTime = (itemId: string) => {
-    if (editTimeValue) {
-      const hoursNum = parseInt(editTimeValue);
-      if (hoursNum > 0) {
-        const item = timeEstimates.find((t) => t.id === itemId);
-        if (item) {
-          setTimeEstimates(timeEstimates.map((i) =>
-            i.id === itemId ? { ...i, hours: hoursNum } : i
-          ));
-        } else {
-          setCustomTimeItems(customTimeItems.map((i) =>
-            i.id === itemId ? { ...i, hours: hoursNum } : i
-          ));
-        }
-        setEditingTimeItemId(null);
-        setEditTimeValue('');
-      }
-    }
-  };
-
-  const cancelEditingTime = () => {
-    setEditingTimeItemId(null);
-    setEditTimeValue('');
-  };
-
-  const addCustomTime = () => {
-    if (customTimeLabel && customTimeHours) {
-      const hoursNum = parseInt(customTimeHours);
-      if (hoursNum > 0) {
-        const customId = `custom_${Date.now()}`;
-        const newCustomItem = { id: customId, label: customTimeLabel, hours: hoursNum };
-        setCustomTimeItems([...customTimeItems, newCustomItem]);
-        const newSet = new Set(selectedTimeItems);
-        newSet.add(customId);
-        setSelectedTimeItems(newSet);
-        setCustomTimeLabel('');
-        setCustomTimeHours('');
-      }
-    }
-  };
-
-  const removeCustomTime = (itemId: string) => {
-    setCustomTimeItems(customTimeItems.filter((item) => item.id !== itemId));
-    const newSet = new Set(selectedTimeItems);
-    newSet.delete(itemId);
-    setSelectedTimeItems(newSet);
-  };
-
   const sensors = useSensors(
     useSensor(PointerSensor, {
       activationConstraint: {
@@ -1033,38 +976,6 @@ export default function ProjectDetails() {
       // ignore
     }
   }, [showPriorityColorsOnCards]);
-
-  // Atualizar data sugerida quando a estimativa de complexidade mudar
-  useEffect(() => {
-    if (cardFormData.status === 'em_desenvolvimento' && !cardFormData.data_fim) {
-      // Calcular total de horas
-      let total = 0;
-      selectedTimeItems.forEach((itemId) => {
-        const item = timeEstimates.find((t) => t.id === itemId);
-        if (item) {
-          total += item.hours;
-        } else {
-          const customItem = customTimeItems.find((c) => c.id === itemId);
-          if (customItem) {
-            total += customItem.hours;
-          }
-        }
-      });
-      if (selectedDevelopment) {
-        const devItem = timeEstimates.find((t) => t.id === selectedDevelopment);
-        if (devItem) {
-          total += devItem.hours;
-        }
-      }
-      
-      if (total > 0) {
-        const suggestedDate = calculateSuggestedEndDate(total);
-        if (suggestedDate) {
-          setCardFormData(prev => ({ ...prev, data_fim: suggestedDate }));
-        }
-      }
-    }
-  }, [selectedTimeItems, selectedDevelopment, customTimeItems, cardFormData.status, timeEstimates]);
 
   const loadData = async () => {
     if (!id) return;
@@ -1205,50 +1116,6 @@ export default function ProjectDetails() {
   };
 
   // Calcular sugestão de data de entrega baseada na estimativa de complexidade
-  const calculateSuggestedEndDate = (hours: number): string => {
-    if (!hours || hours === 0) return '';
-    
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    
-    // Considerar apenas dias úteis (segunda a sexta)
-    // Começar do próximo dia útil
-    let currentDate = new Date(today);
-    // Se hoje é sábado (6) ou domingo (0), começar na próxima segunda
-    if (currentDate.getDay() === 0) {
-      currentDate.setDate(currentDate.getDate() + 1);
-    } else if (currentDate.getDay() === 6) {
-      currentDate.setDate(currentDate.getDate() + 2);
-    } else {
-      // Se for dia útil, começar no próximo dia útil
-      currentDate.setDate(currentDate.getDate() + 1);
-    }
-    
-    let remainingHours = hours;
-    const hoursPerDay = 8;
-    
-    // Adicionar dias úteis até completar as horas
-    while (remainingHours > 0) {
-      // Pular fins de semana
-      while (currentDate.getDay() === 0 || currentDate.getDay() === 6) {
-        currentDate.setDate(currentDate.getDate() + 1);
-      }
-      
-      if (remainingHours >= hoursPerDay) {
-        remainingHours -= hoursPerDay;
-        currentDate.setDate(currentDate.getDate() + 1);
-      } else {
-        remainingHours = 0;
-      }
-    }
-    
-    // Formatar como YYYY-MM-DDTHH:mm com hora padrão 18:00
-    const year = currentDate.getFullYear();
-    const month = String(currentDate.getMonth() + 1).padStart(2, '0');
-    const day = String(currentDate.getDate()).padStart(2, '0');
-    return `${year}-${month}-${day}T18:00`;
-  };
-
   // Função para capitalizar a primeira letra
   const capitalizeFirst = (str: string): string => {
     return str.charAt(0).toUpperCase() + str.slice(1);
@@ -1510,21 +1377,10 @@ export default function ProjectDetails() {
 
     // Se está mudando para uma etapa que exige dados obrigatórios, validar
     if (requiresRequiredData(newStageId)) {
-      const validation = validateCardRequiredData(card);
-      if (!validation.valid) {
-        // Armazenar o movimento pendente para completar após salvar
-        setPendingStatusChange({ cardId: cardId, newStatus: newStageId });
-        // Mostrar aviso e abrir modal de edição
-        const missingList = validation.missing.map((item, index) => `${index + 1}. ${capitalizeFirst(item)}`).join('\n');
-        const stageLabel = getStageLabel(newStageId);
-        setAlertMessage(`Para mover o card para "${stageLabel}", é necessário preencher:\n\n${missingList}\n\nO formulário de edição será aberto.`);
-        setAlertDialogOpen(true);
-        openEditCardDialog(card);
-        return;
-      }
-      
-      // Se não tem data_inicio, preencher automaticamente com data/hora atual (apenas para em_desenvolvimento)
-      const updateData: any = { status: newStageId };
+      // data_inicio é preenchida automaticamente ao entrar em desenvolvimento —
+      // então já a consideramos ANTES de validar, para não constar como pendência
+      // (senão o modal de atenção bloqueava mesmo o campo se preenchendo sozinho).
+      let autoDataInicio: string | undefined;
       if (newStageId === 'em_desenvolvimento' && !card.data_inicio) {
         const now = new Date();
         const year = now.getFullYear();
@@ -1532,7 +1388,36 @@ export default function ProjectDetails() {
         const day = String(now.getDate()).padStart(2, '0');
         const hours = String(now.getHours()).padStart(2, '0');
         const minutes = String(now.getMinutes()).padStart(2, '0');
-        updateData.data_inicio = `${year}-${month}-${day}T${hours}:${minutes}`;
+        autoDataInicio = `${year}-${month}-${day}T${hours}:${minutes}`;
+      }
+      const cardParaValidar = autoDataInicio
+        ? { ...card, data_inicio: autoDataInicio }
+        : card;
+
+      const validation = validateCardRequiredData(cardParaValidar);
+      if (!validation.valid) {
+        // Armazenar o movimento pendente para completar após salvar
+        setPendingStatusChange({ cardId: cardId, newStatus: newStageId });
+        // Mostrar aviso e abrir modal de edição. A data_inicio de rascunho vai
+        // como override (o card NÃO é salvo aqui): só será persistida quando o
+        // usuário preencher os dados que faltam e salvar o card na nova etapa.
+        // Se fechar sem salvar, o card permanece em "A desenvolver" e a data
+        // nova é descartada.
+        const missingList = validation.missing.map((item, index) => `${index + 1}. ${capitalizeFirst(item)}`).join('\n');
+        const stageLabel = getStageLabel(newStageId);
+        setAlertMessage(`Para mover o card para "${stageLabel}", é necessário preencher:\n\n${missingList}\n\nO formulário de edição será aberto.`);
+        setAlertDialogOpen(true);
+        openEditCardDialog(card, {
+          overrideStatus: newStageId,
+          overrideDataInicio: autoDataInicio,
+        });
+        return;
+      }
+
+      // Válido: salva o status e a data de início preenchida automaticamente.
+      const updateData: any = { status: newStageId };
+      if (autoDataInicio) {
+        updateData.data_inicio = autoDataInicio;
       }
       
       // Salvar o status antigo antes de atualizar
@@ -1565,17 +1450,32 @@ export default function ProjectDetails() {
 
     // Salvar o status antigo antes de atualizar
     const oldStageId = card.status;
-    
+
+    // Se não tem data_inicio, preencher automaticamente ao entrar em
+    // desenvolvimento — mesmo comportamento da troca manual de etapa. Sem isso,
+    // arrastar de "A desenvolver" para "Em desenvolvimento" (quando essa etapa
+    // não exige dados obrigatórios) deixava a data de início vazia.
+    const updateData: any = { status: newStageId };
+    if (newStageId === 'em_desenvolvimento' && !card.data_inicio) {
+      const now = new Date();
+      const year = now.getFullYear();
+      const month = String(now.getMonth() + 1).padStart(2, '0');
+      const day = String(now.getDate()).padStart(2, '0');
+      const hours = String(now.getHours()).padStart(2, '0');
+      const minutes = String(now.getMinutes()).padStart(2, '0');
+      updateData.data_inicio = `${year}-${month}-${day}T${hours}:${minutes}`;
+    }
+
     // Atualizar o estado local IMEDIATAMENTE para evitar animação de retorno
     setCards((prevCards) =>
       prevCards.map((c) =>
-        c.id.toString() === cardId ? { ...c, status: newStageId } : c
+        c.id.toString() === cardId ? { ...c, ...updateData } : c
       )
     );
 
     try {
       // Atualizar o status do card na API
-      await cardService.update(card.id, { status: newStageId });
+      await cardService.update(card.id, updateData);
       // Registrar log de movimentação
       const userName = user?.first_name || user?.username || 'Usuário';
       await createCardLog(
@@ -1700,7 +1600,10 @@ export default function ProjectDetails() {
     }
   };
 
-  const openEditCardDialog = async (card: CardType, options?: { skipUrlSync?: boolean }) => {
+  const openEditCardDialog = async (
+    card: CardType,
+    options?: { skipUrlSync?: boolean; overrideStatus?: string; overrideDataInicio?: string },
+  ) => {
     const projectKey = String(id || card.projeto || project?.id || '').trim();
 
     if (editingCard?.id === card.id && cardDialogOpen) {
@@ -1721,16 +1624,24 @@ export default function ProjectDetails() {
     const gen = ++openCardGenerationRef.current;
 
     const applyCardToEditDialog = (fullCard: CardType) => {
-      const targetStatus = pendingStatusChange && pendingStatusChange.cardId === fullCard.id.toString()
-        ? pendingStatusChange.newStatus
-        : fullCard.status;
+      // overrideStatus evita depender do pendingStatusChange (setState assíncrono:
+      // ainda estaria nulo quando este closure roda, zerando a data_inicio).
+      const targetStatus =
+        options?.overrideStatus
+        ?? (pendingStatusChange && pendingStatusChange.cardId === fullCard.id.toString()
+          ? pendingStatusChange.newStatus
+          : fullCard.status);
 
       setEditingCard(fullCard);
       setCardDialogOpen(true);
       setLogsModalOpen(true);
 
+      // data_inicio de rascunho (vinda do drag) é só pré-preenchida no form —
+      // só será persistida quando o card for de fato salvo na etapa.
       let dataInicio =
-        targetStatus === 'a_desenvolver' ? '' : fullCard.data_inicio || '';
+        targetStatus === 'a_desenvolver'
+          ? ''
+          : (options?.overrideDataInicio || fullCard.data_inicio || '');
       if (targetStatus === 'em_desenvolvimento' && !dataInicio) {
         const now = new Date();
         const year = now.getFullYear();
@@ -1756,42 +1667,8 @@ export default function ProjectDetails() {
       setCardLinks(fullCard.links ?? []);
       setNewLinkUrl('');
       setNewLinkLabel('');
-
-      if (fullCard.complexidade_selected_items && fullCard.complexidade_selected_items.length > 0) {
-        setSelectedTimeItems(new Set(fullCard.complexidade_selected_items));
-      } else {
-        setSelectedTimeItems(new Set());
-      }
-
-      setSelectedDevelopment(fullCard.complexidade_selected_development || null);
-
-      if (fullCard.complexidade_custom_items && fullCard.complexidade_custom_items.length > 0) {
-        setCustomTimeItems(fullCard.complexidade_custom_items);
-      } else {
-        setCustomTimeItems([]);
-      }
-
-      setCustomTimeLabel('');
-      setCustomTimeHours('');
-      setShowTimeEstimator(false);
-      setEditingTimeItemId(null);
-      setEditTimeValue('');
-      const cardArea = fullCard.area || '';
-      if (cardArea) {
-        const todos = getTodosByArea(cardArea);
-        if (todos.length > 0) {
-          setTimeEstimates(todos.map(todo => ({
-            id: todo.id,
-            label: todo.label,
-            hours: todo.hours,
-            isDevelopment: todo.id.includes('desenvolvimento')
-          })));
-        } else {
-          setTimeEstimates([]);
-        }
-      } else {
-        setTimeEstimates([]);
-      }
+      setShowLinkForm(false);
+      setEditingLinkIdx(null);
 
       setCardFormError('');
     };
@@ -1843,12 +1720,8 @@ export default function ProjectDetails() {
     setCardLinks([]);
     setNewLinkUrl('');
     setNewLinkLabel('');
-    // Limpar estimativas ao abrir dialog de criação
-    setSelectedTimeItems(new Set());
-    setSelectedDevelopment(null);
-    setCustomTimeItems([]);
-    setTimeEstimates([]);
-    setShowTimeEstimator(false);
+    setShowLinkForm(false);
+    setEditingLinkIdx(null);
     setCardFormError('');
     setCardDialogOpen(true);
   };
@@ -2150,10 +2023,6 @@ export default function ProjectDetails() {
             : cardFormData.data_inicio || null,
         data_fim: cardFormData.data_fim || null,
         projeto: id!,
-        // Incluir dados de estimativa de complexidade
-        complexidade_selected_items: Array.from(selectedTimeItems).length > 0 ? Array.from(selectedTimeItems) : [],
-        complexidade_selected_development: selectedDevelopment || null,
-        complexidade_custom_items: customTimeItems.length > 0 ? customTimeItems : [],
         links: cardLinks,
       };
 
@@ -2842,7 +2711,10 @@ export default function ProjectDetails() {
               </div>
             ) : null}
             <div className="space-y-[8px]">
-              <Label htmlFor="card-nome">Nome do Card *</Label>
+              <Label htmlFor="card-nome">
+                Nome do Card
+                <RequiredMark missing={!cardFormData.nome} />
+              </Label>
               <Input
                 id="card-nome"
                 placeholder="Ex: Certidões PE"
@@ -2907,7 +2779,21 @@ export default function ProjectDetails() {
               <div className="border-t border-[var(--color-border)]" />
 
               <div className="space-y-[6px]">
-                <Label>Links adicionais</Label>
+                <div className="flex items-center justify-between gap-[8px]">
+                  <Label>Links adicionais</Label>
+                  {!(!!(editingCard && (editingCard.status === 'finalizado' || editingCard.status === 'inviabilizado')) || sprintIsFinished) && !showLinkForm && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="shrink-0 gap-[4px]"
+                      onClick={openAddLink}
+                    >
+                      <Plus className="h-[13px] w-[13px]" />
+                      Adicionar link
+                    </Button>
+                  )}
+                </div>
 
                 {cardLinks.length > 0 && (
                   <div className="space-y-[4px]">
@@ -2924,46 +2810,64 @@ export default function ProjectDetails() {
                           {link.label.trim() ? link.label : link.url}
                         </a>
                         {!(!!(editingCard && (editingCard.status === 'finalizado' || editingCard.status === 'inviabilizado')) || sprintIsFinished) && (
-                          <button
-                            type="button"
-                            onClick={() => handleRemoveCardLink(idx)}
-                            className="shrink-0 rounded p-[2px] text-[var(--color-muted-foreground)] hover:bg-[var(--color-destructive)]/10 hover:text-[var(--color-destructive)]"
-                            title="Remover"
-                          >
-                            <XCircle className="h-[14px] w-[14px]" />
-                          </button>
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => openEditLink(idx)}
+                              className="shrink-0 rounded p-[2px] text-[var(--color-muted-foreground)] hover:bg-[var(--color-accent)] hover:text-[var(--color-foreground)]"
+                              title="Editar"
+                            >
+                              <Pencil className="h-[13px] w-[13px]" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveCardLink(idx)}
+                              className="shrink-0 rounded p-[2px] text-[var(--color-muted-foreground)] hover:bg-[var(--color-destructive)]/10 hover:text-[var(--color-destructive)]"
+                              title="Remover"
+                            >
+                              <XCircle className="h-[14px] w-[14px]" />
+                            </button>
+                          </>
                         )}
                       </div>
                     ))}
                   </div>
                 )}
 
-                {!(!!(editingCard && (editingCard.status === 'finalizado' || editingCard.status === 'inviabilizado')) || sprintIsFinished) && (
-                  <div className="space-y-[6px]">
+                {!(!!(editingCard && (editingCard.status === 'finalizado' || editingCard.status === 'inviabilizado')) || sprintIsFinished) && showLinkForm && (
+                  <div className="space-y-[6px] rounded-md border border-[var(--color-border)] p-[8px]">
+                    <Input
+                      placeholder="Apelido (opcional)"
+                      value={newLinkLabel}
+                      onChange={(e) => setNewLinkLabel(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') { e.preventDefault(); submitCardLink(); }
+                        else if (e.key === 'Escape') { e.preventDefault(); cancelLinkForm(); }
+                      }}
+                    />
                     <Input
                       type="url"
                       placeholder="URL do link (obrigatório)"
                       value={newLinkUrl}
+                      autoFocus
                       onChange={(e) => setNewLinkUrl(e.target.value)}
-                      onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleAddCardLink(); } }}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') { e.preventDefault(); submitCardLink(); }
+                        else if (e.key === 'Escape') { e.preventDefault(); cancelLinkForm(); }
+                      }}
                     />
-                    <div className="flex gap-[6px]">
-                      <Input
-                        placeholder="Apelido (opcional)"
-                        value={newLinkLabel}
-                        onChange={(e) => setNewLinkLabel(e.target.value)}
-                        onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleAddCardLink(); } }}
-                      />
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] text-[var(--color-muted-foreground)]">
+                        Pressione Enter para {editingLinkIdx !== null ? 'salvar' : 'adicionar'}
+                      </span>
                       <Button
                         type="button"
-                        variant="outline"
+                        variant="ghost"
                         size="sm"
-                        className="shrink-0 gap-[4px]"
-                        disabled={!newLinkUrl.trim()}
-                        onClick={handleAddCardLink}
+                        className="h-[28px] text-[var(--color-muted-foreground)]"
+                        onClick={cancelLinkForm}
                       >
-                        <Plus className="h-[13px] w-[13px]" />
-                        Adicionar link
+                        Cancelar
                       </Button>
                     </div>
                   </div>
@@ -2973,85 +2877,67 @@ export default function ProjectDetails() {
 
             <div className="grid grid-cols-2 gap-[16px]">
               <div className="space-y-[8px]">
-                <Label htmlFor="card-area">Área *</Label>
-                <select
-                  id="card-area"
-                  className="flex h-[40px] w-full rounded-[8px] border border-[var(--color-input)] bg-[var(--color-background)] px-[12px] py-[8px] text-sm ring-offset-[var(--color-background)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-ring)] focus-visible:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                <Label htmlFor="card-area">
+                  Área
+                  <RequiredMark missing={!cardFormData.area} />
+                </Label>
+                <FilterSelect
+                  options={CARD_AREAS.map((a) => ({ value: a.value, label: a.label }))}
                   value={cardFormData.area || ''}
-                  onChange={(e) => {
-                    const newArea = e.target.value;
-                    setCardFormData({ ...cardFormData, area: newArea });
-                    // Atualizar timeEstimates com os TODOs da área selecionada
-                    const todos = getTodosByArea(newArea);
-                    if (todos.length > 0) {
-                      setTimeEstimates(todos.map(todo => ({
-                        id: todo.id,
-                        label: todo.label,
-                        hours: todo.hours,
-                        isDevelopment: todo.id.includes('desenvolvimento')
-                      })));
-                      // Limpar seleções anteriores
-                      setSelectedTimeItems(new Set());
-                      setSelectedDevelopment(null);
-                    } else {
-                      // Se não houver TODOs para a área, limpar
-                      setTimeEstimates([]);
-                      setSelectedTimeItems(new Set());
-                      setSelectedDevelopment(null);
-                    }
-                  }}
-                  required
+                  onChange={(v) => setCardFormData({ ...cardFormData, area: v })}
+                  placeholder="Selecionar área"
+                  searchPlaceholder="Buscar área..."
+                  clearable={false}
                   disabled={!!(editingCard && (editingCard.status === 'finalizado' || editingCard.status === 'inviabilizado')) || sprintIsFinished}
-                >
-                  <option value="" disabled hidden>Selecionar área</option>
-                  {CARD_AREAS.map((area) => (
-                    <option key={area.value} value={area.value}>{area.label}</option>
-                  ))}
-                </select>
+                />
               </div>
 
               <div className="space-y-[8px]">
-                <Label htmlFor="card-tipo">Tipo *</Label>
-                <select
-                  id="card-tipo"
-                  className="flex h-[40px] w-full rounded-[8px] border border-[var(--color-input)] bg-[var(--color-background)] px-[12px] py-[8px] text-sm ring-offset-[var(--color-background)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-ring)] focus-visible:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                <Label htmlFor="card-tipo">
+                  Tipo
+                  <RequiredMark missing={!cardFormData.tipo} />
+                </Label>
+                <FilterSelect
+                  options={CARD_TYPES.map((t) => ({ value: t.value, label: t.label }))}
                   value={cardFormData.tipo}
-                  onChange={(e) => setCardFormData({ ...cardFormData, tipo: e.target.value })}
-                  required
+                  onChange={(v) => setCardFormData({ ...cardFormData, tipo: v })}
+                  placeholder="Selecionar tipo"
+                  searchPlaceholder="Buscar tipo..."
+                  clearable={false}
                   disabled={!!(editingCard && (editingCard.status === 'finalizado' || editingCard.status === 'inviabilizado')) || sprintIsFinished}
-                >
-                  {CARD_TYPES.map((tipo) => (
-                    <option key={tipo.value} value={tipo.value}>{tipo.label}</option>
-                  ))}
-                </select>
+                />
               </div>
             </div>
 
             <div className="grid grid-cols-2 gap-[16px]">
               <div className="space-y-[8px]">
-                <Label htmlFor="card-prioridade">Prioridade *</Label>
-                <select
-                  id="card-prioridade"
-                  className="flex h-[40px] w-full rounded-[8px] border border-[var(--color-input)] bg-[var(--color-background)] px-[12px] py-[8px] text-sm ring-offset-[var(--color-background)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-ring)] focus-visible:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                <Label htmlFor="card-prioridade">
+                  Prioridade
+                  <RequiredMark missing={!cardFormData.prioridade} />
+                </Label>
+                <FilterSelect
+                  options={CARD_PRIORITIES.map((p) => ({ value: p.value, label: p.label }))}
                   value={cardFormData.prioridade}
-                  onChange={(e) => setCardFormData({ ...cardFormData, prioridade: e.target.value })}
-                  required
+                  onChange={(v) => setCardFormData({ ...cardFormData, prioridade: v })}
+                  placeholder="Selecionar prioridade"
+                  searchPlaceholder="Buscar prioridade..."
+                  clearable={false}
                   disabled={!!(editingCard && (editingCard.status === 'finalizado' || editingCard.status === 'inviabilizado')) || sprintIsFinished}
-                >
-                  {CARD_PRIORITIES.map((prioridade) => (
-                    <option key={prioridade.value} value={prioridade.value}>{prioridade.label}</option>
-                  ))}
-                </select>
+                />
               </div>
 
               <div className="space-y-[8px]">
-                <Label htmlFor="card-status">Status *</Label>
-                <select
-                  id="card-status"
-                  className="flex h-[40px] w-full rounded-[8px] border border-[var(--color-input)] bg-[var(--color-background)] px-[12px] py-[8px] text-sm ring-offset-[var(--color-background)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-ring)] focus-visible:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                <Label htmlFor="card-status">
+                  Status
+                  <RequiredMark missing={!cardFormData.status} />
+                </Label>
+                <FilterSelect
+                  options={(stages.length ? stages : DEFAULT_PROJECT_STAGES).map((stage) => ({
+                    value: stage.id,
+                    label: stage.label,
+                  }))}
                   value={cardFormData.status}
-                  onChange={(e) => {
-                    const newStatus = e.target.value;
+                  onChange={(newStatus) => {
                     // Se mudou para em_desenvolvimento e não tem data_inicio, preencher automaticamente
                     if (newStatus === 'em_desenvolvimento' && !cardFormData.data_inicio) {
                       const now = new Date();
@@ -3061,311 +2947,95 @@ export default function ProjectDetails() {
                       const hours = String(now.getHours()).padStart(2, '0');
                       const minutes = String(now.getMinutes()).padStart(2, '0');
                       const dataInicio = `${year}-${month}-${day}T${hours}:${minutes}`;
-                      
-                      // Calcular data sugerida de entrega se houver estimativa
-                      const totalHours = calculateTotalTime();
-                      let dataFim = cardFormData.data_fim || '';
-                      if (totalHours > 0 && !dataFim) {
-                        const suggestedDate = calculateSuggestedEndDate(totalHours);
-                        if (suggestedDate) {
-                          dataFim = suggestedDate;
-                        }
-                      }
-                      
-                      setCardFormData(prev => ({ ...prev, status: newStatus, data_inicio: dataInicio, data_fim: dataFim }));
+                      setCardFormData(prev => ({ ...prev, status: newStatus, data_inicio: dataInicio }));
                     } else if (newStatus === 'a_desenvolver') {
                       setCardFormData((prev) => ({ ...prev, status: newStatus, data_inicio: '' }));
                     } else {
                       setCardFormData({ ...cardFormData, status: newStatus });
                     }
                   }}
-                  required
+                  placeholder="Selecionar status"
+                  searchPlaceholder="Buscar status..."
+                  clearable={false}
                   disabled={!!(editingCard && (editingCard.status === 'finalizado' || editingCard.status === 'inviabilizado')) || sprintIsFinished}
-                >
-                  {(stages.length ? stages : DEFAULT_PROJECT_STAGES).map((stage) => (
-                    <option key={stage.id} value={stage.id}>
-                      {stage.label}
-                    </option>
-                  ))}
-                </select>
+                />
               </div>
             </div>
 
             <div className="space-y-[8px]">
-              <Label htmlFor="card-responsavel">Responsável</Label>
-              <UserSelect
-                users={users}
-                value={cardFormData.responsavel || ''}
-                onChange={(value) => setCardFormData({ ...cardFormData, responsavel: value })}
-                disabled={!!(editingCard && (editingCard.status === 'finalizado' || editingCard.status === 'inviabilizado')) || sprintIsFinished}
-                placeholder="Selecione um responsável"
-              />
-            </div>
-
-            {/* Estimar Complexidade - Menu Recolhível */}
-            <div className="space-y-[8px]">
-              <button
-                type="button"
-                onClick={() => setShowTimeEstimator(!showTimeEstimator)}
-                disabled={!cardFormData.area}
-                className="flex items-center justify-between w-full p-[12px] rounded-[8px] border border-[var(--color-input)] bg-[var(--color-background)] hover:bg-[var(--color-accent)] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                <div className="flex items-center gap-[8px]">
-                  <Clock className="h-[16px] w-[16px] text-[var(--color-muted-foreground)]" />
-                  <Label className="text-sm font-medium text-[var(--color-foreground)] cursor-pointer">
-                    Estimar Complexidade
-                    {!cardFormData.area && (
-                      <span className="text-xs text-[var(--color-muted-foreground)] font-normal ml-1">
-                        (selecione uma Área)
-                      </span>
-                    )}
-                  </Label>
-                  {calculateTotalTime() > 0 && (
-                    <Badge variant="secondary" className="text-xs">
-                      {calculateTotalTime()}h
-                    </Badge>
-                  )}
-                </div>
-                {showTimeEstimator ? (
-                  <ChevronUp className="h-[16px] w-[16px] text-[var(--color-muted-foreground)]" />
-                ) : (
-                  <ChevronDown className="h-[16px] w-[16px] text-[var(--color-muted-foreground)]" />
+              <Label htmlFor="card-responsavel">
+                Responsável
+                {requiresRequiredData(cardFormData.status) && (
+                  <RequiredMark missing={!cardFormData.responsavel} />
                 )}
-              </button>
-
-              {showTimeEstimator && (
-                <div className="p-[16px] rounded-[8px] border border-[var(--color-border)] bg-[var(--color-muted)]/30 space-y-[16px]">
-                  <div className="space-y-[8px]">
-                    <p className="text-sm font-medium text-[var(--color-foreground)]">
-                      Estimar Tempo de Desenvolvimento
-                    </p>
-                    {timeEstimates.map((item) => {
-                      const isSelected = item.isDevelopment 
-                        ? selectedDevelopment === item.id 
-                        : selectedTimeItems.has(item.id);
-                      
-                      return (
-                        <div
-                          key={item.id}
-                          className="flex items-center justify-between p-[12px] rounded-[8px] border border-[var(--color-input)] bg-[var(--color-background)]"
-                        >
-                          <span className="text-sm text-[var(--color-foreground)] flex-1">
-                            {item.label}
-                          </span>
-                          <div className="flex items-center gap-[8px]">
-                            {editingTimeItemId === item.id ? (
-                              <div className="flex items-center gap-[4px]">
-                                <Input
-                                  type="number"
-                                  value={editTimeValue}
-                                  onChange={(e) => setEditTimeValue(e.target.value)}
-                                  onBlur={() => saveEditedTime(item.id)}
-                                  onKeyDown={(e) => {
-                                    if (e.key === 'Enter') {
-                                      saveEditedTime(item.id);
-                                    } else if (e.key === 'Escape') {
-                                      cancelEditingTime();
-                                    }
-                                  }}
-                                  min="0"
-                                  className="w-[60px] h-[32px] text-center text-sm"
-                                  autoFocus
-                                />
-                                <span className="text-sm text-[var(--color-foreground)]">h</span>
-                              </div>
-                            ) : (
-                              <>
-                                <button
-                                  type="button"
-                                  onClick={() => toggleTimeItem(item.id)}
-                                  className={`flex items-center justify-center w-[48px] h-[32px] rounded-[6px] border-2 transition-all ${
-                                    isSelected
-                                      ? 'border-[var(--color-primary)] bg-[var(--color-primary)]/10 text-[var(--color-primary)] font-bold'
-                                      : 'border-[var(--color-input)] bg-[var(--color-background)] hover:border-[var(--color-primary)]/50 text-[var(--color-muted-foreground)]'
-                                  }`}
-                                >
-                                  <span className="text-sm">
-                                    {item.hours}h
-                                  </span>
-                                </button>
-                                <Button
-                                  type="button"
-                                  variant="ghost"
-                                  size="icon"
-                                  onClick={() => startEditingTime(item.id, item.hours)}
-                                  className="h-[32px] w-[32px]"
-                                >
-                                  <Pencil className="h-[14px] w-[14px] text-[var(--color-muted-foreground)]" />
-                                </Button>
-                              </>
-                            )}
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-
-                  {/* Tempo Personalizado */}
-                  <div className="space-y-[8px] pt-[8px] border-t border-[var(--color-border)]">
-                    <p className="text-sm font-medium text-[var(--color-foreground)]">
-                      Tempo Personalizado
-                    </p>
-                    <div className="flex gap-[8px]">
-                      <Input
-                        type="text"
-                        placeholder="Descrição"
-                        value={customTimeLabel}
-                        onChange={(e) => setCustomTimeLabel(e.target.value)}
-                        className="flex-1"
-                      />
-                      <Input
-                        type="number"
-                        placeholder="Horas"
-                        value={customTimeHours}
-                        onChange={(e) => setCustomTimeHours(e.target.value)}
-                        min="0"
-                        className="w-[100px]"
-                      />
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="icon"
-                        onClick={addCustomTime}
-                        disabled={!customTimeHours || !customTimeLabel}
-                        className="flex-shrink-0"
-                      >
-                        <Plus className="h-[16px] w-[16px]" />
-                      </Button>
-                    </div>
-                    {customTimeItems.length > 0 && (
-                      <div className="space-y-[8px] mt-[8px]">
-                        {customTimeItems.map((item) => (
-                          <div
-                            key={item.id}
-                            className="flex items-center justify-between p-[12px] rounded-[8px] border border-[var(--color-input)] bg-[var(--color-background)]"
-                          >
-                            <div className="flex items-center gap-[8px] flex-1">
-                              <span className="text-sm text-[var(--color-foreground)]">
-                                {item.label}
-                              </span>
-                            </div>
-                            <div className="flex items-center gap-[8px]">
-                              {editingTimeItemId === item.id ? (
-                                <div className="flex items-center gap-[4px]">
-                                  <Input
-                                    type="number"
-                                    value={editTimeValue}
-                                    onChange={(e) => setEditTimeValue(e.target.value)}
-                                    onBlur={() => saveEditedTime(item.id)}
-                                    onKeyDown={(e) => {
-                                      if (e.key === 'Enter') {
-                                        saveEditedTime(item.id);
-                                      } else if (e.key === 'Escape') {
-                                        cancelEditingTime();
-                                      }
-                                    }}
-                                    min="0"
-                                    className="w-[60px] h-[32px] text-center text-sm"
-                                    autoFocus
-                                  />
-                                  <span className="text-sm text-[var(--color-foreground)]">h</span>
-                                </div>
-                              ) : (
-                                <>
-                                  <button
-                                    type="button"
-                                    onClick={() => toggleTimeItem(item.id)}
-                                    className={`flex items-center justify-center w-[48px] h-[32px] rounded-[6px] border-2 transition-all ${
-                                      selectedTimeItems.has(item.id)
-                                        ? 'border-[var(--color-primary)] bg-[var(--color-primary)]/10 text-[var(--color-primary)] font-bold'
-                                        : 'border-[var(--color-input)] bg-[var(--color-background)] hover:border-[var(--color-primary)]/50 text-[var(--color-muted-foreground)]'
-                                    }`}
-                                  >
-                                    <span className="text-sm">
-                                      {item.hours}h
-                                    </span>
-                                  </button>
-                                  <Button
-                                    type="button"
-                                    variant="ghost"
-                                    size="icon"
-                                    onClick={() => startEditingTime(item.id, item.hours)}
-                                    className="h-[32px] w-[32px]"
-                                  >
-                                    <Pencil className="h-[14px] w-[14px] text-[var(--color-muted-foreground)]" />
-                                  </Button>
-                                  <Button
-                                    type="button"
-                                    variant="ghost"
-                                    size="icon"
-                                    onClick={() => removeCustomTime(item.id)}
-                                    className="h-[32px] w-[32px]"
-                                  >
-                                    <Trash2 className="h-[14px] w-[14px] text-red-500" />
-                                  </Button>
-                                </>
-                              )}
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Total */}
-                  {calculateTotalTime() > 0 && (
-                    <div className="pt-[8px] border-t border-[var(--color-border)]">
-                      <div className="flex items-center justify-between">
-                        <span className="text-sm font-semibold text-[var(--color-foreground)]">
-                          Tempo Total Estimado:
-                        </span>
-                        <span className="text-lg font-bold text-[var(--color-primary)]">
-                          {calculateTotalTime()} horas
-                        </span>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )}
+              </Label>
+              <div
+                className={requiredHighlight(
+                  requiresRequiredData(cardFormData.status) && !cardFormData.responsavel,
+                )}
+              >
+                <UserSelect
+                  users={users}
+                  value={cardFormData.responsavel || ''}
+                  onChange={(value) => setCardFormData({ ...cardFormData, responsavel: value })}
+                  disabled={!!(editingCard && (editingCard.status === 'finalizado' || editingCard.status === 'inviabilizado')) || sprintIsFinished}
+                  placeholder="Selecione um responsável"
+                />
+              </div>
             </div>
 
             <div className="grid grid-cols-2 gap-[16px]">
               <div className="space-y-[8px]">
-                <Label htmlFor="card-data_inicio">Data e Hora de Início</Label>
-                <DateTimePicker
-                  id="card-data_inicio"
-                  value={cardFormData.data_inicio}
-                  onChange={(e) => setCardFormData({ ...cardFormData, data_inicio: e.target.value })}
-                  disabled={true}
-                />
+                <Label htmlFor="card-data_inicio">
+                  Data e Hora de Início
+                  {requiresRequiredData(cardFormData.status) && (
+                    <RequiredMark missing={!cardFormData.data_inicio} />
+                  )}
+                </Label>
+                <div
+                  className={requiredHighlight(
+                    requiresRequiredData(cardFormData.status) && !cardFormData.data_inicio,
+                  )}
+                >
+                  <DateTimePicker
+                    id="card-data_inicio"
+                    value={cardFormData.data_inicio}
+                    onChange={(e) => setCardFormData({ ...cardFormData, data_inicio: e.target.value })}
+                    disabled={true}
+                  />
+                </div>
                 <p className="text-xs text-[var(--color-muted-foreground)]">
                   Preenchida automaticamente com a data e hora atual
                 </p>
               </div>
 
               <div className="space-y-[8px]">
-                <Label htmlFor="card-data_fim">Data e Hora de Entrega</Label>
-                <DateTimePicker
-                  id="card-data_fim"
-                  value={cardFormData.data_fim}
-                  onChange={(e) => {
-                    const newDataFim = e.target.value;
-                    setCardFormData({ ...cardFormData, data_fim: newDataFim });
-                  }}
-                  disabled={Boolean(
-                    editingCard && 
-                    editingCard.status === 'em_desenvolvimento' && 
-                    user?.role !== 'admin' && 
-                    user?.role !== 'supervisor'
+                <Label htmlFor="card-data_fim">
+                  Data e Hora de Entrega
+                  {requiresRequiredData(cardFormData.status) && (
+                    <RequiredMark missing={!cardFormData.data_fim} />
                   )}
-                  suggestedDate={(() => {
-                    const totalHours = calculateTotalTime();
-                    if (totalHours > 0) {
-                      return calculateSuggestedEndDate(totalHours);
-                    }
-                    return undefined;
-                  })()}
-                />
+                </Label>
+                <div
+                  className={requiredHighlight(
+                    requiresRequiredData(cardFormData.status) && !cardFormData.data_fim,
+                  )}
+                >
+                  <DateTimePicker
+                    id="card-data_fim"
+                    value={cardFormData.data_fim}
+                    onChange={(e) => {
+                      const newDataFim = e.target.value;
+                      setCardFormData({ ...cardFormData, data_fim: newDataFim });
+                    }}
+                    disabled={Boolean(
+                      editingCard &&
+                      editingCard.status === 'em_desenvolvimento' &&
+                      user?.role !== 'admin' &&
+                      user?.role !== 'supervisor'
+                    )}
+                  />
+                </div>
                 {editingCard?.responsavel && String(editingCard.responsavel) === String(user?.id) && editingCard?.data_fim && (
                   <div className="flex items-center justify-end">
                     <Button

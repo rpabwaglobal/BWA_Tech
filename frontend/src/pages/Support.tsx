@@ -4,6 +4,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type ChangeEvent,
   type MouseEvent,
   type ReactNode,
 } from 'react';
@@ -106,6 +107,12 @@ import { exportCardsToCSV, exportCardsToXLSX } from '@/lib/exportCards';
 import { logSuporteChamadoChanges, logSuporteTicketCriado } from '@/lib/suporteTimelineLog';
 import { userService, type User } from '@/services/userService';
 import { suporteTimelineService } from '@/services/suporteTimelineService';
+import {
+  suporteResolucaoService,
+  validateResolucaoArquivo,
+  RESOLUCAO_ACCEPT,
+  type SuporteResolucao,
+} from '@/services/suporteResolucaoService';
 
 const SUPORTE_LIST_COLUMNS_STORAGE_KEY = 'bwa_suporte_list_columns_v1';
 /** Tab atual persistida (RPA | Easy | Dashboards). */
@@ -1145,7 +1152,11 @@ export default function Support() {
   }, []);
 
   const handleConcluirTicketNoCard = useCallback(
-    async (chamado: ChamadoSuporte, notasResolucao: string) => {
+    async (
+      chamado: ChamadoSuporte,
+      notasResolucao: string,
+      extras?: { link?: string | null; arquivo?: File | null },
+    ) => {
       const noteTrim = notasResolucao.trim();
       if (!noteTrim) return;
       setConcludingTicketId(chamado.id);
@@ -1153,6 +1164,20 @@ export default function Support() {
       try {
         const patch = patchForStage('finalizado', chamado, assigneeName, noteTrim);
         await applyPatchAndRefresh(chamado.id, patch, chamado);
+        // Após concluir, anexa link/arquivo de resolução (armazenados localmente
+        // por chamado_id). Falha aqui não desfaz a conclusão — apenas avisa.
+        const link = extras?.link?.trim() || null;
+        const arquivo = extras?.arquivo ?? null;
+        if (link || arquivo) {
+          try {
+            await suporteResolucaoService.save({ chamado_id: chamado.id, link, arquivo });
+            bumpTimeline();
+          } catch {
+            setError(
+              'Ticket concluído, mas não foi possível salvar o link/arquivo de resolução. Reabra o ticket e tente anexar novamente.',
+            );
+          }
+        }
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Erro ao concluir ticket.');
         void load();
@@ -1160,7 +1185,7 @@ export default function Support() {
         setConcludingTicketId(null);
       }
     },
-    [assigneeName, applyPatchAndRefresh, load],
+    [assigneeName, applyPatchAndRefresh, load, bumpTimeline],
   );
 
   return (
@@ -2451,7 +2476,11 @@ function ChamadoDetailDialog({
   timelineRefreshNonce: number;
   bumpTimeline: () => void;
   concludingTicketId: number | null;
-  onConcluirTicket: (c: ChamadoSuporte, note: string) => void | Promise<void>;
+  onConcluirTicket: (
+    c: ChamadoSuporte,
+    note: string,
+    extras?: { link?: string | null; arquivo?: File | null },
+  ) => void | Promise<void>;
   onUpdated: (c: ChamadoSuporte) => void;
   onError: (m: string) => void;
 }) {
@@ -2459,13 +2488,60 @@ function ChamadoDetailDialog({
   const [saving, setSaving] = useState(false);
   const [timelineOpen, setTimelineOpen] = useState(true);
   const [pegarCardConfirmOpen, setPegarCardConfirmOpen] = useState(false);
+  // Resolução: link + arquivo adicionados ao concluir (opcionais).
+  const [resLink, setResLink] = useState('');
+  const [resArquivo, setResArquivo] = useState<File | null>(null);
+  const [resArquivoErr, setResArquivoErr] = useState<string | null>(null);
+  const resArquivoInputRef = useRef<HTMLInputElement | null>(null);
+  // Resolução já salva (exibida em tickets encerrados).
+  const [resolucaoInfo, setResolucaoInfo] = useState<SuporteResolucao | null>(null);
 
   useEffect(() => {
     if (!chamado) return;
     setResponsavelUserId(userIdFromResponsavelNome(users, chamado.responsavel_solucao));
     setTimelineOpen(true);
     setPegarCardConfirmOpen(false);
+    setResLink('');
+    setResArquivo(null);
+    setResArquivoErr(null);
+    if (resArquivoInputRef.current) resArquivoInputRef.current.value = '';
+    setResolucaoInfo(null);
   }, [chamado, users]);
+
+  // Busca link/arquivo de resolução já salvos (tickets encerrados exibem em modo leitura).
+  useEffect(() => {
+    if (!chamado || !chamadoEncerradoNoQuadro(chamado)) return;
+    let cancelled = false;
+    void suporteResolucaoService
+      .getByChamado(chamado.id)
+      .then((r) => {
+        if (!cancelled) setResolucaoInfo(r);
+      })
+      .catch(() => {
+        if (!cancelled) setResolucaoInfo(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [chamado]);
+
+  const onSelectResArquivo = (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0] ?? null;
+    if (!file) {
+      setResArquivo(null);
+      setResArquivoErr(null);
+      return;
+    }
+    const err = validateResolucaoArquivo(file);
+    if (err) {
+      setResArquivoErr(err);
+      setResArquivo(null);
+      e.target.value = '';
+      return;
+    }
+    setResArquivoErr(null);
+    setResArquivo(file);
+  };
 
   const resolucaoDraft = useSuporteResolucaoDraft(
     chamado?.id,
@@ -2749,6 +2825,32 @@ function ChamadoDetailDialog({
                   {stripPendenciaMarker(chamado.descricao_resolucao ?? '').trim() || '—'}
                 </p>
               </div>
+              {(resolucaoInfo?.link || resolucaoInfo?.arquivo_url) && (
+                <div className="rounded-[8px] border border-[var(--color-border)] bg-[var(--color-muted)]/20 p-[12px] space-y-[8px]">
+                  {resolucaoInfo?.link ? (
+                    <a
+                      href={resolucaoInfo.link}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex items-center gap-[6px] text-sm text-[var(--color-primary)] break-all"
+                    >
+                      <ExternalLink className="h-4 w-4 shrink-0" />
+                      {resolucaoInfo.link}
+                    </a>
+                  ) : null}
+                  {resolucaoInfo?.arquivo_url ? (
+                    <a
+                      href={resolucaoInfo.arquivo_url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="flex items-center gap-[6px] text-sm text-[var(--color-primary)] break-all"
+                    >
+                      <Download className="h-4 w-4 shrink-0" />
+                      {resolucaoInfo.arquivo_nome || 'Baixar arquivo da resolução'}
+                    </a>
+                  ) : null}
+                </div>
+              )}
             </div>
           ) : (
             <div className="grid gap-[6px]" onPointerDown={(e) => e.stopPropagation()}>
@@ -2770,6 +2872,46 @@ function ChamadoDetailDialog({
                 disabled={resolucaoDraft.busy}
                 className="min-h-0 resize-none text-[12px]"
               />
+
+              <Label
+                htmlFor={`res-link-${chamado.id}`}
+                className="mt-[6px] text-[10px] font-medium uppercase tracking-wide text-[var(--color-muted-foreground)]"
+              >
+                Link (opcional)
+              </Label>
+              <Input
+                id={`res-link-${chamado.id}`}
+                type="url"
+                inputMode="url"
+                value={resLink}
+                onChange={(e) => setResLink(e.target.value)}
+                placeholder="https://…"
+                disabled={resolucaoDraft.busy}
+                className="h-[34px] text-[12px]"
+              />
+
+              <Label
+                htmlFor={`res-arquivo-${chamado.id}`}
+                className="mt-[6px] text-[10px] font-medium uppercase tracking-wide text-[var(--color-muted-foreground)]"
+              >
+                Arquivo (opcional)
+              </Label>
+              <input
+                ref={resArquivoInputRef}
+                id={`res-arquivo-${chamado.id}`}
+                type="file"
+                accept={RESOLUCAO_ACCEPT}
+                onChange={onSelectResArquivo}
+                disabled={resolucaoDraft.busy}
+                className="block w-full text-[12px] text-[var(--color-muted-foreground)] file:mr-3 file:cursor-pointer file:rounded-[6px] file:border-0 file:bg-[var(--color-muted)] file:px-3 file:py-1.5 file:text-[12px] file:font-medium file:text-[var(--color-foreground)] hover:file:bg-[var(--color-accent)]"
+              />
+              {resArquivoErr ? (
+                <p className="text-[11px] text-red-600">{resArquivoErr}</p>
+              ) : (
+                <p className="text-[10px] leading-snug text-[var(--color-muted-foreground)]">
+                  Imagem, documento, PDF ou planilha (máx 10 MB).
+                </p>
+              )}
             </div>
           )}
 
@@ -2798,7 +2940,10 @@ function ChamadoDetailDialog({
                 onClick={(e) => {
                   e.preventDefault();
                   e.stopPropagation();
-                  void onConcluirTicket(chamado, resolucaoDraft.note.trim());
+                  void onConcluirTicket(chamado, resolucaoDraft.note.trim(), {
+                    link: resLink.trim() || null,
+                    arquivo: resArquivo,
+                  });
                 }}
               >
                 {resolucaoDraft.busy ? (

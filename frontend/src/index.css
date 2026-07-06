@@ -175,3 +175,20 @@
     radial-gradient(circle at 95% 100%, rgba(143, 208, 215, 0.08) 0%, transparent 55%);
   background-attachment: fixed;
 }
+
+/* Anel de campo obrigatório vazio: vermelho piscando. Anima só a OPACIDADE do
+   box-shadow (aparece/desaparece), com spread fixo de 1px — mesma grossura,
+   sem crescer. */
+@keyframes required-ring-blink {
+  0%, 100% { box-shadow: 0 0 0 1px rgba(239, 68, 68, 1); }
+  50%      { box-shadow: 0 0 0 1px rgba(239, 68, 68, 0); }
+}
+.required-ring-blink {
+  animation: required-ring-blink 1.2s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .required-ring-blink {
+    animation: none;
+    box-shadow: 0 0 0 1px rgba(239, 68, 68, 1);
+  }
+}

@@ -7,11 +7,19 @@ from rest_framework.exceptions import PermissionDenied
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
-from .models import ChamadoSuporte, ChamadoSuporteStatus, ChamadoSuporteTimeline, SuporteMotivo, SuporteTipo
+from .models import (
+    ChamadoSuporte,
+    ChamadoSuporteResolucao,
+    ChamadoSuporteStatus,
+    ChamadoSuporteTimeline,
+    SuporteMotivo,
+    SuporteTipo,
+)
 from .realtime import broadcast_chamado
 from .serializers import (
     CatalogTipoComItensSerializer,
     CatalogMotivoMiniSerializer,
+    ChamadoResolucaoSerializer,
     ChamadoSuporteReadSerializer,
     ChamadoSuporteWriteSerializer,
     ChamadoSuportePatchSerializer,
@@ -33,6 +41,25 @@ def _is_privileged(user) -> bool:
         return False
     role = getattr(user, 'role', None)
     return role in ChamadoSuporteViewSet.PRIVILEGED_ROLES or user.is_superuser
+
+
+def _user_can_access_chamado(request, chamado_id: int) -> bool:
+    """True se o usuário é privilegiado OU dono do chamado.
+
+    Em produção os chamados ficam no PORTAL externo (a tabela `ChamadoSuporte`
+    local fica vazia em modo proxy). Se o chamado não existe localmente não há
+    como conferir o owner aqui, então libera (a gate real fica no portal, já
+    consultado pelo frontend). Em modo local, o filtro por email é a autoridade.
+    """
+    if _is_privileged(request.user):
+        return True
+    user_email = (request.user.email or '').strip().lower()
+    local_qs = ChamadoSuporte.objects.filter(pk=chamado_id)
+    if not local_qs.exists():
+        return True
+    if not user_email:
+        return False
+    return local_qs.filter(usuario_email__iexact=user_email).exists()
 
 
 class ChamadoSuporteViewSet(viewsets.ModelViewSet):
@@ -287,25 +314,8 @@ class ChamadoSuporteTimelineViewSet(mixins.ListModelMixin, mixins.CreateModelMix
     http_method_names = ['get', 'post', 'head', 'options']
 
     def _user_can_access_chamado(self, request, chamado_id: int) -> bool:
-        """True se o usuário é privilegiado OU dono do chamado.
-
-        Importante: em produção os chamados ficam no PORTAL externo (não na
-        nossa DB) — esta tabela `ChamadoSuporte` local fica vazia em modo
-        proxy. Se o chamado não existe localmente, não há como conferir o
-        owner aqui; libera o acesso (a gate de visibilidade real fica no
-        portal, que já é chamado pelo frontend antes de pedir a timeline).
-        Em modo local (DB própria), o filtro por email continua sendo a
-        autoridade."""
-        if _is_privileged(request.user):
-            return True
-        user_email = (request.user.email or '').strip().lower()
-        local_qs = ChamadoSuporte.objects.filter(pk=chamado_id)
-        if not local_qs.exists():
-            # Chamado mora no portal externo — sem dado local pra checar.
-            return True
-        if not user_email:
-            return False
-        return local_qs.filter(usuario_email__iexact=user_email).exists()
+        # Delega ao helper de módulo (mesma regra usada pelo viewset de resolução).
+        return _user_can_access_chamado(request, chamado_id)
 
     def list(self, request, *args, **kwargs):
         cid = request.query_params.get('chamado_id')
@@ -333,3 +343,76 @@ class ChamadoSuporteTimelineViewSet(mixins.ListModelMixin, mixins.CreateModelMix
                 detail={'detail': 'Você não tem acesso a esse chamado.'},
             )
         serializer.save(usuario=self.request.user)
+
+
+class ChamadoSuporteResolucaoViewSet(viewsets.GenericViewSet):
+    """Link + arquivo de resolução por chamado (um registro por chamado).
+
+    GET  /suporte-resolucao/?chamado_id=<id>  → objeto ou `null`.
+    POST /suporte-resolucao/  (multipart: chamado_id, link?, arquivo?)  → upsert.
+
+    Restrito a suporte/admin (mesma regra da conclusão do ticket, que só
+    privilegiados executam). Guardado localmente por `chamado_id` — funciona
+    também quando o chamado vive no portal externo.
+    """
+
+    queryset = ChamadoSuporteResolucao.objects.all()
+    serializer_class = ChamadoResolucaoSerializer
+    permission_classes = [IsAuthenticated]
+    pagination_class = None
+    http_method_names = ['get', 'post', 'head', 'options']
+
+    def _parse_chamado_id(self, raw):
+        try:
+            return int(raw)
+        except (TypeError, ValueError):
+            return None
+
+    def list(self, request, *args, **kwargs):
+        cid = request.query_params.get('chamado_id')
+        cid_int = self._parse_chamado_id(cid)
+        if cid_int is None:
+            return Response(
+                {'detail': 'Informe chamado_id válido.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if not _user_can_access_chamado(request, cid_int):
+            raise PermissionDenied(detail={'detail': 'Você não tem acesso a esse chamado.'})
+        obj = ChamadoSuporteResolucao.objects.filter(chamado_id=cid_int).first()
+        if obj is None:
+            return Response(None)
+        return Response(ChamadoResolucaoSerializer(obj, context={'request': request}).data)
+
+    def create(self, request, *args, **kwargs):
+        cid_int = self._parse_chamado_id(request.data.get('chamado_id'))
+        if cid_int is None:
+            return Response(
+                {'detail': 'Informe chamado_id válido.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        # Anexar resolução é parte de concluir o chamado — operação de suporte/admin.
+        if not _is_privileged(request.user):
+            raise PermissionDenied(
+                detail={'detail': 'Apenas suporte/admin pode anexar a resolução do chamado.'},
+            )
+
+        serializer = ChamadoResolucaoSerializer(data=request.data, context={'request': request})
+        serializer.is_valid(raise_exception=True)
+        validated = serializer.validated_data
+
+        defaults = {'usuario': request.user}
+        # Só sobrescreve campos efetivamente enviados (upsert parcial).
+        if 'link' in validated:
+            defaults['link'] = validated.get('link') or None
+        arquivo = validated.get('arquivo')
+        if arquivo is not None:
+            defaults['arquivo'] = arquivo
+
+        obj, _created = ChamadoSuporteResolucao.objects.update_or_create(
+            chamado_id=cid_int,
+            defaults=defaults,
+        )
+        return Response(
+            ChamadoResolucaoSerializer(obj, context={'request': request}).data,
+            status=status.HTTP_201_CREATED,
+        )
