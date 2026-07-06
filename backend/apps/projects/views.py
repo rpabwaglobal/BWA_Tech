@@ -1794,7 +1794,7 @@ class CardScoreViewSet(viewsets.ModelViewSet):
     filterset_fields = ['card', 'setor_solicitante']
     search_fields = ['card__nome']
     ordering_fields = ['score_final', 'updated_at', 'created_at']
-    ordering = ['-updated_at']
+    ordering = ['-score_final']
 
     def get_queryset(self):
         return (

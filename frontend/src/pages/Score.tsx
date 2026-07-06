@@ -155,23 +155,26 @@ export default function Score() {
   const filteredScores = useMemo(() => {
     const q = search.trim().toLowerCase();
     const rangeSet = new Set(scoreRanges);
-    return scores.filter((s) => {
-      if (q && !s.card_nome.toLowerCase().includes(q)) return false;
-      if (statusFilter && s.card_status !== statusFilter) return false;
-      if (respFilter) {
-        if (respFilter === '__sem__') {
-          if (s.responsavel) return false;
-        } else if (String(s.responsavel ?? '') !== respFilter) {
-          return false;
+    return scores
+      .filter((s) => {
+        if (q && !s.card_nome.toLowerCase().includes(q)) return false;
+        if (statusFilter && s.card_status !== statusFilter) return false;
+        if (respFilter) {
+          if (respFilter === '__sem__') {
+            if (s.responsavel) return false;
+          } else if (String(s.responsavel ?? '') !== respFilter) {
+            return false;
+          }
         }
-      }
-      if (sprintEmAndamento && !s.sprint_em_andamento) return false;
-      if (rangeSet.size > 0) {
-        const sf = parseFloat(s.score_final);
-        if (!rangeSet.has(String(Math.floor(sf)))) return false;
-      }
-      return true;
-    });
+        if (sprintEmAndamento && !s.sprint_em_andamento) return false;
+        if (rangeSet.size > 0) {
+          const sf = parseFloat(s.score_final);
+          if (!rangeSet.has(String(Math.floor(sf)))) return false;
+        }
+        return true;
+      })
+      // Maior score primeiro (independe da ordem de inserção local após editar/criar).
+      .sort((a, b) => parseFloat(b.score_final) - parseFloat(a.score_final));
   }, [scores, search, statusFilter, respFilter, scoreRanges, sprintEmAndamento]);
 
   // Reseta a paginação por scroll quando os filtros mudam.
