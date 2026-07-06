@@ -17,7 +17,6 @@ Including another URLconf
 from django.contrib import admin
 from django.urls import path, re_path, include
 from django.conf import settings
-from django.conf.urls.static import static
 from .views import api_root, serve_spa, serve_media
 from apps.accounts.views import RegisterView, LoginView
 
@@ -40,9 +39,8 @@ urlpatterns = [
     path('api/', include('apps.geekday.urls')),
     path('api/', include('apps.reports.urls')),
     path('api/formularios/', include('apps.formularios.urls')),
+    # serve_media trata /media/ em dev E prod (com cache imutável + 304), então
+    # dispensa o django.conf.urls.static.static() do modo DEBUG.
     path('media/<path:path>', serve_media),
     re_path(r'^(?P<path>.*)$', serve_spa),
 ]
-
-if settings.DEBUG:
-    urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)

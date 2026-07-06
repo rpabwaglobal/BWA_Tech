@@ -5,6 +5,7 @@ import unicodedata
 from rest_framework import serializers
 from .models import User, Role
 from .profile_picture_utils import get_profile_picture_url
+from .image_processing import process_profile_picture
 
 
 class UserSerializer(serializers.ModelSerializer):
@@ -134,7 +135,11 @@ class RegisterSerializer(serializers.Serializer):
             recovery_code=recovery_code,
         )
         if profile_picture:
-            user.profile_picture = profile_picture
+            processed = process_profile_picture(profile_picture)
+            if processed is not None:
+                user.profile_picture.save(processed.name, processed, save=False)
+            else:
+                user.profile_picture = profile_picture
             user.save(update_fields=['profile_picture'])
         return user
 

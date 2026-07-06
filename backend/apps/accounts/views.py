@@ -20,6 +20,7 @@ except ImportError:  # pragma: no cover
     Image = None  # type: ignore[assignment]
 
 from .models import User
+from .image_processing import process_profile_picture
 from .serializers import (
     UserSerializer,
     LoginSerializer,
@@ -184,7 +185,12 @@ class UserViewSet(viewsets.ModelViewSet):
         # Remove foto anterior se existir
         if request.user.profile_picture:
             request.user.profile_picture.delete(save=False)
-        request.user.profile_picture = file
+        # Redimensiona/re-encoda e gera nome único (uuid) → download leve + cache imutável.
+        processed = process_profile_picture(file)
+        if processed is not None:
+            request.user.profile_picture.save(processed.name, processed, save=False)
+        else:
+            request.user.profile_picture = file
         request.user.save(update_fields=['profile_picture'])
         serializer = self.get_serializer(request.user)
         return Response(serializer.data)
