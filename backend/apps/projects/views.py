@@ -73,6 +73,25 @@ def _move_project_cards_status(project, from_stage_key, to_stage_key, user=None)
     return cards_qs.update(status=to_stage_key)
 
 
+def _sprint_efetivamente_fechada(sprint):
+    """Sprint fechada: flag `finalizada` OU já passou do `fechamento_em`
+    (mesma regra do frontend `isSprintPastFechamento`)."""
+    if sprint is None:
+        return False
+    if sprint.finalizada:
+        return True
+    return sprint.fechamento_em is not None and sprint.fechamento_em <= timezone.now()
+
+
+def _card_edicao_restrita(card):
+    """True quando o card só pode ser editado/excluído por admin/supervisor:
+    card finalizado/inviabilizado, ou pertencente a uma sprint já fechada."""
+    if card.status in (CardStatus.FINALIZADO, CardStatus.INVIABILIZADO):
+        return True
+    sprint = getattr(card.projeto, 'sprint', None) if getattr(card, 'projeto_id', None) else None
+    return _sprint_efetivamente_fechada(sprint)
+
+
 class SprintViewSet(viewsets.ModelViewSet):
     queryset = Sprint.objects.all()
     serializer_class = SprintSerializer
@@ -82,6 +101,31 @@ class SprintViewSet(viewsets.ModelViewSet):
     search_fields = ['nome']
     ordering_fields = ['data_inicio', 'fechamento_em', 'created_at']
     ordering = ['-data_inicio']
+
+    def get_permissions(self):
+        # Criar/editar/excluir sprint: só supervisor/admin (espelha `canCreate`
+        # no front). Restrições extras de sprint finalizada em update/destroy.
+        if self.action in ('create', 'update', 'partial_update', 'destroy'):
+            return [IsAdminOrSupervisor()]
+        return super().get_permissions()
+
+    def update(self, request, *args, **kwargs):
+        sprint = self.get_object()
+        if _sprint_efetivamente_fechada(sprint) and request.user.role != 'admin':
+            return Response(
+                {'detail': 'Sprints finalizadas só podem ser editadas por administrador.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        return super().update(request, *args, **kwargs)
+
+    def destroy(self, request, *args, **kwargs):
+        sprint = self.get_object()
+        if _sprint_efetivamente_fechada(sprint) and request.user.role != 'admin':
+            return Response(
+                {'detail': 'Apenas administradores podem excluir sprints finalizadas.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        return super().destroy(request, *args, **kwargs)
 
     def get_queryset(self):
         hoje = timezone.localdate()
@@ -270,6 +314,13 @@ class ProjectViewSet(viewsets.ModelViewSet):
     search_fields = ['nome', 'descricao']
     ordering_fields = ['created_at', 'data_criacao', 'data_entrega', 'arquivado_em']
     ordering = ['-created_at']
+
+    def get_permissions(self):
+        # Criar/editar projeto: só supervisor/admin (espelha `canManageProjects`
+        # no front). Excluir já é coberto por `_ensure_can_manage` no destroy.
+        if self.action in ('create', 'update', 'partial_update'):
+            return [IsAdminOrSupervisor()]
+        return super().get_permissions()
 
     def get_queryset(self):
         # Contagens agregadas para evitar download de cards no frontend.
@@ -847,7 +898,17 @@ class CardViewSet(viewsets.ModelViewSet):
         """Permite atualização apenas se o usuário for o criador ou supervisor/admin"""
         instance = self.get_object()
         user = request.user
-        
+        is_privileged = user.role in ('supervisor', 'admin')
+
+        # Card finalizado/inviabilizado ou de sprint fechada: só admin/supervisor
+        # pode editar (cobre PATCH/PUT, inclusive mover status pelo board).
+        if not is_privileged and _card_edicao_restrita(instance):
+            return Response(
+                {'detail': 'Cards finalizados/inviabilizados ou de sprints finalizadas '
+                           'só podem ser editados por supervisor ou admin.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
         # Verificar se é uma demanda (card no projeto "Sugestões")
         try:
             is_demanda = instance.projeto and instance.projeto.nome == 'Sugestões'
@@ -855,10 +916,10 @@ class CardViewSet(viewsets.ModelViewSet):
             # Se houver erro ao acessar projeto, recarregar com select_related
             instance = Card.objects.select_related('projeto', 'criado_por').get(pk=instance.pk)
             is_demanda = instance.projeto and instance.projeto.nome == 'Sugestões'
-        
+
         if is_demanda:
             # Para demandas: apenas o criador pode editar (ou supervisor/admin)
-            if user.role not in ['supervisor', 'admin']:
+            if not is_privileged:
                 # Comparar IDs para evitar problemas de comparação de objetos
                 criado_por_id = instance.criado_por.id if instance.criado_por else None
                 user_id = user.id if user else None
@@ -867,14 +928,23 @@ class CardViewSet(viewsets.ModelViewSet):
                         {'detail': 'Você só pode editar demandas que você mesmo criou.'},
                         status=status.HTTP_403_FORBIDDEN
                     )
-        
+
         return super().update(request, *args, **kwargs)
     
     def destroy(self, request, *args, **kwargs):
         """Permite exclusão apenas se o usuário for o criador ou supervisor/admin"""
         instance = self.get_object()
         user = request.user
-        
+        is_privileged = user.role in ('supervisor', 'admin')
+
+        # Card finalizado/inviabilizado ou de sprint fechada: só admin/supervisor exclui.
+        if not is_privileged and _card_edicao_restrita(instance):
+            return Response(
+                {'detail': 'Cards finalizados/inviabilizados ou de sprints finalizadas '
+                           'só podem ser excluídos por supervisor ou admin.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
         # Verificar se é uma demanda (card no projeto "Sugestões")
         try:
             is_demanda = instance.projeto and instance.projeto.nome == 'Sugestões'
@@ -882,10 +952,10 @@ class CardViewSet(viewsets.ModelViewSet):
             # Se houver erro ao acessar projeto, recarregar com select_related
             instance = Card.objects.select_related('projeto', 'criado_por').get(pk=instance.pk)
             is_demanda = instance.projeto and instance.projeto.nome == 'Sugestões'
-        
+
         if is_demanda:
             # Para demandas: apenas o criador pode deletar (ou supervisor/admin)
-            if user.role not in ['supervisor', 'admin']:
+            if not is_privileged:
                 # Comparar IDs para evitar problemas de comparação de objetos
                 criado_por_id = instance.criado_por.id if instance.criado_por else None
                 user_id = user.id if user else None
@@ -894,7 +964,7 @@ class CardViewSet(viewsets.ModelViewSet):
                         {'detail': 'Você só pode deletar demandas que você mesmo criou.'},
                         status=status.HTTP_403_FORBIDDEN
                     )
-        
+
         return super().destroy(request, *args, **kwargs)
     
     @action(detail=False, methods=['get'], url_path='priorities_view')
@@ -1336,7 +1406,12 @@ class WeeklyPriorityViewSet(viewsets.ModelViewSet):
         usuario = validated_data.get('usuario')
         card = validated_data.get('card')
         semana_inicio = validated_data.get('semana_inicio')
-        
+
+        # Semana fechada = prioridades travadas (usar clear-priorities pra resetar).
+        if semana_inicio and WeeklyPriorityConfig.get_config().is_semana_fechada(semana_inicio):
+            from rest_framework.exceptions import ValidationError
+            raise ValidationError({'non_field_errors': ['A semana está fechada; não é possível definir prioridades.']})
+
         existing = WeeklyPriority.objects.filter(
             usuario=usuario,
             card=card,
@@ -1357,14 +1432,22 @@ class WeeklyPriorityViewSet(viewsets.ModelViewSet):
         if self.request.user.role not in ['supervisor', 'admin']:
             from rest_framework.exceptions import PermissionDenied
             raise PermissionDenied("Apenas supervisores e administradores podem atualizar prioridades semanais.")
+        semana_inicio = serializer.instance.semana_inicio
+        if WeeklyPriorityConfig.get_config().is_semana_fechada(semana_inicio):
+            from rest_framework.exceptions import ValidationError
+            raise ValidationError({'non_field_errors': ['A semana está fechada; não é possível alterar prioridades.']})
         # Atualizar quem definiu a prioridade
         serializer.save(definido_por=self.request.user)
-    
+
     def destroy(self, request, *args, **kwargs):
         # Verificar se o usuário é supervisor ou admin
         if request.user.role not in ['supervisor', 'admin']:
             from rest_framework.exceptions import PermissionDenied
             raise PermissionDenied("Apenas supervisores e administradores podem remover prioridades semanais.")
+        instance = self.get_object()
+        if WeeklyPriorityConfig.get_config().is_semana_fechada(instance.semana_inicio):
+            from rest_framework.exceptions import ValidationError
+            raise ValidationError({'non_field_errors': ['A semana está fechada; use "limpar prioridades" para resetar.']})
         return super().destroy(request, *args, **kwargs)
     
     @action(detail=False, methods=['get'], url_path='current_week')
@@ -1434,6 +1517,29 @@ class CardDueDateChangeRequestViewSet(viewsets.ModelViewSet):
             raise ValidationError({'requested_date': 'requested_date é obrigatório.'})
 
         serializer.save(requested_by=self.request.user)
+
+    def update(self, request, *args, **kwargs):
+        # A avaliação (status) muda pelas actions approve/reject. PATCH/PUT direto
+        # só supervisor/admin — evita burlar o fluxo pelo endpoint.
+        if request.user.role not in ('supervisor', 'admin'):
+            return Response(
+                {'detail': 'Apenas supervisor ou admin podem alterar solicitações.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        return super().update(request, *args, **kwargs)
+
+    def destroy(self, request, *args, **kwargs):
+        instance = self.get_object()
+        is_privileged = request.user.role in ('supervisor', 'admin')
+        is_dono_pendente = (
+            instance.requested_by_id == request.user.id and instance.status == 'pending'
+        )
+        if not is_privileged and not is_dono_pendente:
+            return Response(
+                {'detail': 'Sem permissão para excluir esta solicitação.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        return super().destroy(request, *args, **kwargs)
 
     @action(detail=True, methods=['post'])
     def approve(self, request, pk=None):

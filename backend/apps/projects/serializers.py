@@ -58,6 +58,17 @@ def format_user_name(user):
     return user.username
 
 
+def _user_pode_ver_score(request):
+    """Score é uma feature de supervisão: só admin/supervisor enxergam a nota
+    (badge nos cards). Demais usuários recebem score_final = None."""
+    user = getattr(request, 'user', None)
+    return bool(
+        user
+        and getattr(user, 'is_authenticated', False)
+        and user.role in ('admin', 'supervisor')
+    )
+
+
 class SprintSerializer(serializers.ModelSerializer):
     supervisor_name = serializers.SerializerMethodField()
     # Sem input_formats restritivos: usa o padrão DRF (ISO 8601 / parse_datetime),
@@ -384,6 +395,8 @@ class CardSerializer(DevTimeFormattedMixin, serializers.ModelSerializer):
         return obj.events.count()
 
     def get_score_final(self, obj):
+        if not _user_pode_ver_score(self.context.get('request')):
+            return None
         try:
             return obj.score.score_final
         except CardScore.DoesNotExist:
@@ -802,6 +815,8 @@ class CardKanbanSerializer(DevTimeFormattedMixin, serializers.ModelSerializer):
         return obj.events.count()
 
     def get_score_final(self, obj):
+        if not _user_pode_ver_score(self.context.get('request')):
+            return None
         try:
             return obj.score.score_final
         except CardScore.DoesNotExist:
@@ -1217,6 +1232,8 @@ class CardPickerSerializer(serializers.ModelSerializer):
         return sprint.nome if sprint else None
 
     def get_score_final(self, obj):
+        if not _user_pode_ver_score(self.context.get('request')):
+            return None
         try:
             return obj.score.score_final
         except CardScore.DoesNotExist:

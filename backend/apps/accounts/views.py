@@ -8,6 +8,7 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.authtoken.models import Token
+from .permissions import IsAdminOrSupervisor
 from rest_framework.throttling import AnonRateThrottle
 from django.contrib.auth import login, logout
 from django.utils.decorators import method_decorator
@@ -96,6 +97,33 @@ class UserViewSet(viewsets.ModelViewSet):
     queryset = User.objects.exclude(role='admin')
     serializer_class = UserSerializer
     permission_classes = [IsAuthenticated]
+
+    def get_permissions(self):
+        # Criação de conta legítima passa pelo RegisterView; aqui restringimos.
+        # Excluir usuário também é ação de gestão (admin/supervisor).
+        if self.action in ('create', 'destroy'):
+            return [IsAdminOrSupervisor()]
+        return super().get_permissions()
+
+    def update(self, request, *args, **kwargs):
+        """Editar usuário: o próprio (perfil) ou admin/supervisor (gestão/papel).
+        Usuário comum não pode alterar o próprio papel (escalonamento)."""
+        instance = self.get_object()
+        is_privileged = request.user.role in ('admin', 'supervisor')
+        is_self = instance.pk == request.user.pk
+        if not is_privileged and not is_self:
+            return Response(
+                {'detail': 'Sem permissão para editar este usuário.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        if not is_privileged and 'role' in request.data:
+            novo = request.data.get('role')
+            if novo and novo != instance.role:
+                return Response(
+                    {'detail': 'Você não pode alterar o próprio papel.'},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+        return super().update(request, *args, **kwargs)
 
     def get_queryset(self):
         """Excluir admins das listagens; permitir que o usuário acesse o próprio perfil (retrieve/update)."""
