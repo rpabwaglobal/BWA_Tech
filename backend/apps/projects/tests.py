@@ -12,7 +12,13 @@ from apps.projects.models import (
     CardLog,
     CardLogEventType,
 )
-from apps.projects.services import data_inicio_para_status, finalizar_sprint_replicacao
+from apps.projects.services import (
+    data_inicio_para_status,
+    finalizar_sprint_replicacao,
+    outra_sprint_em_andamento,
+    sprint_esta_em_andamento_janela,
+)
+from apps.projects.serializers import SprintSerializer
 
 
 class CardDataInicioTests(TestCase):
@@ -141,3 +147,45 @@ class CardSaveDataInicioTests(TestCase):
         )
         card.refresh_from_db()
         self.assertIsNone(card.data_inicio)
+
+
+class SprintUnicaEmAndamentoTests(TestCase):
+    def setUp(self):
+        User = get_user_model()
+        self.user = User.objects.create_user(
+            username='sprintadmin',
+            email='sprintadmin@example.com',
+            password='pass12345',
+            role='admin',
+        )
+        tz = timezone.get_current_timezone()
+        hoje = timezone.now().date()
+        fim = hoje + timedelta(days=13)
+        self.sprint_ativa = Sprint.objects.create(
+            nome='Sprint Ativa',
+            data_inicio=timezone.make_aware(datetime.combine(hoje, time.min), tz),
+            fechamento_em=timezone.make_aware(datetime.combine(fim, time(23, 0)), tz),
+            duracao_dias=14,
+            supervisor=self.user,
+        )
+
+    def test_sprint_ativa_detectada_na_janela(self):
+        self.assertTrue(sprint_esta_em_andamento_janela(self.sprint_ativa))
+
+    def test_nao_permite_segunda_sprint_na_mesma_janela(self):
+        tz = timezone.get_current_timezone()
+        hoje = timezone.now().date()
+        fim = hoje + timedelta(days=10)
+        data = {
+            'nome': 'Sprint Duplicada',
+            'data_inicio': timezone.make_aware(datetime.combine(hoje, time.min), tz),
+            'fechamento_em': timezone.make_aware(datetime.combine(fim, time(23, 0)), tz),
+            'supervisor': self.user.pk,
+        }
+        serializer = SprintSerializer(data=data)
+        self.assertFalse(serializer.is_valid())
+        self.assertIn('non_field_errors', serializer.errors)
+
+    def test_outra_sprint_em_andamento_exclui_a_propria(self):
+        self.assertIsNone(outra_sprint_em_andamento(exclude_pk=self.sprint_ativa.pk))
+        self.assertEqual(outra_sprint_em_andamento(), self.sprint_ativa)

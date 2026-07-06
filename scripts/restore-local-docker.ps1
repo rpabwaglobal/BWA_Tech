@@ -15,8 +15,22 @@ $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $root = Split-Path -Parent $scriptDir
 Set-Location $root
 
-# Alinhado com deploy.sh / deploy.bat (COMPOSE_PROJECT_NAME=bwaproj)
-if (-not $env:COMPOSE_PROJECT_NAME) { $env:COMPOSE_PROJECT_NAME = 'bwaproj' }
+function Resolve-ComposeProjectName {
+    if ($env:COMPOSE_PROJECT_NAME) { return }
+    $running = @(docker ps --format '{{.Names}}' 2>$null)
+    if ($running | Where-Object { $_ -match '^bwa_tech-db-' }) {
+        $env:COMPOSE_PROJECT_NAME = 'bwa_tech'
+        return
+    }
+    if ($running | Where-Object { $_ -match '^bwaproj-db-' }) {
+        $env:COMPOSE_PROJECT_NAME = 'bwaproj'
+        return
+    }
+    $env:COMPOSE_PROJECT_NAME = 'bwaproj'
+}
+
+Resolve-ComposeProjectName
+Write-Host "Compose project: $($env:COMPOSE_PROJECT_NAME)"
 
 $resolved = Resolve-Path -LiteralPath $DumpPath
 $workFile = $resolved.Path

@@ -31,6 +31,7 @@ from .models import (
 from apps.accounts.serializers import UserSerializer
 from apps.accounts.profile_picture_utils import get_profile_picture_url
 from .dev_time_format import format_minutos_uteis, format_segundos_corridos
+from .services import outra_sprint_em_andamento, sprint_esta_em_andamento_janela
 
 
 class DevTimeFormattedMixin(serializers.Serializer):
@@ -122,6 +123,21 @@ class SprintSerializer(serializers.ModelSerializer):
             if fe < di:
                 raise serializers.ValidationError(
                     {'fechamento_em': 'A data/hora de fechamento não pode ser anterior ao início da sprint.'}
+                )
+
+        # Uma sprint em andamento por vez (janela ativa alinhada ao frontend).
+        inst = self.instance
+        probe = Sprint(
+            data_inicio=di if di is not None else (inst.data_inicio if inst else None),
+            fechamento_em=fe if fe is not None else (inst.fechamento_em if inst else None),
+            finalizada=attrs.get('finalizada', inst.finalizada if inst else False),
+        )
+        if sprint_esta_em_andamento_janela(probe):
+            other = outra_sprint_em_andamento(exclude_pk=inst.pk if inst else None)
+            if other is not None:
+                raise serializers.ValidationError(
+                    f'Já existe uma sprint em andamento («{other.nome}»). '
+                    'Finalize-a antes de abrir outra na mesma janela.'
                 )
         return attrs
 

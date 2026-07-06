@@ -47,6 +47,7 @@ import {
   isSprintPastFechamento,
   sprintFimDiaParaCalendario,
   sprintInicioDiaParaCalendario,
+  getSprintsEmAndamentoJanela,
 } from '@/lib/sprintFechamento';
 import { ROUTES } from '@/routes';
 
@@ -136,6 +137,9 @@ export default function Sprints() {
   // Categorizar sprints (início e fim respeitam data e hora)
   const categorizeSprints = (sprintsToCategorize: Sprint[]) => {
     const nowMs = Date.now();
+    const activeIds = new Set(
+      getSprintsEmAndamentoJanela(sprintsToCategorize).map((s) => String(s.id)),
+    );
 
     const emAndamento: Sprint[] = [];
     const planejadas: Sprint[] = [];
@@ -144,12 +148,14 @@ export default function Sprints() {
     sprintsToCategorize.forEach((sprint) => {
       const startMs = new Date(sprint.data_inicio).getTime();
 
-      if (sprint.finalizada) {
+      if (sprint.finalizada || isSprintPastFechamento(sprint)) {
         finalizadas.push(sprint);
+      } else if (activeIds.has(String(sprint.id))) {
+        emAndamento.push(sprint);
       } else if (nowMs < startMs) {
         planejadas.push(sprint);
       } else {
-        emAndamento.push(sprint);
+        finalizadas.push(sprint);
       }
     });
 
@@ -472,7 +478,7 @@ export default function Sprints() {
       {/* Actions */}
       <div className="flex items-center justify-between gap-[16px]">
         <p className="text-[var(--color-muted-foreground)]">
-          Gerencie as sprints e seus prazos
+          Gerencie todas as sprints, prazos e histórico
         </p>
         {canCreate && (
           <Button onClick={openCreateSprintDialog}>

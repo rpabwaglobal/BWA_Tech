@@ -6,6 +6,8 @@
 #   chmod +x scripts/dump-prod-postgres.sh
 #   ./scripts/dump-prod-postgres.sh
 #
+# Na VPS Hostinger (/opt/bwa_tech) detecta automaticamente COMPOSE_PROJECT_NAME=bwa_tech.
+# Do Windows (gera na VPS e baixa): .\scripts\fetch-prod-dump.ps1 -VpsHost <IP>
 # Se o serviço do Postgres no compose não se chama "db":
 #   COMPOSE_DB_SERVICE=nome_do_servico ./scripts/dump-prod-postgres.sh
 #
@@ -23,15 +25,25 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$ROOT"
 
-# Mesmo nome de projeto que deploy.sh e deploy.bat (linha COMPOSE_PROJECT_NAME=bwaproj).
-# Sem isto, o Docker Compose usa o nome da pasta (ex.: GerProj → gerproj) e não encontra
-# os containers do deploy — daí "service db is not running".
-export COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-bwaproj}"
+# bwaproj (local) vs bwa_tech (VPS /opt/bwa_tech) — ver compose-project-name.sh
+# shellcheck source=compose-project-name.sh
+source "$SCRIPT_DIR/compose-project-name.sh"
+resolve_compose_project_name
+echo "Compose project: ${COMPOSE_PROJECT_NAME}"
 
 mkdir -p backups
 chmod 0700 backups 2>/dev/null || true
 STAMP="$(date +%Y%m%d_%H%M%S)"
 OUT="backups/bwaproj_prod_${STAMP}.dump"
+
+print_dump_done() {
+  echo "Pronto: ${OUT}.gz"
+  echo "DUMP_FILE=${OUT}.gz"
+  echo "Para copiar ao PC (exemplo):"
+  echo "  scp root@<VPS>:${ROOT}/${OUT}.gz ./backend/dump_banco_prod/"
+  echo "Ou do Windows: .\\scripts\\fetch-prod-dump.ps1 -VpsHost <IP>"
+  echo "Para restaurar no Windows (dev): .\\scripts\\restore-dump-banco-prod.ps1"
+}
 
 run_pg_dump_in_container() {
   local ctr="$1"
@@ -59,7 +71,7 @@ fail_with_help() {
   echo "  Ajustes comuns:"
   echo "    • Subir o serviço do banco: docker compose up -d db   (ou o nome do serviço no seu compose)"
   echo "    • Se o serviço tiver outro nome: COMPOSE_DB_SERVICE=postgres ./scripts/dump-prod-postgres.sh"
-  echo "    • Se souber o nome do container: PG_DUMP_CONTAINER=meu_container_postgres ./scripts/dump-prod-postgres.sh"
+  echo "    • Se souber o nome do container: PG_DUMP_CONTAINER=bwa_tech-db-1 ./scripts/dump-prod-postgres.sh"
   echo "    • Postgres no Ubuntu (sem Docker): DUMP_USE_HOST_PG=1 ./scripts/dump-prod-postgres.sh"
   echo ""
   exit 1
@@ -73,7 +85,7 @@ if [ "${DUMP_USE_HOST_PG:-0}" = "1" ]; then
   echo "Gerando dump (formato custom -Fc) em $OUT ..."
   pg_dump -Fc --no-owner --no-acl > "$OUT"
   gzip -f "$OUT"
-  echo "Pronto: ${OUT}.gz"
+  print_dump_done
   exit 0
 fi
 
@@ -84,7 +96,7 @@ if [ -n "${PG_DUMP_CONTAINER:-}" ]; then
   fi
   run_pg_dump_in_container "$PG_DUMP_CONTAINER" > "$OUT"
   gzip -f "$OUT"
-  echo "Pronto: ${OUT}.gz"
+  print_dump_done
   exit 0
 fi
 
@@ -115,6 +127,4 @@ docker compose exec -T "$DB_SVC" pg_dump \
   > "$OUT"
 
 gzip -f "$OUT"
-echo "Pronto: ${OUT}.gz"
-echo "Para restaurar na VPS (Linux): scripts/restore-prod-docker.sh"
-echo "Para restaurar no Windows (dev): scripts/restore-local-docker.ps1"
+print_dump_done

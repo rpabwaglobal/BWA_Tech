@@ -45,7 +45,7 @@ const ADMIN_TOOLS: AdminTool[] = [
   {
     title: 'Sprints',
     description: 'Excluir sprints finalizadas e gerir o ciclo de iterações.',
-    href: ROUTES.sprint,
+    href: ROUTES.sprintGerenciar,
     icon: Zap,
   },
   {

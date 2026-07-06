@@ -9,7 +9,7 @@ import { ROUTES } from '@/routes';
 
 const pageTitlesExact: Record<string, string> = {
   [ROUTES.painel]: 'Dashboard',
-  [ROUTES.sprint]: 'Sprints',
+  [ROUTES.sprintGerenciar]: 'Gerenciar Sprints',
   [ROUTES.projetos]: 'Projetos',
   [ROUTES.pessoas]: 'Pessoas',
   [ROUTES.prioridades]: 'Prioridades',

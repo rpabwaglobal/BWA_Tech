@@ -69,3 +69,17 @@ export function getSprintsEmAndamentoJanela(sprints: Sprint[]): Sprint[] {
 export function getSprintIdsEmAndamentoJanela(sprints: Sprint[]): Set<string> {
   return new Set(getSprintsEmAndamentoJanela(sprints).map((s) => String(s.id)));
 }
+
+/** Uma sprint está na janela ativa (em andamento). */
+export function isSprintEmAndamentoJanela(sprint: Sprint): boolean {
+  return getSprintsEmAndamentoJanela([sprint]).length > 0;
+}
+
+/** Sprint ativa principal (mais recente por `data_inicio` se houver legado com mais de uma). */
+export function getSprintEmAndamentoPrincipal(sprints: Sprint[]): Sprint | null {
+  const active = getSprintsEmAndamentoJanela(sprints);
+  if (!active.length) return null;
+  return [...active].sort(
+    (a, b) => new Date(b.data_inicio).getTime() - new Date(a.data_inicio).getTime(),
+  )[0];
+}

@@ -1,8 +1,10 @@
 # Restaura o dump colocado em backend/dump_banco_prod/ (ex.: cópia de produção).
 # Uso (PowerShell, na raiz do repositório):
 #   .\scripts\restore-dump-banco-prod.ps1
-# Ou indicando o ficheiro:
-#   .\scripts\restore-dump-banco-prod.ps1 -DumpPath .\backend\dump_banco_prod\bwaproj_prod_20260408_170434.dump.gz
+#
+# Para baixar da VPS e restaurar de uma vez:
+#   $env:BWA_VPS_HOST = 'IP_DA_VPS'
+#   .\scripts\fetch-prod-dump.ps1 -Restore
 
 param(
     [string] $DumpPath = ""

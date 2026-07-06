@@ -7,6 +7,7 @@ import Register from './pages/Register';
 import RecoverAccount from './pages/RecoverAccount';
 import Dashboard from './pages/Dashboard';
 import Sprints from './pages/Sprints';
+import SprintEntryRedirect from './components/SprintEntryRedirect';
 import SprintDetails from './pages/SprintDetails';
 import ProjectDetails from './pages/ProjectDetails';
 import Projects from './pages/Projects';
@@ -153,9 +154,10 @@ function AppRoutes() {
       >
         <Route index element={<Navigate to={ROUTES.painel} replace />} />
         <Route path={ROUTES.painel.replace(/^\//, '')} element={<Dashboard />} />
+        <Route path="sprint/gerenciar" element={<Sprints />} />
         <Route path="sprint/:sprintId/card/:cardId" element={<SprintDetails />} />
         <Route path="sprint/:sprintId" element={<SprintDetails />} />
-        <Route path={ROUTES.sprint.replace(/^\//, '')} element={<Sprints />} />
+        <Route path={ROUTES.sprint.replace(/^\//, '')} element={<SprintEntryRedirect />} />
         <Route path="iteracoes" element={<Navigate to={ROUTES.sprint} replace />} />
         <Route path="iteracao/:sprintId" element={<LegacySprintPorIdRedirect />} />
         <Route path="sprints" element={<Navigate to={ROUTES.sprint} replace />} />

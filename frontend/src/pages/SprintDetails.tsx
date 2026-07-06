@@ -87,6 +87,7 @@ import {
   isSprintPastFechamento,
   sprintFimDiaParaCalendario,
   sprintInicioDiaParaCalendario,
+  isSprintEmAndamentoJanela,
 } from '@/lib/sprintFechamento';
 import {
   getColumnDefsByGroup,
@@ -1554,7 +1555,7 @@ export default function SprintDetails() {
     try {
       await sprintService.delete(sprint.id);
       setDeleteSprintDialogOpen(false);
-      navigate(ROUTES.sprint);
+      navigate(ROUTES.sprintGerenciar);
     } catch (error) {
       console.error('Erro ao excluir sprint:', error);
     } finally {
@@ -2109,6 +2110,17 @@ export default function SprintDetails() {
             >
               <CheckCircle2 className="mr-[8px] h-[16px] w-[16px] text-green-600" />
               Finalizar sprint
+            </Button>
+          )}
+          {sprint && isSprintEmAndamentoJanela(sprint) && (
+            <Button
+              variant="outline"
+              size="default"
+              onClick={() => navigate(ROUTES.sprintGerenciar)}
+              className="h-[40px]"
+            >
+              <FolderKanban className="mr-[8px] h-[16px] w-[16px]" />
+              Gerenciar Sprints
             </Button>
           )}
           {canCreate && sprint && !isSprintFinished(sprint) && (

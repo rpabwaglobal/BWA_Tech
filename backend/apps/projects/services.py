@@ -139,6 +139,34 @@ def dedupe_cards_mesmo_nome_em_todos_projetos_da_sprint(sprint_id: int) -> list[
     return removed
 
 
+def sprint_esta_em_andamento_janela(sprint) -> bool:
+    """Mesma regra do frontend (`getSprintsEmAndamentoJanela`): não finalizada,
+    dia local >= início e instante atual <= fechamento_em."""
+    if not sprint or sprint.finalizada:
+        return False
+    now = timezone.now()
+    if sprint.fechamento_em and sprint.fechamento_em < now:
+        return False
+    if sprint.data_inicio:
+        di = sprint.data_inicio
+        if timezone.is_naive(di):
+            di = timezone.make_aware(di, timezone.get_current_timezone())
+        if timezone.localtime(now).date() < timezone.localtime(di).date():
+            return False
+    return True
+
+
+def outra_sprint_em_andamento(exclude_pk=None):
+    """Retorna outra sprint na janela ativa, ou None."""
+    qs = Sprint.objects.filter(finalizada=False)
+    if exclude_pk is not None:
+        qs = qs.exclude(pk=exclude_pk)
+    for other in qs.order_by('-data_inicio'):
+        if sprint_esta_em_andamento_janela(other):
+            return other
+    return None
+
+
 def get_proxima_sprint(sprint):
     """
     Retorna a sprint de destino para replicação: sprint em andamento ou
@@ -146,14 +174,10 @@ def get_proxima_sprint(sprint):
     """
     agora = timezone.now()
     fim_dia = timezone.localtime(sprint.fechamento_em).date()
-    # 1) Outra sprint ainda aberta (já começou no relógio e ainda não fechou)
-    em_andamento = Sprint.objects.filter(
-        finalizada=False,
-        data_inicio__lte=agora,
-        fechamento_em__gt=agora,
-    ).exclude(pk=sprint.pk).order_by('data_inicio').first()
-    if em_andamento:
-        return em_andamento
+    # 1) Outra sprint na janela ativa (mesma regra do dashboard / menu Sprints)
+    for candidata in Sprint.objects.filter(finalizada=False).exclude(pk=sprint.pk).order_by('data_inicio'):
+        if sprint_esta_em_andamento_janela(candidata):
+            return candidata
     # 2) Próxima cadastrada com início (data local) após o dia de término desta sprint
     proxima = Sprint.objects.filter(
         data_inicio__date__gt=fim_dia,

@@ -13,6 +13,7 @@ import type { Project } from '@/services/projectService';
 import { formatDate } from '@/lib/dateUtils';
 import { QuickCreateCardModal } from '@/components/QuickCreateCardModal';
 import { ROUTES } from '@/routes';
+import { getSprintEmAndamentoPrincipal } from '@/lib/sprintFechamento';
 import { isAdminUser } from '@/lib/roles';
 import {
   Zap,
@@ -102,7 +103,12 @@ export default function Dashboard() {
       });
 
       // Guarda a primeira sprint ativa para o atalho "Meus Cards"
-      setActiveSprintId(sprintsEmAndamento[0] ? String(sprintsEmAndamento[0].id) : null);
+      setActiveSprintId(
+        (() => {
+          const principal = getSprintEmAndamentoPrincipal(sprints);
+          return principal ? String(principal.id) : null;
+        })(),
+      );
 
       // Filtrar projetos das sprints em andamento
       const projetosSprintsAtivas = projects.filter((project) => {
@@ -183,41 +189,19 @@ export default function Dashboard() {
 
       setCardsInDevelopment(cardsEmDesenvolvimento);
 
-      // Filtrar usuários sem projetos OU cards atribuídos nas sprints em andamento
-      // Um usuário tem projeto em andamento se:
-      // 1. É desenvolvedor atribuído a um projeto de sprint em andamento (project.desenvolvedor)
-      // 2. É gerente atribuído a um projeto de sprint em andamento (project.gerente_atribuido)
-      // 3. Tem cards atribuídos em projetos de sprints em andamento (card.responsavel)
-      const usersWithProjects = new Set<string>();
-      const activeProjectIds = new Set(
-        projetosSprintsAtivas.map((project) => String(project.id || ''))
-      );
-
-      // Adicionar desenvolvedores/gerentes atribuídos a projetos das sprints em andamento
-      projetosSprintsAtivas.forEach((project) => {
-        if (project.desenvolvedor) {
-          usersWithProjects.add(String(project.desenvolvedor));
-        }
-        if (project.gerente_atribuido) {
-          usersWithProjects.add(String(project.gerente_atribuido));
-        }
+      // "Sem card": usuário (dev, exceto admin/supervisor) que NÃO tem nenhum
+      // card atribuído EM DESENVOLVIMENTO na sprint em andamento.
+      const usersWithCards = new Set<string>();
+      allCardsInDevelopment.forEach((card) => {
+        if (card.responsavel) usersWithCards.add(String(card.responsavel));
       });
 
-      // Adicionar usuários que têm cards atribuídos em projetos das sprints em andamento
-      cardsSprintsAtivas.forEach((card) => {
-        if (!card.responsavel || !card.projeto) return;
-        const cardProjectId = String(card.projeto);
-        if (!activeProjectIds.has(cardProjectId)) return;
-        usersWithProjects.add(String(card.responsavel));
-      });
-
-      // Filtrar usuários sem projetos em andamento (exceto admin e supervisor)
-      const usersWithout = developers.filter(dev => 
-        dev.role !== 'admin' && 
+      const usersWithout = developers.filter(dev =>
+        dev.role !== 'admin' &&
         dev.role !== 'supervisor' &&
-        !usersWithProjects.has(dev.id)
+        !usersWithCards.has(dev.id)
       );
-      
+
       setDevelopersWithoutCards(usersWithout);
     } catch (error) {
       console.error('Erro ao carregar dados:', error);
@@ -525,21 +509,21 @@ export default function Dashboard() {
           </CardContent>
         </Card>
 
-        {/* Usuários sem Projeto */}
+        {/* Usuários sem card */}
         <Card>
           <CardHeader className="p-[24px]">
             <CardTitle className="flex items-center gap-[8px]">
               <UserX className="h-[20px] w-[20px]" />
-              Usuários sem Projeto
+              Usuários sem card
             </CardTitle>
             <CardDescription>
-              Usuários sem projetos ou cards atribuídos
+              Sem card em desenvolvimento na sprint em andamento
             </CardDescription>
           </CardHeader>
           <CardContent className="p-[24px] pt-0">
             {developersWithoutCards.length === 0 ? (
               <p className="text-center py-[32px] text-[var(--color-muted-foreground)]">
-                Todos os usuários têm projetos ou cards atribuídos.
+                Todos os usuários têm card em desenvolvimento.
               </p>
             ) : (
               <div className="space-y-[16px] max-h-[400px] overflow-y-auto pr-2">

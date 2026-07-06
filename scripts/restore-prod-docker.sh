@@ -16,6 +16,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$ROOT"
 
+# shellcheck source=compose-project-name.sh
+source "$SCRIPT_DIR/compose-project-name.sh"
+resolve_compose_project_name
+
 if [ "${#}" -lt 1 ]; then
   echo "Uso: $0 <ficheiro.dump.gz|ficheiro.dump>"
   exit 1

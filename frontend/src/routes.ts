@@ -7,8 +7,10 @@ export const ROUTES = {
   cadastro: '/cadastro',
   recuperarConta: '/recuperar-conta',
   painel: '/painel',
-  /** Lista de sprints (segmento singular, como pedido) */
+  /** Entrada do menu Sprints → redireciona para a sprint em andamento */
   sprint: '/sprint',
+  /** Lista completa de sprints (antiga rota `/sprint`) */
+  sprintGerenciar: '/sprint/gerenciar',
   sprintPorId: (sprintId: string) => `/sprint/${sprintId}`,
   sprintCard: (sprintId: string, cardId: string) => `/sprint/${sprintId}/card/${cardId}`,
   projetos: '/projetos',
@@ -32,7 +34,11 @@ export function isNavRouteActive(navPath: string, pathname: string): boolean {
     return pathname === ROUTES.projetos || pathname.startsWith('/projeto/');
   }
   if (navPath === ROUTES.sprint) {
-    return pathname === ROUTES.sprint || pathname.startsWith('/sprint/');
+    return (
+      pathname === ROUTES.sprint
+      || pathname === ROUTES.sprintGerenciar
+      || pathname.startsWith('/sprint/')
+    );
   }
   if (navPath === ROUTES.metricas) {
     return pathname === ROUTES.metricas || pathname.startsWith(`${ROUTES.metricas}/`);
