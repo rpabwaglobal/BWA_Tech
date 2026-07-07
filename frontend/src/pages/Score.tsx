@@ -599,9 +599,7 @@ function ScoreFormDialog({
 
   // Browser de cards (modo criação)
   const [search, setSearch] = useState('');
-  const [sprintFilter, setSprintFilter] = useState('');
   const [respFilter, setRespFilter] = useState('');
-  const [projFilter, setProjFilter] = useState('');
 
   const preview = computeScore(criterios, valores);
   const canSave = cardId !== '' && !saving;
@@ -610,24 +608,6 @@ function ScoreFormDialog({
     () => cards.find((c) => String(c.id) === String(cardId)) ?? null,
     [cards, cardId],
   );
-
-  const projectOptions = useMemo(() => {
-    const map = new Map<string, string>();
-    for (const c of cards) {
-      if (c.projeto) map.set(String(c.projeto), c.projeto_nome ?? '—');
-    }
-    return Array.from(map, ([value, label]) => ({ value, label }))
-      .sort((a, b) => a.label.localeCompare(b.label));
-  }, [cards]);
-
-  const sprintOptions = useMemo(() => {
-    const map = new Map<string, string>();
-    for (const c of cards) {
-      if (c.sprint && c.sprint_nome) map.set(String(c.sprint), c.sprint_nome);
-    }
-    return Array.from(map, ([value, label]) => ({ value, label }))
-      .sort((a, b) => a.label.localeCompare(b.label));
-  }, [cards]);
 
   const responsavelOptions = useMemo(() => {
     const map = new Map<string, { label: string; role: string }>();
@@ -646,13 +626,11 @@ function ScoreFormDialog({
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     return cards.filter((c) => {
-      if (sprintFilter && String(c.sprint ?? '') !== sprintFilter) return false;
       if (respFilter && String(c.responsavel ?? '') !== respFilter) return false;
-      if (projFilter && String(c.projeto) !== projFilter) return false;
       if (q && !`${c.nome} ${c.descricao ?? ''}`.toLowerCase().includes(q)) return false;
       return true;
     });
-  }, [cards, search, sprintFilter, respFilter, projFilter]);
+  }, [cards, search, respFilter]);
 
   const toPreview = useCallback((c: PickableCard): KanbanCardPreviewData => ({
     id: String(c.id),
@@ -768,7 +746,9 @@ function ScoreFormDialog({
                 {selectedCard ? (
                   <KanbanCardPreview card={toPreview(selectedCard)} className="w-[288px]" />
                 ) : (
-                  <div className="text-sm text-[var(--color-muted-foreground)]">Card #{cardId}</div>
+                  <div className="text-sm text-[var(--color-muted-foreground)]">
+                    {existing?.card_nome?.trim() ? existing.card_nome : `Card #${cardId}`}
+                  </div>
                 )}
                 <p className="text-xs text-[var(--color-muted-foreground)]">
                   O card não pode ser alterado ao editar um score.
@@ -785,31 +765,13 @@ function ScoreFormDialog({
                     onChange={(e) => setSearch(e.target.value)}
                   />
                 </div>
-                <div className="space-y-2">
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                    <FilterSelect
-                      options={sprintOptions}
-                      value={sprintFilter}
-                      onChange={setSprintFilter}
-                      placeholder="Sprint"
-                      searchPlaceholder="Buscar sprint..."
-                    />
-                    <FilterSelect
-                      options={projectOptions}
-                      value={projFilter}
-                      onChange={setProjFilter}
-                      placeholder="Projeto"
-                      searchPlaceholder="Buscar projeto..."
-                    />
-                  </div>
-                  <FilterSelect
-                    options={responsavelOptions}
-                    value={respFilter}
-                    onChange={setRespFilter}
-                    placeholder="Responsável"
-                    searchPlaceholder="Buscar responsável..."
-                  />
-                </div>
+                <FilterSelect
+                  options={responsavelOptions}
+                  value={respFilter}
+                  onChange={setRespFilter}
+                  placeholder="Responsável"
+                  searchPlaceholder="Buscar responsável..."
+                />
 
                 <div className="text-xs text-[var(--color-muted-foreground)]">
                   {cardsLoading && cards.length === 0
@@ -878,6 +840,10 @@ function ScoreFormDialog({
                 {selectedCard ? (
                   <div className="text-xs text-[var(--color-muted-foreground)] truncate">
                     {selectedCard.nome}
+                  </div>
+                ) : existing?.card_nome ? (
+                  <div className="text-xs text-[var(--color-muted-foreground)] truncate">
+                    {existing.card_nome}
                   </div>
                 ) : !existing ? (
                   <div className="text-xs text-[var(--color-muted-foreground)]">

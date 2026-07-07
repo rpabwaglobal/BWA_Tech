@@ -156,6 +156,31 @@ def sprint_esta_em_andamento_janela(sprint) -> bool:
     return True
 
 
+def sprint_esta_em_andamento_ou_planejada(sprint) -> bool:
+    """True se a sprint está EM ANDAMENTO (janela ativa) OU PLANEJADA (ainda vai
+    começar): ou seja, não finalizada e cujo fechamento ainda não passou.
+
+    Sprints finalizadas, ou já expiradas (fechamento no passado) mas não
+    finalizadas, retornam False. Espelha o inverso de `isSprintPastFechamento`
+    do frontend (`sprintFechamento.ts`)."""
+    if not sprint or sprint.finalizada:
+        return False
+    if sprint.fechamento_em and sprint.fechamento_em < timezone.now():
+        return False
+    return True
+
+
+def get_sprint_ids_atribuiveis() -> set:
+    """IDs das sprints em andamento ou planejadas — sprints cujos cards podem
+    receber score no seletor. Sprints são poucas, então iterar em Python é
+    barato e mantém a MESMA semântica de `sprint_esta_em_andamento_ou_planejada`."""
+    ids = set()
+    for s in Sprint.objects.filter(finalizada=False).only('id', 'finalizada', 'fechamento_em'):
+        if sprint_esta_em_andamento_ou_planejada(s):
+            ids.add(s.id)
+    return ids
+
+
 def outra_sprint_em_andamento(exclude_pk=None):
     """Retorna outra sprint na janela ativa, ou None."""
     qs = Sprint.objects.filter(finalizada=False)

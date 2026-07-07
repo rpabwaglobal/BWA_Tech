@@ -36,7 +36,7 @@ from .models import (
     ScoreHistoryAction,
     SetorSolicitante,
 )
-from .services import finalizar_sprint_replicacao
+from .services import finalizar_sprint_replicacao, get_sprint_ids_atribuiveis
 from apps.accounts.profile_picture_utils import get_profile_picture_url
 from apps.accounts.permissions import IsAdminOrSupervisor
 from .serializers import (
@@ -1811,11 +1811,19 @@ class CardScoreViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=['get'], url_path='pickable-cards')
     def pickable_cards(self, request):
-        """Lista leve de cards para o seletor do modal (uma request, sem paginação)."""
+        """Lista leve de cards para o seletor do modal (uma request, sem paginação).
+
+        Só aparecem cards de sprints EM ANDAMENTO ou PLANEJADAS (não finalizadas e
+        com fechamento ainda no futuro). Cards de sprints finalizadas/expiradas, ou
+        de projetos sem sprint, não são atribuíveis e ficam de fora. Cards já
+        FINALIZADOS também são excluídos (não faz sentido pontuar algo concluído)."""
+        sprint_ids = get_sprint_ids_atribuiveis()
         qs = (
             Card.objects
             .select_related('projeto', 'projeto__sprint', 'responsavel', 'score')
             .filter(projeto__arquivado=False, projeto__is_system=False)
+            .filter(projeto__sprint_id__in=sprint_ids)
+            .exclude(status=CardStatus.FINALIZADO)
             .order_by('-created_at')
         )
         serializer = CardPickerSerializer(qs, many=True)
