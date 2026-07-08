@@ -287,6 +287,8 @@ export default function SprintDetails() {
   // Formulário de link recolhido por padrão: só aparece ao clicar em "Adicionar link".
   const [showLinkForm, setShowLinkForm] = useState(false);
   const [editingLinkIdx, setEditingLinkIdx] = useState<number | null>(null);
+  // Link do Script: com valor vira link + editar/remover; ao editar, volta ao input.
+  const [editingScript, setEditingScript] = useState(false);
 
   const openAddLink = () => {
     setEditingLinkIdx(null);
@@ -758,6 +760,7 @@ export default function SprintDetails() {
     setNewLinkLabel('');
     setShowLinkForm(false);
     setEditingLinkIdx(null);
+    setEditingScript(false);
     setCardFormError('');
     setCardDialogOpen(true);
   };
@@ -822,6 +825,7 @@ export default function SprintDetails() {
       setNewLinkLabel('');
       setShowLinkForm(false);
       setEditingLinkIdx(null);
+      setEditingScript(false);
 
       setCardFormError('');
     };
@@ -2884,38 +2888,57 @@ export default function SprintDetails() {
             <div className="space-y-[12px] rounded-lg border border-[var(--color-border)] p-[12px]">
               <div className="space-y-[6px]">
                 <Label htmlFor="card-script_url">Link do Script</Label>
-                <div className="flex items-center gap-[6px]">
+                {(!cardFormData.script_url || editingScript) ? (
                   <Input
                     id="card-script_url"
                     type="url"
                     placeholder="https://exemplo.com/script..."
                     value={cardFormData.script_url}
+                    autoFocus={editingScript}
                     onChange={(e) => setCardFormData({ ...cardFormData, script_url: e.target.value })}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && cardFormData.script_url.trim()) {
+                        e.preventDefault();
+                        setEditingScript(false);
+                      }
+                    }}
+                    onBlur={() => { if (cardFormData.script_url.trim()) setEditingScript(false); }}
                     disabled={!!(editingCard && (editingCard.status === 'finalizado' || editingCard.status === 'inviabilizado'))}
                     className="flex-1"
                   />
-                  {cardFormData.script_url &&
-                    !(!!(editingCard && (editingCard.status === 'finalizado' || editingCard.status === 'inviabilizado'))) && (
-                      <button
-                        type="button"
-                        onClick={() => setCardFormData({ ...cardFormData, script_url: '' })}
-                        className="shrink-0 rounded p-[4px] text-[var(--color-muted-foreground)] hover:bg-[var(--color-destructive)]/10 hover:text-[var(--color-destructive)]"
-                        title="Remover link do script"
-                      >
-                        <XCircle className="h-[16px] w-[16px]" />
-                      </button>
+                ) : (
+                  <div className="flex items-center gap-[6px] rounded-md bg-[var(--color-accent)] px-[10px] py-[6px]">
+                    <ExternalLink className="h-[13px] w-[13px] shrink-0 text-[var(--color-primary)]" />
+                    <a
+                      href={normalizeExternalUrl(cardFormData.script_url)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      title={cardFormData.script_url}
+                      className="flex-1 truncate text-sm text-[var(--color-primary)] underline underline-offset-2 hover:opacity-75"
+                    >
+                      {cardFormData.script_url}
+                    </a>
+                    {!(!!(editingCard && (editingCard.status === 'finalizado' || editingCard.status === 'inviabilizado'))) && (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => setEditingScript(true)}
+                          className="shrink-0 rounded p-[2px] text-[var(--color-muted-foreground)] hover:bg-[var(--color-accent)] hover:text-[var(--color-foreground)]"
+                          title="Editar"
+                        >
+                          <Pencil className="h-[13px] w-[13px]" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => { setCardFormData({ ...cardFormData, script_url: '' }); setEditingScript(false); }}
+                          className="shrink-0 rounded p-[2px] text-[var(--color-muted-foreground)] hover:bg-[var(--color-destructive)]/10 hover:text-[var(--color-destructive)]"
+                          title="Remover"
+                        >
+                          <Trash2 className="h-[13px] w-[13px]" />
+                        </button>
+                      </>
                     )}
-                </div>
-                {cardFormData.script_url && (
-                  <a
-                    href={normalizeExternalUrl(cardFormData.script_url)}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center gap-[4px] text-xs text-[var(--color-primary)] underline underline-offset-2 hover:opacity-75 break-all"
-                  >
-                    <ExternalLink className="h-[11px] w-[11px] shrink-0" />
-                    {cardFormData.script_url}
-                  </a>
+                  </div>
                 )}
               </div>
 
@@ -2929,7 +2952,7 @@ export default function SprintDetails() {
                       type="button"
                       variant="outline"
                       size="sm"
-                      className="shrink-0 gap-[4px]"
+                      className="shrink-0 gap-[4px] min-w-[160px] justify-center"
                       onClick={openAddLink}
                     >
                       <Plus className="h-[13px] w-[13px]" />
@@ -2938,7 +2961,7 @@ export default function SprintDetails() {
                   )}
                 </div>
 
-                {cardLinks.length > 0 && (
+                {cardLinks.length > 0 ? (
                   <div className="space-y-[4px]">
                     {cardLinks.map((link, idx) => (
                       <div key={idx} className="flex items-center gap-[6px] rounded-md bg-[var(--color-accent)] px-[10px] py-[6px]">
@@ -2975,6 +2998,10 @@ export default function SprintDetails() {
                       </div>
                     ))}
                   </div>
+                ) : (
+                  <p className="text-[11px] text-[var(--color-muted-foreground)]">
+                    Nenhum link adicionado.
+                  </p>
                 )}
 
                 {!(!!(editingCard && (editingCard.status === 'finalizado' || editingCard.status === 'inviabilizado'))) && showLinkForm && (

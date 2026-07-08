@@ -98,7 +98,7 @@ export function CardAnexosSection({
             type="button"
             variant="outline"
             size="sm"
-            className="shrink-0 gap-[4px]"
+            className="shrink-0 gap-[4px] min-w-[160px] justify-center"
             disabled={uploading}
             onClick={() => inputRef.current?.click()}
           >
