@@ -1,4 +1,5 @@
 import logging
+import os
 
 from rest_framework import viewsets, filters, status
 from rest_framework.permissions import IsAuthenticated
@@ -18,6 +19,7 @@ from .models import (
     KanbanStage,
     ProjectKanbanStageConfig,
     Card,
+    CardAnexo,
     CardStatus,
     UserNote,
     CardPin,
@@ -48,6 +50,7 @@ from .serializers import (
     CardDueDateChangeRequestSerializer,
     KanbanStageSerializer,
     ScoreCriterionSerializer, CardScoreSerializer, CardPickerSerializer,
+    CardAnexoSerializer,
 )
 
 
@@ -1958,4 +1961,74 @@ class CardScoreViewSet(viewsets.ModelViewSet):
             usuario=request.user,
         )
         card_score.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class CardAnexoViewSet(viewsets.GenericViewSet):
+    """Anexos de arquivo de um card (imagem, PDF, CSV, Excel, documento, etc.).
+
+    GET    /api/card-anexos/?card=<id>            → lista os anexos do card.
+    POST   /api/card-anexos/  (multipart)         → envia um anexo (campos: card, arquivo).
+    DELETE /api/card-anexos/<id>/                 → remove um anexo.
+
+    Permissão espelha a edição do card: em cards finalizados/inviabilizados ou de
+    sprint já fechada, só admin/supervisor pode anexar/remover."""
+
+    queryset = CardAnexo.objects.select_related(
+        'card', 'card__projeto', 'card__projeto__sprint', 'enviado_por'
+    ).all()
+    serializer_class = CardAnexoSerializer
+    permission_classes = [IsAuthenticated]
+    pagination_class = None
+    http_method_names = ['get', 'post', 'delete', 'head', 'options']
+
+    def _pode_mutar(self, request, card):
+        """True se o usuário pode anexar/remover neste card."""
+        is_privileged = getattr(request.user, 'role', None) in ('supervisor', 'admin')
+        return is_privileged or not _card_edicao_restrita(card)
+
+    def list(self, request, *args, **kwargs):
+        card_id = request.query_params.get('card')
+        try:
+            card_id = int(card_id)
+        except (TypeError, ValueError):
+            return Response({'detail': 'Informe o parâmetro card (id numérico).'},
+                            status=status.HTTP_400_BAD_REQUEST)
+        qs = self.get_queryset().filter(card_id=card_id)
+        serializer = self.get_serializer(qs, many=True)
+        return Response(serializer.data)
+
+    def create(self, request, *args, **kwargs):
+        try:
+            card = Card.objects.select_related('projeto', 'projeto__sprint').get(
+                pk=int(request.data.get('card'))
+            )
+        except (TypeError, ValueError, Card.DoesNotExist):
+            return Response({'detail': 'Card não encontrado.'},
+                            status=status.HTTP_400_BAD_REQUEST)
+        if not self._pode_mutar(request, card):
+            return Response(
+                {'detail': 'Cards finalizados/inviabilizados ou de sprints finalizadas '
+                           'só permitem anexos de supervisor ou admin.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        arquivo = serializer.validated_data['arquivo']
+        instance = serializer.save(
+            enviado_por=request.user,
+            nome_original=os.path.basename(getattr(arquivo, 'name', '') or '')[:255],
+            tamanho=getattr(arquivo, 'size', 0) or 0,
+        )
+        return Response(self.get_serializer(instance).data, status=status.HTTP_201_CREATED)
+
+    def destroy(self, request, *args, **kwargs):
+        instance = self.get_object()
+        if not self._pode_mutar(request, instance.card):
+            return Response(
+                {'detail': 'Sem permissão para remover anexos deste card.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        instance.arquivo.delete(save=False)  # remove o arquivo do storage
+        instance.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)

@@ -404,6 +404,40 @@ class Card(models.Model):
         return f"{self.nome} - {self.projeto.nome}"
 
 
+class CardAnexo(models.Model):
+    """Arquivo anexado a um card (imagem, PDF, CSV, Excel, documento, etc.).
+
+    Um card pode ter vários anexos. O arquivo fica no storage local (media/),
+    servido por `config.views.serve_media`."""
+
+    card = models.ForeignKey(
+        Card,
+        on_delete=models.CASCADE,
+        related_name='anexos',
+        verbose_name='Card',
+    )
+    arquivo = models.FileField(upload_to='card_anexos/', verbose_name='Arquivo')
+    nome_original = models.CharField(max_length=255, blank=True, verbose_name='Nome original')
+    tamanho = models.PositiveBigIntegerField(default=0, verbose_name='Tamanho (bytes)')
+    enviado_por = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        related_name='card_anexos_enviados',
+        null=True,
+        blank=True,
+        verbose_name='Enviado por',
+    )
+    criado_em = models.DateTimeField(auto_now_add=True, verbose_name='Enviado em')
+
+    class Meta:
+        ordering = ['-criado_em']
+        verbose_name = 'Anexo do card'
+        verbose_name_plural = 'Anexos dos cards'
+
+    def __str__(self):
+        return f'{self.nome_original or self.arquivo.name} (card #{self.card_id})'
+
+
 class CachedHoliday(models.Model):
     """Cache local de feriados (Feriados API) para cálculo de dias úteis em Natal/RN."""
 

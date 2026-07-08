@@ -3,6 +3,7 @@ import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
 import { useSprintKanbanWebSocket } from '@/hooks/useSprintKanbanWebSocket';
 import { Button } from '@/components/ui/button';
+import { CardAnexosSection } from '@/components/CardAnexosSection';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -2896,6 +2897,13 @@ export default function ProjectDetails() {
                   </div>
                 )}
               </div>
+
+              <div className="border-t border-[var(--color-border)]" />
+
+              <CardAnexosSection
+                cardId={editingCard?.id ?? null}
+                disabled={!!(editingCard && (editingCard.status === 'finalizado' || editingCard.status === 'inviabilizado')) || sprintIsFinished}
+              />
             </div>
 
             <div className="grid grid-cols-2 gap-[16px]">

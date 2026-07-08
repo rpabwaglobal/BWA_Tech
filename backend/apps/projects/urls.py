@@ -7,6 +7,7 @@ from .views import (
     WeeklyPriorityViewSet, WeeklyPriorityConfigViewSet, CardDueDateChangeRequestViewSet,
     KanbanStageViewSet,
     ScoreCriterionViewSet, CardScoreViewSet,
+    CardAnexoViewSet,
 )
 
 router = DefaultRouter()
@@ -24,6 +25,7 @@ router.register(r'card-date-change-requests', CardDueDateChangeRequestViewSet, b
 router.register(r'kanban-stages', KanbanStageViewSet, basename='kanbanstage')
 router.register(r'score-criterios', ScoreCriterionViewSet, basename='scorecriterion')
 router.register(r'card-scores', CardScoreViewSet, basename='cardscore')
+router.register(r'card-anexos', CardAnexoViewSet, basename='cardanexo')
 
 urlpatterns = [
     # Preferências de notificação (single-resource — não usa router)

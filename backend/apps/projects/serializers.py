@@ -1,5 +1,6 @@
 from rest_framework import serializers
 from django.utils import timezone
+import os
 import re
 import unicodedata
 from .models import (
@@ -8,6 +9,7 @@ from .models import (
     KanbanStage,
     ProjectKanbanStageConfig,
     Card,
+    CardAnexo,
     CardStatus,
     # CardTodo removido — substituído por UserNote
     UserNote,
@@ -1246,3 +1248,65 @@ class CardPickerSerializer(serializers.ModelSerializer):
             return obj.score.score_final
         except CardScore.DoesNotExist:
             return None
+
+
+# Extensões aceitas em anexos de card: imagem, PDF, planilha, documento, texto,
+# apresentação e zip (allowlist). Executáveis/scripts e SVG (vetor de XSS quando
+# servido inline) ficam de fora por segurança.
+CARD_ANEXO_ALLOWED_EXTENSIONS = frozenset({
+    # imagem
+    'jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp',
+    # pdf
+    'pdf',
+    # planilha
+    'csv', 'xls', 'xlsx', 'ods',
+    # documento / texto
+    'doc', 'docx', 'txt', 'rtf', 'odt', 'md',
+    # apresentação
+    'ppt', 'pptx', 'odp',
+    # compactado
+    'zip',
+})
+CARD_ANEXO_MAX_FILE_SIZE = 25 * 1024 * 1024  # 25 MB
+
+
+class CardAnexoSerializer(serializers.ModelSerializer):
+    """Anexo de arquivo de um card. `arquivo` é write-only; a leitura expõe
+    `arquivo_url` (URL absoluta), `nome` e `tamanho`."""
+
+    arquivo_url = serializers.SerializerMethodField()
+    nome = serializers.SerializerMethodField()
+    enviado_por_nome = serializers.SerializerMethodField()
+
+    class Meta:
+        model = CardAnexo
+        fields = [
+            'id', 'card', 'arquivo', 'arquivo_url', 'nome',
+            'tamanho', 'enviado_por_nome', 'criado_em',
+        ]
+        read_only_fields = ['id', 'tamanho', 'criado_em']
+        extra_kwargs = {'arquivo': {'write_only': True}}
+
+    def get_arquivo_url(self, obj):
+        if not obj.arquivo:
+            return None
+        request = self.context.get('request')
+        url = obj.arquivo.url
+        return request.build_absolute_uri(url) if request else url
+
+    def get_nome(self, obj):
+        return obj.nome_original or os.path.basename(obj.arquivo.name)
+
+    def get_enviado_por_nome(self, obj):
+        return format_user_name(obj.enviado_por) if obj.enviado_por_id else None
+
+    def validate_arquivo(self, value):
+        ext = os.path.splitext(value.name)[1].lower().lstrip('.')
+        if ext not in CARD_ANEXO_ALLOWED_EXTENSIONS:
+            raise serializers.ValidationError(
+                'Tipo de arquivo não suportado. Envie imagem, PDF, CSV, Excel, '
+                'documento, texto, apresentação ou zip.',
+            )
+        if value.size > CARD_ANEXO_MAX_FILE_SIZE:
+            raise serializers.ValidationError('Arquivo muito grande (máx 25 MB).')
+        return value

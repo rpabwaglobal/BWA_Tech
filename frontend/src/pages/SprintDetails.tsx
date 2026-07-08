@@ -4,6 +4,7 @@ import { useAuth } from '@/context/AuthContext';
 import { useSprintKanbanWebSocket } from '@/hooks/useSprintKanbanWebSocket';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { CardAnexosSection } from '@/components/CardAnexosSection';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
@@ -283,15 +284,50 @@ export default function SprintDetails() {
   const [cardLinks, setCardLinks] = useState<CardLink[]>([]);
   const [newLinkUrl, setNewLinkUrl] = useState('');
   const [newLinkLabel, setNewLinkLabel] = useState('');
+  // Formulário de link recolhido por padrão: só aparece ao clicar em "Adicionar link".
+  const [showLinkForm, setShowLinkForm] = useState(false);
+  const [editingLinkIdx, setEditingLinkIdx] = useState<number | null>(null);
 
-  const handleAddCardLink = () => {
-    if (!newLinkUrl.trim()) return;
-    setCardLinks((prev) => [...prev, { url: newLinkUrl.trim(), label: newLinkLabel.trim() }]);
+  const openAddLink = () => {
+    setEditingLinkIdx(null);
+    setNewLinkUrl('');
+    setNewLinkLabel('');
+    setShowLinkForm(true);
+  };
+  const openEditLink = (idx: number) => {
+    const link = cardLinks[idx];
+    if (!link) return;
+    setEditingLinkIdx(idx);
+    setNewLinkUrl(link.url);
+    setNewLinkLabel(link.label);
+    setShowLinkForm(true);
+  };
+  const cancelLinkForm = () => {
+    setShowLinkForm(false);
+    setEditingLinkIdx(null);
     setNewLinkUrl('');
     setNewLinkLabel('');
   };
+  // Enter salva: adiciona (ou atualiza, se editando) sem precisar clicar em botão.
+  const submitCardLink = () => {
+    const url = newLinkUrl.trim();
+    if (!url) return;
+    const label = newLinkLabel.trim();
+    const wasEditing = editingLinkIdx !== null;
+    setCardLinks((prev) =>
+      wasEditing
+        ? prev.map((l, i) => (i === editingLinkIdx ? { url, label } : l))
+        : [...prev, { url, label }],
+    );
+    setNewLinkUrl('');
+    setNewLinkLabel('');
+    setEditingLinkIdx(null);
+    // Edição pontual → fecha o form. Adição → mantém aberto para incluir outro.
+    if (wasEditing) setShowLinkForm(false);
+  };
   const handleRemoveCardLink = (idx: number) => {
     setCardLinks((prev) => prev.filter((_, i) => i !== idx));
+    if (editingLinkIdx === idx) cancelLinkForm();
   };
 
   // Sprint dialog state
@@ -720,6 +756,8 @@ export default function SprintDetails() {
     setCardLinks([]);
     setNewLinkUrl('');
     setNewLinkLabel('');
+    setShowLinkForm(false);
+    setEditingLinkIdx(null);
     setCardFormError('');
     setCardDialogOpen(true);
   };
@@ -782,6 +820,8 @@ export default function SprintDetails() {
       setCardLinks(fullCard.links ?? []);
       setNewLinkUrl('');
       setNewLinkLabel('');
+      setShowLinkForm(false);
+      setEditingLinkIdx(null);
 
       setCardFormError('');
     };
@@ -2882,7 +2922,21 @@ export default function SprintDetails() {
               <div className="border-t border-[var(--color-border)]" />
 
               <div className="space-y-[6px]">
-                <Label>Links adicionais</Label>
+                <div className="flex items-center justify-between gap-[8px]">
+                  <Label>Links adicionais</Label>
+                  {!(!!(editingCard && (editingCard.status === 'finalizado' || editingCard.status === 'inviabilizado'))) && !showLinkForm && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="shrink-0 gap-[4px]"
+                      onClick={openAddLink}
+                    >
+                      <Plus className="h-[13px] w-[13px]" />
+                      Adicionar link
+                    </Button>
+                  )}
+                </div>
 
                 {cardLinks.length > 0 && (
                   <div className="space-y-[4px]">
@@ -2899,51 +2953,76 @@ export default function SprintDetails() {
                           {link.label.trim() ? link.label : link.url}
                         </a>
                         {!(!!(editingCard && (editingCard.status === 'finalizado' || editingCard.status === 'inviabilizado'))) && (
-                          <button
-                            type="button"
-                            onClick={() => handleRemoveCardLink(idx)}
-                            className="shrink-0 rounded p-[2px] text-[var(--color-muted-foreground)] hover:bg-[var(--color-destructive)]/10 hover:text-[var(--color-destructive)]"
-                            title="Remover"
-                          >
-                            <XCircle className="h-[14px] w-[14px]" />
-                          </button>
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => openEditLink(idx)}
+                              className="shrink-0 rounded p-[2px] text-[var(--color-muted-foreground)] hover:bg-[var(--color-accent)] hover:text-[var(--color-foreground)]"
+                              title="Editar"
+                            >
+                              <Pencil className="h-[13px] w-[13px]" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveCardLink(idx)}
+                              className="shrink-0 rounded p-[2px] text-[var(--color-muted-foreground)] hover:bg-[var(--color-destructive)]/10 hover:text-[var(--color-destructive)]"
+                              title="Remover"
+                            >
+                              <XCircle className="h-[14px] w-[14px]" />
+                            </button>
+                          </>
                         )}
                       </div>
                     ))}
                   </div>
                 )}
 
-                {!(!!(editingCard && (editingCard.status === 'finalizado' || editingCard.status === 'inviabilizado'))) && (
-                  <div className="space-y-[6px]">
+                {!(!!(editingCard && (editingCard.status === 'finalizado' || editingCard.status === 'inviabilizado'))) && showLinkForm && (
+                  <div className="space-y-[6px] rounded-md border border-[var(--color-border)] p-[8px]">
+                    <Input
+                      placeholder="Apelido (opcional)"
+                      value={newLinkLabel}
+                      onChange={(e) => setNewLinkLabel(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') { e.preventDefault(); submitCardLink(); }
+                        else if (e.key === 'Escape') { e.preventDefault(); cancelLinkForm(); }
+                      }}
+                    />
                     <Input
                       type="url"
                       placeholder="URL do link (obrigatório)"
                       value={newLinkUrl}
+                      autoFocus
                       onChange={(e) => setNewLinkUrl(e.target.value)}
-                      onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleAddCardLink(); } }}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') { e.preventDefault(); submitCardLink(); }
+                        else if (e.key === 'Escape') { e.preventDefault(); cancelLinkForm(); }
+                      }}
                     />
-                    <div className="flex gap-[6px]">
-                      <Input
-                        placeholder="Apelido (opcional)"
-                        value={newLinkLabel}
-                        onChange={(e) => setNewLinkLabel(e.target.value)}
-                        onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleAddCardLink(); } }}
-                      />
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] text-[var(--color-muted-foreground)]">
+                        Pressione Enter para {editingLinkIdx !== null ? 'salvar' : 'adicionar'}
+                      </span>
                       <Button
                         type="button"
-                        variant="outline"
+                        variant="ghost"
                         size="sm"
-                        className="shrink-0 gap-[4px]"
-                        disabled={!newLinkUrl.trim()}
-                        onClick={handleAddCardLink}
+                        className="h-[28px] text-[var(--color-muted-foreground)]"
+                        onClick={cancelLinkForm}
                       >
-                        <Plus className="h-[13px] w-[13px]" />
-                        Adicionar link
+                        Cancelar
                       </Button>
                     </div>
                   </div>
                 )}
               </div>
+
+              <div className="border-t border-[var(--color-border)]" />
+
+              <CardAnexosSection
+                cardId={editingCard?.id ?? null}
+                disabled={!!(editingCard && (editingCard.status === 'finalizado' || editingCard.status === 'inviabilizado'))}
+              />
             </div>
 
             <div className="grid grid-cols-2 gap-[16px]">
