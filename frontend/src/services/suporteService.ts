@@ -24,8 +24,12 @@ export type ChamadoSuporte = {
   tipo: number | SuporteCatalogRef;
   item: number | SuporteCatalogRef;
   motivo: number | SuporteCatalogRef;
-  /** URL do anexo (campo canónico no SPA e no Django local). */
+  /** URL do anexo do solicitante (campo canónico no SPA e no Django local). */
   anexo_url?: string | null;
+  /** Anexo do solicitante no portal (schema novo — substituiu `anexo`). */
+  anexo_usuario?: string | null;
+  /** Anexo enviado pelo suporte/resolução no portal (schema novo). */
+  anexo_suporte?: string | null;
   status: SuporteStatusApi;
   usuario_notificado?: boolean;
   responsavel?: string | null;
@@ -38,11 +42,21 @@ export type ChamadoSuporte = {
 /** Resposta bruta do portal externo — usa `anexo` em vez de `anexo_url`. */
 type ChamadoSuportePortalRaw = ChamadoSuporte & { anexo?: string | null };
 
-/** URL do anexo independente do nome do campo na API de origem. */
+/** URL do anexo do SOLICITANTE, independente do nome do campo na API de origem.
+ * O portal migrou de `anexo` para `anexo_usuario`; mantemos `anexo`/`anexo_url`
+ * como fallback para compatibilidade retroativa. */
 export function getChamadoAnexoUrl(
-  chamado: Pick<ChamadoSuporte, 'anexo_url'> & { anexo?: string | null },
+  chamado: Pick<ChamadoSuporte, 'anexo_url' | 'anexo_usuario'> & { anexo?: string | null },
 ): string | null {
-  const url = String(chamado.anexo_url ?? chamado.anexo ?? '').trim();
+  const url = String(chamado.anexo_url ?? chamado.anexo_usuario ?? chamado.anexo ?? '').trim();
+  return url || null;
+}
+
+/** URL do anexo enviado pelo SUPORTE na resolução do chamado (portal: `anexo_suporte`). */
+export function getChamadoAnexoSuporteUrl(
+  chamado: Pick<ChamadoSuporte, 'anexo_suporte'>,
+): string | null {
+  const url = String(chamado.anexo_suporte ?? '').trim();
   return url || null;
 }
 
@@ -259,6 +273,23 @@ export const suporteService = {
       `suporte/${id}/`,
       stripNullishPatchPayload(payload),
     );
+    return normalizeChamadoSuporte(data);
+  },
+
+  /** PATCH de conclusão que envia também o arquivo de resolução ao portal como
+   * `anexo_suporte` (multipart). Sem arquivo, cai no PATCH normal (JSON). */
+  async patchResolucao(
+    id: number,
+    payload: PatchChamadoSuportePayload,
+    arquivo?: File | null,
+  ): Promise<ChamadoSuporte> {
+    if (!arquivo) return this.patch(id, payload);
+    const fd = new FormData();
+    for (const [k, v] of Object.entries(stripNullishPatchPayload(payload))) {
+      fd.append(k, String(v));
+    }
+    fd.append('anexo_suporte', arquivo, arquivo.name);
+    const { data } = await formulariosApi.patch<ChamadoSuportePortalRaw>(`suporte/${id}/`, fd);
     return normalizeChamadoSuporte(data);
   },
 

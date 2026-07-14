@@ -83,6 +83,7 @@ import {
   hasPendenciaMarker,
   formatFormulariosApiError,
   getChamadoAnexoUrl,
+  getChamadoAnexoSuporteUrl,
   normalizeChamadoSuporte,
   type ChamadoSuporte,
   type PatchChamadoSuportePayload,
@@ -1161,21 +1162,23 @@ export default function Support() {
       if (!noteTrim) return;
       setConcludingTicketId(chamado.id);
       setError(null);
+      const link = extras?.link?.trim() || null;
+      const arquivo = extras?.arquivo ?? null;
       try {
         const patch = patchForStage('finalizado', chamado, assigneeName, noteTrim);
-        await applyPatchAndRefresh(chamado.id, patch, chamado);
-        // Após concluir, anexa link/arquivo de resolução (armazenados localmente
-        // por chamado_id). Falha aqui não desfaz a conclusão — apenas avisa.
-        const link = extras?.link?.trim() || null;
-        const arquivo = extras?.arquivo ?? null;
-        if (link || arquivo) {
+        // Conclui no portal; havendo arquivo, ele vai como `anexo_suporte` (multipart).
+        const updated = await suporteService.patchResolucao(chamado.id, patch, arquivo);
+        setItems((prev) => prev.map((x) => (x.id === chamado.id ? updated : x)));
+        setDetailChamado((d) => (d?.id === chamado.id ? updated : d));
+        await logSuporteChamadoChanges(chamado, updated, getKanbanStageLabel);
+        bumpTimeline();
+        // O portal não tem campo de link — o link (se houver) fica no Django local.
+        if (link) {
           try {
-            await suporteResolucaoService.save({ chamado_id: chamado.id, link, arquivo });
+            await suporteResolucaoService.save({ chamado_id: chamado.id, link, arquivo: null });
             bumpTimeline();
           } catch {
-            setError(
-              'Ticket concluído, mas não foi possível salvar o link/arquivo de resolução. Reabra o ticket e tente anexar novamente.',
-            );
+            setError('Ticket concluído, mas não foi possível salvar o link de resolução.');
           }
         }
       } catch (err) {
@@ -1185,7 +1188,7 @@ export default function Support() {
         setConcludingTicketId(null);
       }
     },
-    [assigneeName, applyPatchAndRefresh, load, bumpTimeline],
+    [assigneeName, getKanbanStageLabel, bumpTimeline, load],
   );
 
   return (
@@ -2554,6 +2557,10 @@ function ChamadoDetailDialog({
 
   const encerradoNoQuadro = chamadoEncerradoNoQuadro(chamado);
   const anexoUrl = getChamadoAnexoUrl(chamado);
+  const anexoSuporteUrl = getChamadoAnexoSuporteUrl(chamado);
+  const anexoSuporteNome = anexoSuporteUrl
+    ? decodeURIComponent(anexoSuporteUrl.split('?')[0].split('/').pop() ?? '') || 'Baixar anexo da resolução'
+    : '';
 
   const persistResponsavelSeAlterado = async (nextUserId: string) => {
     if (encerradoNoQuadro) return;
@@ -2825,7 +2832,7 @@ function ChamadoDetailDialog({
                   {stripPendenciaMarker(chamado.descricao_resolucao ?? '').trim() || '—'}
                 </p>
               </div>
-              {(resolucaoInfo?.link || resolucaoInfo?.arquivo_url) && (
+              {(resolucaoInfo?.link || anexoSuporteUrl || resolucaoInfo?.arquivo_url) && (
                 <div className="rounded-[8px] border border-[var(--color-border)] bg-[var(--color-muted)]/20 p-[12px] space-y-[8px]">
                   {resolucaoInfo?.link ? (
                     <a
@@ -2838,6 +2845,17 @@ function ChamadoDetailDialog({
                       {resolucaoInfo.link}
                     </a>
                   ) : null}
+                  {anexoSuporteUrl ? (
+                    <a
+                      href={anexoSuporteUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="flex items-center gap-[6px] text-sm text-[var(--color-primary)] break-all"
+                    >
+                      <Download className="h-4 w-4 shrink-0" />
+                      {anexoSuporteNome}
+                    </a>
+                  ) : null}
                   {resolucaoInfo?.arquivo_url ? (
                     <a
                       href={resolucaoInfo.arquivo_url}
@@ -2846,7 +2864,7 @@ function ChamadoDetailDialog({
                       className="flex items-center gap-[6px] text-sm text-[var(--color-primary)] break-all"
                     >
                       <Download className="h-4 w-4 shrink-0" />
-                      {resolucaoInfo.arquivo_nome || 'Baixar arquivo da resolução'}
+                      {resolucaoInfo.arquivo_nome || 'Baixar arquivo da resolução (legado)'}
                     </a>
                   ) : null}
                 </div>
