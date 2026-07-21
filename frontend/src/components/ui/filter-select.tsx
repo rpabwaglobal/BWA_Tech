@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
-import { ChevronDown, Search, X } from 'lucide-react';
+import { Check, ChevronDown, Search, X } from 'lucide-react';
 import { getRoleColor, getRoleFullLabel, getRoleLabel } from '@/components/ui/user-select';
 
 export type FilterSelectOption = {
@@ -13,8 +13,8 @@ export type FilterSelectOption = {
 
 type FilterSelectProps = {
   options: FilterSelectOption[];
-  value: string;
-  onChange: (value: string) => void;
+  value?: string;
+  onChange?: (value: string) => void;
   placeholder?: string;
   disabled?: boolean;
   /** Quando true, mostra um X que limpa a seleção (envia '' no onChange).
@@ -26,17 +26,27 @@ type FilterSelectProps = {
   className?: string;
   /** Placeholder do campo de busca. Default "Buscar...". */
   searchPlaceholder?: string;
+  /** Habilita seleção múltipla. Usa `values`/`onValuesChange` em vez de
+   * `value`/`onChange`. O dropdown permanece aberto ao alternar itens. */
+  multiple?: boolean;
+  /** Valores selecionados no modo múltiplo. */
+  values?: string[];
+  /** Callback do modo múltiplo. */
+  onValuesChange?: (values: string[]) => void;
 };
 
 export function FilterSelect({
   options,
-  value,
+  value = '',
   onChange,
   placeholder = 'Selecione...',
   disabled = false,
   clearable = true,
   className = 'w-full',
   searchPlaceholder = 'Buscar...',
+  multiple = false,
+  values = [],
+  onValuesChange,
 }: FilterSelectProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -44,6 +54,7 @@ export function FilterSelect({
   const searchInputRef = useRef<HTMLInputElement>(null);
 
   const selectedOption = options.find((opt) => opt.value === value) || null;
+  const hasSelection = multiple ? values.length > 0 : !!selectedOption;
   // Mostra o slot de role só se ALGUMA opção tiver role definido — evita
   // padding esquerdo "vazio" em filtros que não envolvem usuários.
   const anyHasRole = options.some((o) => !!o.role);
@@ -82,14 +93,26 @@ export function FilterSelect({
   }, [isOpen]);
 
   const handleSelect = (optionValue: string) => {
-    onChange(optionValue);
+    if (multiple) {
+      const next = values.includes(optionValue)
+        ? values.filter((v) => v !== optionValue)
+        : [...values, optionValue];
+      onValuesChange?.(next);
+      // Mantém o dropdown aberto para escolher vários.
+      return;
+    }
+    onChange?.(optionValue);
     setIsOpen(false);
     setSearchQuery('');
   };
 
   const handleClear = (e: React.MouseEvent) => {
     e.stopPropagation();
-    onChange('');
+    if (multiple) {
+      onValuesChange?.([]);
+    } else {
+      onChange?.('');
+    }
     setIsOpen(false);
     setSearchQuery('');
   };
@@ -103,7 +126,17 @@ export function FilterSelect({
         className="flex h-[40px] w-full items-center justify-between rounded-[8px] border border-[var(--color-input)] bg-[var(--color-background)] px-[12px] py-[8px] text-sm ring-offset-[var(--color-background)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-ring)] focus-visible:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed"
       >
         <div className="flex min-w-0 flex-1 items-center gap-2">
-          {selectedOption ? (
+          {multiple ? (
+            values.length > 0 ? (
+              <span className="truncate">
+                {values.length === 1
+                  ? options.find((o) => o.value === values[0])?.label ?? '1 selecionado'
+                  : `${values.length} selecionados`}
+              </span>
+            ) : (
+              <span className="text-[var(--color-muted-foreground)]">{placeholder}</span>
+            )
+          ) : selectedOption ? (
             <>
               {selectedOption.role ? (
                 <Badge className={`${getRoleColor(selectedOption.role)} w-[64px] shrink-0 justify-center px-1 text-[10px]`}>
@@ -117,7 +150,7 @@ export function FilterSelect({
           )}
         </div>
         <div className="flex items-center gap-1 ml-2">
-          {clearable && selectedOption && !disabled && value !== '' && (
+          {clearable && hasSelection && !disabled && (
             <X
               className="h-4 w-4 text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]"
               onClick={handleClear}
@@ -153,7 +186,7 @@ export function FilterSelect({
               </div>
             ) : (
               filteredOptions.map((opt) => {
-                const isSelected = opt.value === value;
+                const isSelected = multiple ? values.includes(opt.value) : opt.value === value;
                 return (
                   <button
                     key={opt.value}
@@ -163,6 +196,18 @@ export function FilterSelect({
                       isSelected ? 'bg-[var(--color-accent)]' : ''
                     }`}
                   >
+                    {multiple ? (
+                      <span
+                        className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-[4px] border ${
+                          isSelected
+                            ? 'border-[var(--color-primary)] bg-[var(--color-primary)] text-white'
+                            : 'border-[var(--color-input)]'
+                        }`}
+                        aria-hidden
+                      >
+                        {isSelected && <Check className="h-3 w-3" />}
+                      </span>
+                    ) : null}
                     {anyHasRole ? (
                       opt.role ? (
                         <Badge className={`${getRoleColor(opt.role)} w-[64px] shrink-0 justify-center text-[10px]`}>

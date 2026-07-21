@@ -5,6 +5,7 @@ import { Badge } from '@/components/ui/badge';
 import { Avatar, AvatarImage, AvatarFallback } from '@/components/ui/avatar';
 import { FilterSelect } from '@/components/ui/filter-select';
 import { Button } from '@/components/ui/button';
+import { MetricasSuporte } from '@/components/MetricasSuporte';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
@@ -291,6 +292,11 @@ export default function Metrics() {
   const [users, setUsers] = useState<User[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
+  // Tab interna da página de Métricas. Abre em "Suporte" quando ?tab=suporte
+  // (usado pelo botão "Métricas do suporte" na página de Suporte).
+  const [activeMetricsTab, setActiveMetricsTab] = useState<'projetos_cards' | 'suporte'>(
+    () => (new URLSearchParams(window.location.search).get('tab') === 'suporte' ? 'suporte' : 'projetos_cards'),
+  );
 
   const [cardsSprintFilter, setCardsSprintFilter] = useState<string>('');
   const [cardsTypeFilter, setCardsTypeFilter] = useState<string>('');
@@ -1505,10 +1511,38 @@ export default function Metrics() {
           Métricas
         </h1>
         <p className="text-sm text-[var(--color-muted-foreground)] mt-1">
-          Cards fechados, entrega por sprint e consistência de prazo
+          {activeMetricsTab === 'suporte'
+            ? 'Tickets de suporte: rankings e abertura por período'
+            : 'Cards fechados, entrega por sprint e consistência de prazo'}
         </p>
       </div>
 
+      {/* Tabs internas: Projetos e Cards / Suporte (mesmo visual das tabs de Suporte) */}
+      <div className="flex items-center gap-[8px] border-b border-[var(--color-border)]">
+        {([
+          { key: 'projetos_cards', label: 'Projetos e Cards' },
+          { key: 'suporte', label: 'Suporte' },
+        ] as const).map((t) => (
+          <Button
+            key={t.key}
+            variant="ghost"
+            onClick={() => setActiveMetricsTab(t.key)}
+            className={cn(
+              'rounded-none border-b-2 border-transparent px-[16px] py-[8px] h-auto',
+              activeMetricsTab === t.key
+                ? 'border-[var(--color-primary)] text-[var(--color-primary)] font-semibold'
+                : 'text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]',
+            )}
+          >
+            {t.label}
+          </Button>
+        ))}
+      </div>
+
+      {activeMetricsTab === 'suporte' ? (
+        <MetricasSuporte />
+      ) : (
+      <>
       {/* Cards de totais */}
       <div className="grid gap-4 md:grid-cols-3">
         <Card>
@@ -3210,6 +3244,8 @@ export default function Metrics() {
           )}
         </DialogContent>
       </Dialog>
+      </>
+      )}
 
     </div>
   );

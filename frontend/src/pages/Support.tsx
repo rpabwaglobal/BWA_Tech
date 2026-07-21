@@ -38,7 +38,9 @@ import {
   Download,
   CheckSquare,
   ArrowRightLeft,
+  BarChart3,
 } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -184,12 +186,31 @@ function suporteTipoNomeMatchesTab(tipoNome: string | null | undefined, tab: Tab
   return tipoNamesForTab(tab).some((n) => normalizeSuporteTipoNome(n) === normalized);
 }
 
+/** Nome (normalizado) do item que deve cair na tab RPA independentemente do tipo. */
+const ITEM_PORTAL_BWA = normalizeSuporteTipoNome('Portal BWA');
+
+/** Verdadeiro quando o ITEM do chamado é "Portal BWA" (por nome quando o item
+ * vem como objeto, ou por id via o conjunto resolvido do catálogo). */
+function chamadoItemIsPortalBWA(chamado: ChamadoSuporte, portalBwaItemIds: Set<number>): boolean {
+  const item = chamado.item;
+  if (item == null) return false;
+  if (typeof item === 'object') {
+    if (item.nome && normalizeSuporteTipoNome(item.nome) === ITEM_PORTAL_BWA) return true;
+    return item.id != null && portalBwaItemIds.has(item.id);
+  }
+  return portalBwaItemIds.has(item);
+}
+
 function chamadoMatchesSuporteTab(
   chamado: ChamadoSuporte,
   tab: TabSpec,
   tipoIdByName: Record<string, number>,
+  portalBwaItemIds: Set<number>,
 ): boolean {
   if (!tab.tipoNome) return true;
+  // Regra especial: chamados cujo ITEM é "Portal BWA" pertencem à tab RPA,
+  // mesmo que o tipo do chamado não seja "Robôs (RPA)".
+  if (tab.key === 'rpa' && chamadoItemIsPortalBWA(chamado, portalBwaItemIds)) return true;
   const tipoId = typeof chamado.tipo === 'number' ? chamado.tipo : chamado.tipo?.id;
   const tabTipoId = tipoIdByName[tab.tipoNome];
   if (tabTipoId != null && tipoId === tabTipoId) return true;
@@ -439,6 +460,7 @@ function useSuporteResolucaoDraft(
 
 export default function Support() {
   const { user, isAuthenticated } = useAuth();
+  const navigate = useNavigate();
   const assigneeName = user ? displayUserName(user) : '';
 
   const [items, setItems] = useState<ChamadoSuporte[]>([]);
@@ -597,6 +619,19 @@ export default function Support() {
     });
     return () => { cancelled = true; };
   }, []);
+
+  // IDs dos itens "Portal BWA" resolvidos do catálogo — usados para roteá-los
+  // à tab RPA independentemente do tipo do chamado.
+  const portalBwaItemIds = useMemo(() => {
+    const ids = new Set<number>();
+    if (!suporteCatalog) return ids;
+    for (const tipo of suporteCatalog.tipos) {
+      for (const it of tipo.itens) {
+        if (normalizeSuporteTipoNome(it.nome ?? '') === ITEM_PORTAL_BWA) ids.add(it.id);
+      }
+    }
+    return ids;
+  }, [suporteCatalog]);
 
   // Reseta paginação ao mudar de tab (cada tab tem seu kanban montado independente).
   useEffect(() => {
@@ -814,7 +849,7 @@ export default function Support() {
         return db.localeCompare(da);
       });
     }
-    const filtered = filteredItems.filter((c) => chamadoMatchesSuporteTab(c, tabSpec, tipoIdByName));
+    const filtered = filteredItems.filter((c) => chamadoMatchesSuporteTab(c, tabSpec, tipoIdByName, portalBwaItemIds));
     // Ordena por data_atualizacao desc pra que o slice da paginação
     // (colunas finalizado/inviabilizado) sempre mostre os MAIS RECENTES
     // primeiro. Sem isso, um card recém-concluído pode cair fora dos 50
@@ -824,7 +859,7 @@ export default function Support() {
       const db = b.data_atualizacao ?? b.data_abertura ?? '';
       return db.localeCompare(da);
     });
-  }, [filteredItems, currentTab, tipoIdByName]);
+  }, [filteredItems, currentTab, tipoIdByName, portalBwaItemIds]);
 
   /** Totais REAIS por etapa (antes do truncamento da paginação) — usado pro
    * badge da coluna mostrar "120" mesmo se só 50 estão visíveis.
@@ -851,13 +886,13 @@ export default function Support() {
           counts[tab.key] = (counts[tab.key] ?? 0) + 1;
           continue;
         }
-        if (chamadoMatchesSuporteTab(c, tab, tipoIdByName)) {
+        if (chamadoMatchesSuporteTab(c, tab, tipoIdByName, portalBwaItemIds)) {
           counts[tab.key] = (counts[tab.key] ?? 0) + 1;
         }
       }
     }
     return counts;
-  }, [items, tipoIdByName]);
+  }, [items, tipoIdByName, portalBwaItemIds]);
 
   const columns = useMemo(() => {
     const map = Object.fromEntries(STAGES.map((s) => [s.key, [] as ChamadoSuporte[]])) as Record<
@@ -1207,7 +1242,8 @@ export default function Support() {
           Badge mostra quantos chamados estão na etapa "A desenvolver"
           (trabalho aguardando) — não o total da tab. */}
       {!(loading && items.length === 0) ? (
-        <div className="flex items-center gap-[8px] border-b border-[var(--color-border)] shrink-0">
+        <div className="flex items-center justify-between gap-[8px] border-b border-[var(--color-border)] shrink-0">
+          <div className="flex items-center gap-[8px]">
           {TABS.map((t) => {
             const count = tabADesenvolverCounts[t.key] ?? 0;
             const active = currentTab === t.key;
@@ -1235,6 +1271,18 @@ export default function Support() {
               </Button>
             );
           })}
+          </div>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="mr-[4px] shrink-0 gap-[6px]"
+            onClick={() => navigate('/metricas?tab=suporte')}
+            title="Ver as métricas de suporte"
+          >
+            <BarChart3 className="h-[16px] w-[16px]" />
+            <span className="hidden sm:inline">Métricas do suporte</span>
+          </Button>
         </div>
       ) : null}
 
