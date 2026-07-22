@@ -14,9 +14,11 @@ import {
 import { Loader2, Headset, Trophy, Users, Layers, Tag, Target } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { FilterSelect } from '@/components/ui/filter-select';
 import { Input } from '@/components/ui/input';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { suporteService, catalogNome, type ChamadoSuporte } from '@/services/suporteService';
 import { suporteTimelineService } from '@/services/suporteTimelineService';
@@ -567,6 +569,100 @@ function ResponsavelCard({
 /** SLA de resolução dos tickets: 24h entre a abertura e a resolução. */
 const SLA_HORAS = 24;
 
+/** Ticket já medido: guarda as duas pontas e o tempo, pra listar no modal
+ * sem recalcular. `resolucao` vem da timeline (nunca de data_atualizacao). */
+type SlaTicket = {
+  ticket: ChamadoSuporte;
+  abertura: Date;
+  resolucao: Date;
+  horas: number;
+};
+
+type SlaLinha = {
+  total: number;
+  onTime: number;
+  late: number;
+  onTimeTickets: SlaTicket[];
+  lateTickets: SlaTicket[];
+};
+
+/** "3h12" / "2d 4h" — leitura rápida do tempo de resolução. */
+function formatDuracao(horas: number): string {
+  if (horas < 1) return `${Math.max(1, Math.round(horas * 60))}min`;
+  if (horas < 24) {
+    const h = Math.floor(horas);
+    const m = Math.round((horas - h) * 60);
+    return m ? `${h}h${String(m).padStart(2, '0')}` : `${h}h`;
+  }
+  const d = Math.floor(horas / 24);
+  const h = Math.round(horas % 24);
+  return h ? `${d}d ${h}h` : `${d}d`;
+}
+
+function formatDataHora(d: Date): string {
+  return d.toLocaleString('pt-BR', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+/** Linha de ticket no modal de SLA — espelha o MetricsDeliveredCardRow da
+ * página de Métricas (mesmo layout de badge + grade de datas). */
+function SlaTicketRow({ item, variant }: { item: SlaTicket; variant: 'onTime' | 'late' }) {
+  const { ticket: t, abertura, resolucao, horas } = item;
+  return (
+    <li>
+      <div className="w-full rounded-md border border-[var(--color-border)] bg-[var(--color-card)] p-3 text-left text-sm">
+        <div className="flex flex-wrap items-start justify-between gap-2">
+          <span className="font-medium text-[var(--color-foreground)]">
+            #{t.id} · {catalogNome(t.item)} — {catalogNome(t.motivo)}
+          </span>
+          {variant === 'onTime' ? (
+            <Badge className="shrink-0 border-green-600/40 bg-green-500/15 text-green-800 dark:text-green-400">
+              No prazo · {formatDuracao(horas)}
+            </Badge>
+          ) : (
+            <Badge className="shrink-0 border-red-600/40 bg-red-500/15 text-red-800 dark:text-red-400">
+              Fora do prazo · {formatDuracao(horas)}
+            </Badge>
+          )}
+        </div>
+        <p className="mt-1 text-xs text-[var(--color-muted-foreground)]">
+          {catalogNome(t.tipo)}
+          {t.usuario_nome ? ` · Solicitante: ${t.usuario_nome}` : ''}
+        </p>
+        <dl className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-xs sm:grid-cols-3">
+          <div>
+            <dt className="text-[var(--color-muted-foreground)]">Aberto em</dt>
+            <dd className="font-medium text-[var(--color-foreground)]">{formatDataHora(abertura)}</dd>
+          </div>
+          <div>
+            <dt className="text-[var(--color-muted-foreground)]">Concluído em</dt>
+            <dd className="font-medium text-[var(--color-foreground)]">{formatDataHora(resolucao)}</dd>
+          </div>
+          <div>
+            <dt className="text-[var(--color-muted-foreground)]">Tempo até a conclusão</dt>
+            <dd
+              className={cn(
+                'font-medium',
+                variant === 'late' ? 'text-[var(--color-destructive)]' : 'text-[var(--color-foreground)]',
+              )}
+            >
+              {formatDuracao(horas)}
+            </dd>
+          </div>
+        </dl>
+        {t.descricao && (
+          <p className="mt-2 line-clamp-2 text-xs text-[var(--color-foreground)]/80">{t.descricao}</p>
+        )}
+      </div>
+    </li>
+  );
+}
+
 /** Tabela de consistência de SLA (mesmo layout da "Consistência de entrega" dos
  * projetos/cards), por responsável pela solução. Considera apenas tickets
  * resolvidos e classifica dentro/fora do prazo de 24h. */
@@ -589,8 +685,11 @@ function TabelaSlaSuporte({
   erroResolvidoEm: boolean;
 }) {
   const filtro = useTicketFilter(tickets, opcoes);
+  /** Responsável selecionado (clique na linha) → abre o modal com os tickets. */
+  const [sel, setSel] = useState<string | null>(null);
+  const [tab, setTab] = useState<'onTime' | 'late'>('onTime');
   const { linhas, semDataConclusao } = useMemo(() => {
-    const map = new Map<string, { total: number; onTime: number; late: number }>();
+    const map = new Map<string, SlaLinha>();
     let semData = 0;
     for (const t of filtro.filtrados) {
       if (t.status !== 'Resolvido') continue;
@@ -610,16 +709,26 @@ function TabelaSlaSuporte({
         continue;
       }
       const horas = (resolucao.getTime() - abertura.getTime()) / 3_600_000;
-      const rec = map.get(nome) ?? { total: 0, onTime: 0, late: 0 };
+      const rec = map.get(nome) ?? { total: 0, onTime: 0, late: 0, onTimeTickets: [], lateTickets: [] };
       rec.total += 1;
-      if (horas <= SLA_HORAS) rec.onTime += 1;
-      else rec.late += 1;
+      const item: SlaTicket = { ticket: t, abertura, resolucao, horas };
+      if (horas <= SLA_HORAS) {
+        rec.onTime += 1;
+        rec.onTimeTickets.push(item);
+      } else {
+        rec.late += 1;
+        rec.lateTickets.push(item);
+      }
       map.set(nome, rec);
     }
+    // Mais recentes primeiro dentro de cada aba do modal.
+    const porConclusaoDesc = (a: SlaTicket, b: SlaTicket) => b.resolucao.getTime() - a.resolucao.getTime();
     const linhas = [...map.entries()]
       .map(([nome, r]) => ({
         nome,
         ...r,
+        onTimeTickets: [...r.onTimeTickets].sort(porConclusaoDesc),
+        lateTickets: [...r.lateTickets].sort(porConclusaoDesc),
         pct: r.total ? Math.round((r.onTime / r.total) * 100) : 0,
         foto: infoDe(nome).foto,
       }))
@@ -632,6 +741,9 @@ function TabelaSlaSuporte({
   const totalResolvidos = linhas.reduce((s, l) => s + l.total, 0);
   const totalOnTime = linhas.reduce((s, l) => s + l.onTime, 0);
   const pctGeral = totalResolvidos ? Math.round((totalOnTime / totalResolvidos) * 100) : 0;
+  // Linha do responsável aberto no modal. Derivada (não duplicada em estado)
+  // pra acompanhar sozinha a troca de filtro de período.
+  const selLinha = useMemo(() => linhas.find((l) => l.nome === sel) ?? null, [linhas, sel]);
 
   return (
     <Card>
@@ -732,8 +844,30 @@ function TabelaSlaSuporte({
                     ) : (
                       <span className="text-[var(--color-foreground)]">{rank}</span>
                     );
+                  const abrir = () => {
+                    if (row.total === 0) return;
+                    // Abre já na aba que tem conteúdo (se só houver atrasados,
+                    // não faz sentido cair numa aba vazia).
+                    setTab(row.onTime > 0 ? 'onTime' : 'late');
+                    setSel(row.nome);
+                  };
                   return (
-                    <tr key={row.nome} className={`${rowBg} border-b border-[var(--color-border)]`}>
+                    <tr
+                      key={row.nome}
+                      role={row.total > 0 ? 'button' : undefined}
+                      tabIndex={row.total > 0 ? 0 : undefined}
+                      title={row.total > 0 ? 'Ver tickets deste responsável' : undefined}
+                      className={`${rowBg} border-b border-[var(--color-border)]${
+                        row.total > 0 ? ' cursor-pointer hover:opacity-90' : ''
+                      }`}
+                      onClick={abrir}
+                      onKeyDown={(e) => {
+                        if (row.total > 0 && (e.key === 'Enter' || e.key === ' ')) {
+                          e.preventDefault();
+                          abrir();
+                        }
+                      }}
+                    >
                       <td className="w-0 whitespace-nowrap border-r border-[var(--color-border)] p-3">
                         <div className="flex justify-center">{topCell}</div>
                       </td>
@@ -764,6 +898,83 @@ function TabelaSlaSuporte({
           </div>
         )}
       </CardContent>
+
+      {/* Clique numa linha → tickets do responsável, separados por dentro/fora
+          do prazo (mesmas abas do modal "Cards entregues" de Métricas). */}
+      <Dialog
+        open={selLinha != null}
+        onOpenChange={(o) => {
+          if (!o) setSel(null);
+        }}
+        containerClassName="max-w-2xl"
+      >
+        <DialogContent onClose={() => setSel(null)} className="flex max-h-[90vh] flex-col overflow-hidden">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Target className="h-5 w-5" />
+              Tickets resolvidos
+            </DialogTitle>
+            <p className="text-sm text-[var(--color-muted-foreground)]">
+              {selLinha ? `${selLinha.nome} · ${filtro.label}` : ''}
+              {selLinha ? ` · ${selLinha.onTime} de ${selLinha.total} no prazo (${selLinha.pct}%)` : ''}
+            </p>
+          </DialogHeader>
+          {selLinha && (
+            <div className="mt-2 flex min-h-0 flex-1 flex-col gap-0">
+              <div className="flex gap-[8px] border-b border-[var(--color-border)]">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  disabled={selLinha.onTimeTickets.length === 0}
+                  onClick={() => setTab('onTime')}
+                  className={cn(
+                    'h-auto rounded-none border-b-2 border-transparent px-[16px] py-[8px]',
+                    tab === 'onTime'
+                      ? 'border-[var(--color-primary)] font-semibold text-[var(--color-primary)]'
+                      : 'text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]',
+                  )}
+                >
+                  No prazo ({selLinha.onTimeTickets.length})
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  disabled={selLinha.lateTickets.length === 0}
+                  onClick={() => setTab('late')}
+                  className={cn(
+                    'h-auto rounded-none border-b-2 border-transparent px-[16px] py-[8px]',
+                    tab === 'late'
+                      ? 'border-[var(--color-primary)] font-semibold text-[var(--color-primary)]'
+                      : 'text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]',
+                  )}
+                >
+                  Fora do prazo ({selLinha.lateTickets.length})
+                </Button>
+              </div>
+              <div className="min-h-0 max-h-[min(60vh,520px)] flex-1 overflow-y-auto pr-1 pt-3">
+                {(tab === 'onTime' ? selLinha.onTimeTickets : selLinha.lateTickets).length > 0 ? (
+                  <ul className="space-y-2">
+                    {(tab === 'onTime' ? selLinha.onTimeTickets : selLinha.lateTickets).map((item) => (
+                      <SlaTicketRow key={item.ticket.id} item={item} variant={tab} />
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="text-sm text-[var(--color-muted-foreground)]">
+                    {tab === 'onTime'
+                      ? 'Nenhum ticket no prazo neste filtro.'
+                      : 'Nenhum ticket fora do prazo neste filtro.'}
+                  </p>
+                )}
+              </div>
+              <DialogFooter className="mt-0 shrink-0 border-t border-[var(--color-border)] pt-4">
+                <Button type="button" variant="outline" onClick={() => setSel(null)}>
+                  Fechar
+                </Button>
+              </DialogFooter>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </Card>
   );
 }
