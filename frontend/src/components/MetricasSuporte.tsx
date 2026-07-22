@@ -575,6 +575,7 @@ function TabelaSlaSuporte({
   opcoes,
   infoDe,
   resolvidoEmMap,
+  erroResolvidoEm,
 }: {
   tickets: ChamadoSuporte[];
   opcoes: Opcoes;
@@ -583,6 +584,9 @@ function TabelaSlaSuporte({
    * confiável de "quando foi resolvido"; `data_atualizacao` é auto_now e
    * pode ser reescrito por toques sem relação com a conclusão. */
   resolvidoEmMap: Record<number, string>;
+  /** true = não foi possível carregar as datas de conclusão. Sem elas o SLA
+   * não é calculável — mostramos o aviso em vez de números incorretos. */
+  erroResolvidoEm: boolean;
 }) {
   const filtro = useTicketFilter(tickets, opcoes);
   const { linhas, semDataConclusao } = useMemo(() => {
@@ -646,7 +650,7 @@ function TabelaSlaSuporte({
               resolvidos no prazo (<strong>{pctGeral}%</strong>).
             </>
           )}
-          {semDataConclusao > 0 && (
+          {!erroResolvidoEm && semDataConclusao > 0 && (
             <>
               {' '}
               <span className="text-[var(--color-warning,#b45309)]">
@@ -660,7 +664,13 @@ function TabelaSlaSuporte({
         {filtro.ui}
       </CardHeader>
       <CardContent>
-        {linhas.length === 0 ? (
+        {erroResolvidoEm ? (
+          <p className="py-6 text-center text-sm text-[var(--color-destructive)]">
+            Não foi possível carregar as datas de conclusão dos tickets. O SLA depende delas para
+            ser calculado corretamente, então preferimos não exibir números do que exibir errado.
+            Recarregue a página; se persistir, avise o time de tecnologia.
+          </p>
+        ) : linhas.length === 0 ? (
           <p className="py-6 text-center text-sm text-[var(--color-muted-foreground)]">
             Nenhum ticket resolvido no período.
           </p>
@@ -891,6 +901,7 @@ export function MetricasSuporte() {
   const [tickets, setTickets] = useState<ChamadoSuporte[]>([]);
   const [users, setUsers] = useState<User[]>([]);
   const [resolvidoEmMap, setResolvidoEmMap] = useState<Record<number, string>>({});
+  const [erroResolvidoEm, setErroResolvidoEm] = useState(false);
   const [loading, setLoading] = useState(true);
   const [erro, setErro] = useState<string | null>(null);
 
@@ -905,16 +916,18 @@ export function MetricasSuporte() {
         if (cancelled) return;
         setTickets(list);
         setUsers(us);
-        // Data real de resolução (via timeline local) só interessa a tickets
-        // já resolvidos — é o que entra no cálculo de SLA.
-        const resolvidoIds = list.filter((t) => t.status === 'Resolvido').map((t) => t.id);
+        // Datas reais de conclusão (timeline local) — base do cálculo de SLA.
+        // Se isto falhar, o SLA NÃO cai pra data_atualizacao (era o bug):
+        // sinalizamos o erro e a tabela avisa em vez de mostrar número errado.
         void suporteTimelineService
-          .getResolvidoEmMap(resolvidoIds)
+          .getResolvidoEmMap()
           .then((map) => {
-            if (!cancelled) setResolvidoEmMap(map);
+            if (cancelled) return;
+            setResolvidoEmMap(map);
+            setErroResolvidoEm(false);
           })
           .catch(() => {
-            /* fallback: TabelaSlaSuporte usa data_atualizacao quando o mapa não tem o id */
+            if (!cancelled) setErroResolvidoEm(true);
           });
       })
       .catch(() => {
@@ -1021,7 +1034,13 @@ export function MetricasSuporte() {
       </div>
 
       {/* Um gráfico por linha, na ordem pedida */}
-      <TabelaSlaSuporte tickets={tickets} opcoes={opcoes} infoDe={infoDe} resolvidoEmMap={resolvidoEmMap} />
+      <TabelaSlaSuporte
+        tickets={tickets}
+        opcoes={opcoes}
+        infoDe={infoDe}
+        resolvidoEmMap={resolvidoEmMap}
+        erroResolvidoEm={erroResolvidoEm}
+      />
 
       <ResponsavelCard tickets={tickets} opcoes={opcoes} infoDe={infoDe} />
 

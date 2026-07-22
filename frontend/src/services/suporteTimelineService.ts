@@ -45,14 +45,14 @@ export const suporteTimelineService = {
    * resolução: `chamado.data_atualizacao` é reescrito por QUALQUER save
    * (ex.: mover entre tabs, o proxy do portal retocando o registro), sem
    * relação alguma com a conclusão de fato do ticket.
-   * Chamados sem nenhuma troca de etapa registrada não aparecem no mapa —
-   * o caller decide o fallback (ex.: `data_atualizacao`).
+   * Chamados sem nenhuma troca de etapa registrada não aparecem no mapa.
    */
-  async getResolvidoEmMap(chamadoIds: number[]): Promise<Record<number, string>> {
-    const ids = [...new Set(chamadoIds)].filter((id) => Number.isFinite(id));
-    if (ids.length === 0) return {};
+  async getResolvidoEmMap(): Promise<Record<number, string>> {
+    // Sem `chamado_ids`: a tela de métricas lida com centenas de tickets e a
+    // query string com todos os ids estourava o limite prático de URL. O
+    // backend já escopa a resposta ao que o usuário pode ver.
     const { data } = await api.get<Record<string, string>>(
-      `/formularios/suporte-timeline/resolvido-em/?chamado_ids=${ids.join(',')}`,
+      '/formularios/suporte-timeline/resolvido-em/',
     );
     const result: Record<number, string> = {};
     for (const [id, iso] of Object.entries(data)) {
