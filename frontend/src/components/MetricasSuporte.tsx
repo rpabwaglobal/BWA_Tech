@@ -21,7 +21,10 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { suporteService, catalogNome, type ChamadoSuporte } from '@/services/suporteService';
-import { suporteTimelineService } from '@/services/suporteTimelineService';
+import {
+  suporteTimelineService,
+  type SuporteTimelineEntry,
+} from '@/services/suporteTimelineService';
 import { userService, type User } from '@/services/userService';
 
 /** Cor da barra por cargo — mesma paleta do gráfico "Cards finalizados por
@@ -393,6 +396,8 @@ function ResponsavelCard({
   const filtro = useTicketFilter(tickets, opcoes);
   const [sel, setSel] = useState<string | null>(null);
   const [tab, setTab] = useState<'onTime' | 'late' | 'sem'>('onTime');
+  /** Ticket aberto a partir da lista (esconde a lista enquanto aberto). */
+  const [detalhe, setDetalhe] = useState<{ ticket: ChamadoSuporte; medida: SlaTicket | null } | null>(null);
   const rows = useMemo(
     () =>
       rankBy(filtro.filtrados, (t) => t.responsavel_solucao).map((r) => {
@@ -526,7 +531,7 @@ function ResponsavelCard({
       </CardContent>
 
       <Dialog
-        open={!!sel}
+        open={!!sel && detalhe == null}
         onOpenChange={(o) => {
           if (!o) setSel(null);
         }}
@@ -610,7 +615,12 @@ function ResponsavelCard({
                   grupos.semMedicao.length > 0 ? (
                     <ul className="space-y-2">
                       {grupos.semMedicao.map((t) => (
-                        <SlaTicketRow key={t.id} ticket={t} medida={null} />
+                        <SlaTicketRow
+                          key={t.id}
+                          ticket={t}
+                          medida={null}
+                          onSelect={(ticket, medida) => setDetalhe({ ticket, medida })}
+                        />
                       ))}
                     </ul>
                   ) : (
@@ -621,7 +631,12 @@ function ResponsavelCard({
                 ) : (tab === 'onTime' ? grupos.onTime : grupos.late).length > 0 ? (
                   <ul className="space-y-2">
                     {(tab === 'onTime' ? grupos.onTime : grupos.late).map((item) => (
-                      <SlaTicketRow key={item.ticket.id} ticket={item.ticket} medida={item} />
+                      <SlaTicketRow
+                        key={item.ticket.id}
+                        ticket={item.ticket}
+                        medida={item}
+                        onSelect={(ticket, medida) => setDetalhe({ ticket, medida })}
+                      />
                     ))}
                   </ul>
                 ) : (
@@ -641,6 +656,8 @@ function ResponsavelCard({
           )}
         </DialogContent>
       </Dialog>
+
+      <SlaTicketDetalheDialog alvo={detalhe} onClose={() => setDetalhe(null)} />
     </Card>
   );
 }
@@ -730,12 +747,25 @@ function formatDataHora(d: Date): string {
  * página de Métricas (mesmo layout de badge + grade de datas). A variante sai
  * da própria medição: badge e grupo nunca podem divergir. `medida = null` é o
  * ticket que não dá pra medir (não resolvido ou sem data de conclusão). */
-function SlaTicketRow({ ticket: t, medida }: { ticket: ChamadoSuporte; medida: SlaTicket | null }) {
+function SlaTicketRow({
+  ticket: t,
+  medida,
+  onSelect,
+}: {
+  ticket: ChamadoSuporte;
+  medida: SlaTicket | null;
+  onSelect: (ticket: ChamadoSuporte, medida: SlaTicket | null) => void;
+}) {
   const variant = medida ? (medida.horas <= SLA_HORAS ? 'onTime' : 'late') : 'sem';
   const aberturaTxt = t.data_abertura ? formatDataHora(new Date(t.data_abertura)) : '—';
   return (
     <li>
-      <div className="w-full rounded-md border border-[var(--color-border)] bg-[var(--color-card)] p-3 text-left text-sm">
+      <button
+        type="button"
+        onClick={() => onSelect(t, medida)}
+        title="Ver detalhes do ticket"
+        className="w-full rounded-md border border-[var(--color-border)] bg-[var(--color-card)] p-3 text-left text-sm transition-colors hover:bg-[var(--color-accent)]"
+      >
         <div className="flex flex-wrap items-start justify-between gap-2">
           <span className="font-medium text-[var(--color-foreground)]">
             #{t.id} · {catalogNome(t.item)} — {catalogNome(t.motivo)}
@@ -789,8 +819,170 @@ function SlaTicketRow({ ticket: t, medida }: { ticket: ChamadoSuporte; medida: S
         {t.descricao && (
           <p className="mt-2 line-clamp-2 text-xs text-[var(--color-foreground)]/80">{t.descricao}</p>
         )}
-      </div>
+      </button>
     </li>
+  );
+}
+
+/** Detalhe do ticket aberto a partir das listas de SLA. Read-only de
+ * propósito: aqui é contexto de métricas, e as ações (concluir, atribuir
+ * responsável) vivem no quadro de Suporte. Traz a timeline junto porque ela é
+ * a evidência de como o SLA foi medido. */
+function SlaTicketDetalheDialog({
+  alvo,
+  onClose,
+}: {
+  alvo: { ticket: ChamadoSuporte; medida: SlaTicket | null } | null;
+  onClose: () => void;
+}) {
+  const [timeline, setTimeline] = useState<SuporteTimelineEntry[]>([]);
+  const [carregando, setCarregando] = useState(false);
+  const [erroTimeline, setErroTimeline] = useState(false);
+  const chamadoId = alvo?.ticket.id ?? null;
+
+  useEffect(() => {
+    if (chamadoId == null) return;
+    let cancelado = false;
+    setCarregando(true);
+    setErroTimeline(false);
+    setTimeline([]);
+    void suporteTimelineService
+      .listByChamado(chamadoId)
+      .then((lista) => {
+        if (!cancelado) setTimeline(lista);
+      })
+      .catch(() => {
+        if (!cancelado) setErroTimeline(true);
+      })
+      .finally(() => {
+        if (!cancelado) setCarregando(false);
+      });
+    return () => {
+      cancelado = true;
+    };
+  }, [chamadoId]);
+
+  if (!alvo) return null;
+  const { ticket: t, medida } = alvo;
+  const linhas: Array<[string, string]> = [
+    ['Status', t.status],
+    ['Responsável pela solução', t.responsavel_solucao || '—'],
+    ['Solicitante', t.usuario_nome || '—'],
+    ['Setor do solicitante', t.usuario_setor || '—'],
+    ['Tipo (aba)', catalogNome(t.tipo)],
+    ['Item', catalogNome(t.item)],
+    ['Motivo', catalogNome(t.motivo)],
+    ['Aberto em', t.data_abertura ? formatDataHora(new Date(t.data_abertura)) : '—'],
+    ['Concluído em', medida ? formatDataHora(medida.resolucao) : '—'],
+    ['Tempo até a conclusão', medida ? formatDuracao(medida.horas) : '—'],
+  ];
+
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()} containerClassName="max-w-2xl">
+      <DialogContent onClose={onClose} className="flex max-h-[90vh] flex-col overflow-hidden">
+        <DialogHeader>
+          <DialogTitle className="flex flex-wrap items-center gap-2">
+            <Headset className="h-5 w-5" />
+            #{t.id} · {catalogNome(t.item)} — {catalogNome(t.motivo)}
+            {medida && (
+              <Badge
+                className={cn(
+                  'shrink-0',
+                  medida.horas <= SLA_HORAS
+                    ? 'border-green-600/40 bg-green-500/15 text-green-800 dark:text-green-400'
+                    : 'border-red-600/40 bg-red-500/15 text-red-800 dark:text-red-400',
+                )}
+              >
+                {medida.horas <= SLA_HORAS ? 'No prazo' : 'Fora do prazo'} · {formatDuracao(medida.horas)}
+              </Badge>
+            )}
+          </DialogTitle>
+        </DialogHeader>
+
+        <div className="min-h-0 flex-1 space-y-4 overflow-y-auto pr-1 pt-2">
+          <dl className="grid grid-cols-1 gap-x-4 gap-y-2 text-sm sm:grid-cols-2">
+            {linhas.map(([rotulo, valor]) => (
+              <div key={rotulo}>
+                <dt className="text-xs text-[var(--color-muted-foreground)]">{rotulo}</dt>
+                <dd className="font-medium text-[var(--color-foreground)]">{valor}</dd>
+              </div>
+            ))}
+          </dl>
+
+          {t.empresa && (
+            <div>
+              <p className="text-xs text-[var(--color-muted-foreground)]">Empresa</p>
+              <p className="text-sm text-[var(--color-foreground)]">{t.empresa.split('||')[0]}</p>
+            </div>
+          )}
+
+          {t.descricao && (
+            <div>
+              <p className="text-xs text-[var(--color-muted-foreground)]">Descrição</p>
+              <p className="whitespace-pre-line text-sm text-[var(--color-foreground)]">{t.descricao}</p>
+            </div>
+          )}
+
+          {t.descricao_resolucao && (
+            <div>
+              <p className="text-xs text-[var(--color-muted-foreground)]">Notas de resolução</p>
+              <p className="whitespace-pre-line text-sm text-[var(--color-foreground)]">
+                {t.descricao_resolucao}
+              </p>
+            </div>
+          )}
+
+          <div>
+            <p className="mb-2 text-xs text-[var(--color-muted-foreground)]">
+              Histórico do ticket {medida ? '(origem da data de conclusão usada no SLA)' : ''}
+            </p>
+            {carregando ? (
+              <p className="flex items-center gap-2 text-sm text-[var(--color-muted-foreground)]">
+                <Loader2 className="h-4 w-4 animate-spin" /> Carregando histórico...
+              </p>
+            ) : erroTimeline ? (
+              <p className="text-sm text-[var(--color-destructive)]">
+                Não foi possível carregar o histórico deste ticket.
+              </p>
+            ) : timeline.length === 0 ? (
+              <p className="text-sm text-[var(--color-muted-foreground)]">
+                Nenhum evento registrado no quadro do BWA.
+              </p>
+            ) : (
+              <ul className="space-y-2">
+                {[...timeline]
+                  .sort((a, b) => (a.data ?? '').localeCompare(b.data ?? ''))
+                  .map((e) => (
+                    <li
+                      key={e.id}
+                      className="rounded-md border border-[var(--color-border)] bg-[var(--color-card)] p-2 text-xs"
+                    >
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <span className="font-medium text-[var(--color-foreground)]">
+                          {e.tipo_evento_display || e.tipo_evento}
+                        </span>
+                        <span className="text-[var(--color-muted-foreground)]">
+                          {formatDataHora(new Date(e.data))}
+                        </span>
+                      </div>
+                      <p className="mt-1 text-[var(--color-foreground)]/80">{e.descricao}</p>
+                      {e.usuario_name && (
+                        <p className="mt-0.5 text-[var(--color-muted-foreground)]">por {e.usuario_name}</p>
+                      )}
+                    </li>
+                  ))}
+              </ul>
+            )}
+          </div>
+        </div>
+
+        <DialogFooter className="mt-0 shrink-0 border-t border-[var(--color-border)] pt-4">
+          <Button type="button" variant="outline" onClick={onClose}>
+            Voltar
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -819,6 +1011,9 @@ function TabelaSlaSuporte({
   /** Responsável selecionado (clique na linha) → abre o modal com os tickets. */
   const [sel, setSel] = useState<string | null>(null);
   const [tab, setTab] = useState<'onTime' | 'late'>('onTime');
+  /** Ticket aberto a partir da lista. Enquanto houver, a lista fica escondida
+   * (evita empilhar dois Dialogs) e volta ao fechar o detalhe. */
+  const [detalhe, setDetalhe] = useState<{ ticket: ChamadoSuporte; medida: SlaTicket | null } | null>(null);
   const { linhas, semDataConclusao } = useMemo(() => {
     const map = new Map<string, SlaLinha>();
     let semData = 0;
@@ -1029,7 +1224,7 @@ function TabelaSlaSuporte({
       {/* Clique numa linha → tickets do responsável, separados por dentro/fora
           do prazo (mesmas abas do modal "Cards entregues" de Métricas). */}
       <Dialog
-        open={selLinha != null}
+        open={selLinha != null && detalhe == null}
         onOpenChange={(o) => {
           if (!o) setSel(null);
         }}
@@ -1082,7 +1277,12 @@ function TabelaSlaSuporte({
                 {(tab === 'onTime' ? selLinha.onTimeTickets : selLinha.lateTickets).length > 0 ? (
                   <ul className="space-y-2">
                     {(tab === 'onTime' ? selLinha.onTimeTickets : selLinha.lateTickets).map((item) => (
-                      <SlaTicketRow key={item.ticket.id} ticket={item.ticket} medida={item} />
+                      <SlaTicketRow
+                        key={item.ticket.id}
+                        ticket={item.ticket}
+                        medida={item}
+                        onSelect={(ticket, medida) => setDetalhe({ ticket, medida })}
+                      />
                     ))}
                   </ul>
                 ) : (
@@ -1102,6 +1302,8 @@ function TabelaSlaSuporte({
           )}
         </DialogContent>
       </Dialog>
+
+      <SlaTicketDetalheDialog alvo={detalhe} onClose={() => setDetalhe(null)} />
     </Card>
   );
 }
