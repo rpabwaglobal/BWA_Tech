@@ -40,7 +40,8 @@ import {
   ArrowRightLeft,
   BarChart3,
 } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
+import { SUPORTE_CHAMADO_PARAM } from '@/routes';
 import { useAuth } from '@/context/AuthContext';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -461,6 +462,7 @@ function useSuporteResolucaoDraft(
 export default function Support() {
   const { user, isAuthenticated } = useAuth();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const assigneeName = user ? displayUserName(user) : '';
 
   const [items, setItems] = useState<ChamadoSuporte[]>([]);
@@ -572,6 +574,26 @@ export default function Support() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  // Link externo `?chamado=<id>` (ex.: listas das métricas de suporte) abre o
+  // card direto. Cai na tab "Todos" pra o chamado existir no quadro atrás do
+  // dialog — sem isso, fechar o card deixaria o usuário num quadro que não o
+  // contém. O param é consumido (replace) pra não reabrir ao fechar/navegar.
+  useEffect(() => {
+    const raw = searchParams.get(SUPORTE_CHAMADO_PARAM);
+    if (!raw) return;
+    if (items.length === 0) return; // espera a lista carregar
+    const alvo = items.find((c) => String(c.id) === raw);
+    if (alvo) {
+      setCurrentTab('todos');
+      setDetailChamado(alvo);
+    } else {
+      setError(`Chamado #${raw} não encontrado nos seus chamados.`);
+    }
+    const next = new URLSearchParams(searchParams);
+    next.delete(SUPORTE_CHAMADO_PARAM);
+    setSearchParams(next, { replace: true });
+  }, [items, searchParams, setSearchParams]);
 
   useEffect(() => {
     try {

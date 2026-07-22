@@ -28,6 +28,16 @@ export const ROUTES = {
   administracao: '/administracao',
 } as const;
 
+/** Nome do query param que abre um chamado direto no quadro de Suporte. */
+export const SUPORTE_CHAMADO_PARAM = 'chamado';
+
+/** Link para o quadro de Suporte já com o card do chamado aberto. Usado pelas
+ * listas de métricas de suporte — evita reconstruir o detalhe do ticket fora
+ * do Suporte: o card que abre é o mesmo que o time usa no dia a dia. */
+export function abrirChamadoUrl(chamadoId: number | string): string {
+  return `${ROUTES.suporte}?${SUPORTE_CHAMADO_PARAM}=${encodeURIComponent(String(chamadoId))}`;
+}
+
 /** Item ativo no menu lateral (rota exata ou detalhe sob o mesmo prefixo). */
 export function isNavRouteActive(navPath: string, pathname: string): boolean {
   if (navPath === ROUTES.projetos) {
