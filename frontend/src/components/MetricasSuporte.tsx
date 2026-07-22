@@ -14,7 +14,6 @@ import {
 import { Loader2, Headset, Trophy, Users, Layers, Tag, Target } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
-import { useNavigate } from 'react-router-dom';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { FilterSelect } from '@/components/ui/filter-select';
 import { Input } from '@/components/ui/input';
@@ -24,7 +23,14 @@ import { cn } from '@/lib/utils';
 import { suporteService, catalogNome, type ChamadoSuporte } from '@/services/suporteService';
 import { suporteTimelineService } from '@/services/suporteTimelineService';
 import { userService, type User } from '@/services/userService';
-import { abrirChamadoUrl } from '@/routes';
+import {
+  ChamadoDetailDialog,
+  getKanbanStageLabel,
+  patchForStage,
+} from '@/pages/Support';
+import { useAuth } from '@/context/AuthContext';
+import { logSuporteChamadoChanges } from '@/lib/suporteTimelineLog';
+import { suporteResolucaoService } from '@/services/suporteResolucaoService';
 
 /** Cor da barra por cargo — mesma paleta do gráfico "Cards finalizados por
  * usuário" (Metrics.tsx). */
@@ -384,6 +390,7 @@ function ResponsavelCard({
   opcoes,
   infoDe,
   resolvidoEmMap,
+  onAbrirCard,
 }: {
   tickets: ChamadoSuporte[];
   opcoes: Opcoes;
@@ -391,15 +398,12 @@ function ResponsavelCard({
   /** chamado.id → ISO da conclusão (timeline). Usado pra separar o modal em
    * dentro/fora do prazo, igual à tabela de SLA. */
   resolvidoEmMap: Record<number, string>;
+  /** Abre o card real do Suporte por cima, sem fechar esta lista. */
+  onAbrirCard: (t: ChamadoSuporte) => void;
 }) {
   const filtro = useTicketFilter(tickets, opcoes);
   const [sel, setSel] = useState<string | null>(null);
   const [tab, setTab] = useState<'onTime' | 'late' | 'sem'>('onTime');
-  const navigate = useNavigate();
-  /** Abre o card REAL no quadro de Suporte. */
-  const abrirCardNoSuporte = (ticket: ChamadoSuporte) => {
-    navigate(abrirChamadoUrl(ticket.id));
-  };
   const rows = useMemo(
     () =>
       rankBy(filtro.filtrados, (t) => t.responsavel_solucao).map((r) => {
@@ -621,7 +625,7 @@ function ResponsavelCard({
                           key={t.id}
                           ticket={t}
                           medida={null}
-                          onSelect={abrirCardNoSuporte}
+                          onSelect={onAbrirCard}
                         />
                       ))}
                     </ul>
@@ -637,7 +641,7 @@ function ResponsavelCard({
                         key={item.ticket.id}
                         ticket={item.ticket}
                         medida={item}
-                        onSelect={abrirCardNoSuporte}
+                        onSelect={onAbrirCard}
                       />
                     ))}
                   </ul>
@@ -833,6 +837,7 @@ function TabelaSlaSuporte({
   infoDe,
   resolvidoEmMap,
   erroResolvidoEm,
+  onAbrirCard,
 }: {
   tickets: ChamadoSuporte[];
   opcoes: Opcoes;
@@ -844,17 +849,13 @@ function TabelaSlaSuporte({
   /** true = não foi possível carregar as datas de conclusão. Sem elas o SLA
    * não é calculável — mostramos o aviso em vez de números incorretos. */
   erroResolvidoEm: boolean;
+  /** Abre o card real do Suporte por cima, sem fechar esta lista. */
+  onAbrirCard: (t: ChamadoSuporte) => void;
 }) {
   const filtro = useTicketFilter(tickets, opcoes);
   /** Responsável selecionado (clique na linha) → abre o modal com os tickets. */
   const [sel, setSel] = useState<string | null>(null);
   const [tab, setTab] = useState<'onTime' | 'late'>('onTime');
-  const navigate = useNavigate();
-  /** Abre o card REAL no quadro de Suporte (mesmo dialog que o time já usa),
-   * em vez de reconstruir o detalhe aqui. */
-  const abrirCardNoSuporte = (ticket: ChamadoSuporte) => {
-    navigate(abrirChamadoUrl(ticket.id));
-  };
   const { linhas, semDataConclusao } = useMemo(() => {
     const map = new Map<string, SlaLinha>();
     let semData = 0;
@@ -1122,7 +1123,7 @@ function TabelaSlaSuporte({
                         key={item.ticket.id}
                         ticket={item.ticket}
                         medida={item}
-                        onSelect={abrirCardNoSuporte}
+                        onSelect={onAbrirCard}
                       />
                     ))}
                   </ul>
@@ -1277,12 +1278,71 @@ function BarRankCard({
 }
 
 export function MetricasSuporte() {
+  const { user } = useAuth();
   const [tickets, setTickets] = useState<ChamadoSuporte[]>([]);
   const [users, setUsers] = useState<User[]>([]);
   const [resolvidoEmMap, setResolvidoEmMap] = useState<Record<number, string>>({});
   const [erroResolvidoEm, setErroResolvidoEm] = useState(false);
   const [loading, setLoading] = useState(true);
   const [erro, setErro] = useState<string | null>(null);
+
+  // ---- Card real do Suporte, aberto por cima das listas -------------------
+  // Reaproveita o ChamadoDetailDialog do quadro (timeline, anexos, pegar card,
+  // concluir) em vez de reconstruir o detalhe aqui. Fica no componente raiz
+  // pra os dois cards de métricas compartilharem a mesma fiação, e as listas
+  // continuam montadas atrás — fechar o card devolve o usuário à lista.
+  const [detailChamado, setDetailChamado] = useState<ChamadoSuporte | null>(null);
+  const [timelineRefreshNonce, setTimelineRefreshNonce] = useState(0);
+  const [concludingTicketId, setConcludingTicketId] = useState<number | null>(null);
+  const assigneeName = user ? displayUserName(user as unknown as User) : '';
+  const bumpTimeline = useCallback(() => setTimelineRefreshNonce((n) => n + 1), []);
+
+  /** Reflete no estado local a alteração feita dentro do card (responsável,
+   * conclusão), pra tabela e gráficos acompanharem sem recarregar tudo. */
+  const aplicarTicketAtualizado = useCallback((c: ChamadoSuporte) => {
+    setTickets((prev) => prev.map((x) => (x.id === c.id ? c : x)));
+    setDetailChamado((d) => (d?.id === c.id ? c : d));
+  }, []);
+
+  /** Mesma sequência do quadro de Suporte (handleConcluirTicketNoCard):
+   * conclui no portal → registra na timeline → salva o link no Django local. */
+  const concluirTicket = useCallback(
+    async (
+      chamado: ChamadoSuporte,
+      notasResolucao: string,
+      extras?: { link?: string | null; arquivo?: File | null },
+    ) => {
+      const noteTrim = notasResolucao.trim();
+      if (!noteTrim) return;
+      setConcludingTicketId(chamado.id);
+      setErro(null);
+      const link = extras?.link?.trim() || null;
+      const arquivo = extras?.arquivo ?? null;
+      try {
+        const patch = patchForStage('finalizado', chamado, assigneeName, noteTrim);
+        const updated = await suporteService.patchResolucao(chamado.id, patch, arquivo);
+        aplicarTicketAtualizado(updated);
+        await logSuporteChamadoChanges(chamado, updated, getKanbanStageLabel);
+        bumpTimeline();
+        // A conclusão vira um evento de etapa na timeline → o SLA deste ticket
+        // passa a ser mensurável; sem isso ele cairia em "Sem medição".
+        setResolvidoEmMap((prev) => ({ ...prev, [chamado.id]: new Date().toISOString() }));
+        if (link) {
+          try {
+            await suporteResolucaoService.save({ chamado_id: chamado.id, link, arquivo: null });
+            bumpTimeline();
+          } catch {
+            setErro('Ticket concluído, mas não foi possível salvar o link de resolução.');
+          }
+        }
+      } catch (err) {
+        setErro(err instanceof Error ? err.message : 'Erro ao concluir ticket.');
+      } finally {
+        setConcludingTicketId(null);
+      }
+    },
+    [assigneeName, aplicarTicketAtualizado, bumpTimeline],
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -1419,6 +1479,7 @@ export function MetricasSuporte() {
         infoDe={infoDe}
         resolvidoEmMap={resolvidoEmMap}
         erroResolvidoEm={erroResolvidoEm}
+        onAbrirCard={setDetailChamado}
       />
 
       <ResponsavelCard
@@ -1426,6 +1487,7 @@ export function MetricasSuporte() {
         opcoes={opcoes}
         infoDe={infoDe}
         resolvidoEmMap={resolvidoEmMap}
+        onAbrirCard={setDetailChamado}
       />
 
       <GraficoAberturaPorDia tickets={tickets} opcoes={opcoes} />
@@ -1452,6 +1514,23 @@ export function MetricasSuporte() {
         tickets={tickets}
         opcoes={opcoes}
         keyFn={(t) => t.usuario_nome}
+      />
+
+      {/* Card real do Suporte — abre por cima das listas, que continuam
+          montadas atrás; fechar aqui devolve o usuário à lista onde estava. */}
+      <ChamadoDetailDialog
+        chamado={detailChamado}
+        open={!!detailChamado}
+        onOpenChange={(o) => !o && setDetailChamado(null)}
+        assigneeName={assigneeName}
+        users={users}
+        getKanbanStageLabel={getKanbanStageLabel}
+        timelineRefreshNonce={timelineRefreshNonce}
+        bumpTimeline={bumpTimeline}
+        concludingTicketId={concludingTicketId}
+        onConcluirTicket={concluirTicket}
+        onUpdated={aplicarTicketAtualizado}
+        onError={setErro}
       />
     </div>
   );
