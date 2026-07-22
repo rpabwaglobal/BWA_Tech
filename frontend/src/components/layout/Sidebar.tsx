@@ -54,7 +54,7 @@ function SprintNavItem({
   collapsed: boolean;
   isActive: boolean;
 }) {
-  const [href, setHref] = useState(ROUTES.sprint);
+  const [href, setHref] = useState<string>(ROUTES.sprint);
 
   useEffect(() => {
     let cancelled = false;

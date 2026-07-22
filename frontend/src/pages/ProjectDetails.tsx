@@ -3549,8 +3549,7 @@ export default function ProjectDetails() {
         <DialogContent className="max-w-[520px]">
           <DialogHeader>
             <DialogTitle>Apagar cards selecionados</DialogTitle>
-            <DialogDescription asChild>
-              <div className="space-y-3 text-[var(--color-muted-foreground)]">
+            <div className="space-y-3 text-sm text-[var(--color-muted-foreground)]">
                 <p>Os cards serão removidos permanentemente. A exclusão obedece às mesmas regras do ícone de lixeira no Kanban.</p>
                 {(() => {
                   const sel = cards.filter((c) => selectedKanbanCardIds.includes(c.id));
@@ -3571,7 +3570,6 @@ export default function ProjectDetails() {
                   );
                 })()}
               </div>
-            </DialogDescription>
           </DialogHeader>
           <DialogFooter>
             <Button

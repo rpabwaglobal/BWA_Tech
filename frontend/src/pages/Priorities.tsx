@@ -273,10 +273,10 @@ export default function Priorities() {
       const { available_cards, selected_card_ids } =
         await weeklyPriorityService.getDefinePriorityOptions(String(user.id));
 
-      setAvailableCards(available_cards as CardType[]);
+      setAvailableCards(available_cards as unknown as CardType[]);
       const selectedIds = new Set(selected_card_ids.map(String));
       setSelectedCardsForPriority(
-        available_cards.filter(card => selectedIds.has(String(card.id))) as CardType[]
+        available_cards.filter(card => selectedIds.has(String(card.id))) as unknown as CardType[]
       );
     } catch (error) {
       console.error('Erro ao carregar cards:', error);
@@ -360,7 +360,7 @@ export default function Priorities() {
       const createPromises = cardsToCreate.map(async (cardId) => {
         try {
           await weeklyPriorityService.create({
-            usuario: selectedUserForPriority.id,
+            usuario: String(selectedUserForPriority.id),
             card: cardId,
             semana_inicio: semanaInicio,
             semana_fim: semanaFim,

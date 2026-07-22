@@ -1170,8 +1170,8 @@ export default function People() {
         
         if (!existing) {
           const newHierarchy = await hierarchyService.create({
-            supervisor: sourceUser.id,
-            gerente: targetUser.id,
+            supervisor: String(sourceUser.id),
+            gerente: String(targetUser.id),
             desenvolvedor: null,
           });
           // Atualizar estado local sem recarregar
@@ -1217,9 +1217,9 @@ export default function People() {
         
         // Criar nova hierarquia (permite múltiplos desenvolvedores por gerente)
         const newHierarchy = await hierarchyService.create({
-          supervisor: supervisorId,
-          gerente: sourceUser.id,
-          desenvolvedor: targetUser.id,
+          supervisor: String(supervisorId),
+          gerente: String(sourceUser.id),
+          desenvolvedor: String(targetUser.id),
         });
         // Atualizar estado local sem recarregar
         setHierarchies(prev => [...prev, newHierarchy]);
@@ -1238,9 +1238,9 @@ export default function People() {
         
         if (!existing) {
           const newHierarchy = await hierarchyService.create({
-            supervisor: sourceUser.id,
+            supervisor: String(sourceUser.id),
             gerente: null,
-            desenvolvedor: targetUser.id,
+            desenvolvedor: String(targetUser.id),
           });
           // Atualizar estado local sem recarregar
           setHierarchies(prev => [...prev, newHierarchy]);
@@ -1352,7 +1352,7 @@ export default function People() {
       setUsers(prev => prev.map(u => String(u.id) === String(draggedUser.id) ? optimisticUser : u));
       
       // Fazer a chamada à API
-      const updatedUser = await userService.update(draggedUser.id, { role: targetRole });
+      const updatedUser = await userService.update(String(draggedUser.id), { role: targetRole });
       
       // Atualizar com os dados reais do servidor
       setUsers(prev => prev.map(u => String(u.id) === String(draggedUser.id) ? updatedUser : u));
