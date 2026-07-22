@@ -246,12 +246,11 @@ def card_created_or_updated(sender, instance, created, **kwargs):
         import logging
         logger = logging.getLogger(__name__)
         logger.info(f'[CardLog] Tentando criar log para card {instance.id} (nome: {instance.nome})')
-        print(f'[CardLog DEBUG] Criando log para card {instance.id} - {instance.nome}')
+
         
         # Verificar se já existe um log (o serializer pode ter criado)
         if CardLog.objects.filter(card=instance, tipo_evento=CardLogEventType.CRIADO).exists():
             logger.info(f'[CardLog] Log já existe para card {instance.id}, pulando criação no signal')
-            print(f'[CardLog DEBUG] Log já existe, pulando')
             return
         
         try:
@@ -262,11 +261,9 @@ def card_created_or_updated(sender, instance, created, **kwargs):
                 usuario=usuario
             )
             logger.info(f'[CardLog] Log criado com sucesso! ID: {log.id}, Card: {instance.id}')
-            print(f'[CardLog DEBUG] Log criado! ID: {log.id}')
         except Exception as e:
             # Log o erro mas não interrompa o processo
             logger.error(f'[CardLog] Erro ao criar CardLog para card {instance.id}: {str(e)}', exc_info=True)
-            print(f'[CardLog DEBUG] Erro: {str(e)}')
             # Tentar criar sem usuário
             try:
                 log = CardLog.objects.create(
@@ -276,10 +273,8 @@ def card_created_or_updated(sender, instance, created, **kwargs):
                     usuario=None
                 )
                 logger.info(f'[CardLog] Log criado sem usuário! ID: {log.id}, Card: {instance.id}')
-                print(f'[CardLog DEBUG] Log criado sem usuário! ID: {log.id}')
             except Exception as e2:
                 logger.error(f'[CardLog] Erro ao criar CardLog sem usuário para card {instance.id}: {str(e2)}', exc_info=True)
-                print(f'[CardLog DEBUG] Erro ao criar sem usuário: {str(e2)}')
         
         # Card criado - notificações
         if instance.responsavel:

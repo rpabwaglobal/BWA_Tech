@@ -24,7 +24,8 @@ import Score from './pages/Score';
 import Layout from './components/layout/Layout';
 import { Loader2 } from 'lucide-react';
 import { ROUTES } from './routes';
-import { isAdminUser, isSupervisorOrAdmin } from './lib/roles';
+import { isAdminUser } from './lib/roles';
+import { hasPermission } from './lib/permissions';
 
 function LegacyProjectToProjeto() {
   const { id } = useParams();
@@ -91,7 +92,8 @@ function AdminRoute({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
-function SupervisorRoute({ children }: { children: React.ReactNode }) {
+/** Guard de rota baseado numa permissão granular do catálogo. */
+function PermissionRoute({ codename, children }: { codename: string; children: React.ReactNode }) {
   const { isAuthenticated, loading, user } = useAuth();
 
   if (loading) {
@@ -103,7 +105,7 @@ function SupervisorRoute({ children }: { children: React.ReactNode }) {
   }
 
   if (!isAuthenticated) return <Navigate to={ROUTES.entrar} />;
-  if (!isSupervisorOrAdmin(user)) return <Navigate to={ROUTES.painel} replace />;
+  if (!hasPermission(user, codename)) return <Navigate to={ROUTES.painel} replace />;
 
   return <>{children}</>;
 }
@@ -169,18 +171,39 @@ function AppRoutes() {
         <Route path={ROUTES.pessoas.replace(/^\//, '')} element={<People />} />
         <Route path={ROUTES.prioridades.replace(/^\//, '')} element={<Priorities />} />
         <Route path="meus-afazeres" element={<MyTasks />} />
-        <Route path={ROUTES.metricas.replace(/^\//, '')} element={<Metrics />} />
-        <Route path={ROUTES.relatorios.replace(/^\//, '')} element={<Reports />} />
+        <Route
+          path={ROUTES.metricas.replace(/^\//, '')}
+          element={
+            <PermissionRoute codename="view_metrics">
+              <Metrics />
+            </PermissionRoute>
+          }
+        />
+        <Route
+          path={ROUTES.relatorios.replace(/^\//, '')}
+          element={
+            <PermissionRoute codename="view_metrics">
+              <Reports />
+            </PermissionRoute>
+          }
+        />
         <Route path={ROUTES.suporte.replace(/^\//, '')} element={<Support />} />
         <Route
           path={ROUTES.score.replace(/^\//, '')}
           element={
-            <SupervisorRoute>
+            <PermissionRoute codename="manage_score">
               <Score />
-            </SupervisorRoute>
+            </PermissionRoute>
           }
         />
-        <Route path="dia-geek" element={<GeekDay />} />
+        <Route
+          path="dia-geek"
+          element={
+            <PermissionRoute codename="view_metrics">
+              <GeekDay />
+            </PermissionRoute>
+          }
+        />
         <Route path={ROUTES.configuracoes.replace(/^\//, '')} element={<Settings />} />
         <Route
           path={ROUTES.administracao.replace(/^\//, '')}

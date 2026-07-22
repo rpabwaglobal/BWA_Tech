@@ -8,6 +8,11 @@ export type User = {
   last_name: string;
   role: string;
   role_display: string;
+  setor?: string | null;
+  setor_display?: string | null;
+  is_active?: boolean;
+  /** Codenames das permissões granulares atribuídas ao usuário. */
+  permissions?: string[];
   profile_picture_url?: string | null;
   date_joined: string;
 }

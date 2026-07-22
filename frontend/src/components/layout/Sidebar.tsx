@@ -26,7 +26,8 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { ROUTES, isNavRouteActive } from '@/routes';
-import { isAdminUser, isSupervisorOrAdmin } from '@/lib/roles';
+import { isAdminUser } from '@/lib/roles';
+import { hasPermission } from '@/lib/permissions';
 
 const navigation = [
   { path: ROUTES.painel, label: 'Dashboard', icon: LayoutDashboard },
@@ -35,10 +36,11 @@ const navigation = [
   { path: ROUTES.prioridades, label: 'Prioridades', icon: Target },
   { path: ROUTES.meusAfazeres, label: 'Meus Afazeres', icon: CheckSquare },
   { path: ROUTES.pessoas, label: 'Pessoas', icon: Users },
-  { path: ROUTES.metricas, label: 'Métricas', icon: BarChart3 },
-  { path: ROUTES.relatorios, label: 'Relatórios', icon: FileText },
+  // `requires`: só aparece se o usuário tiver a permissão (Visitante não vê).
+  { path: ROUTES.metricas, label: 'Métricas', icon: BarChart3, requires: 'view_metrics' },
+  { path: ROUTES.relatorios, label: 'Relatórios', icon: FileText, requires: 'view_metrics' },
   { path: ROUTES.suporte, label: 'Suporte', icon: Headset },
-  { path: ROUTES.diaGeek, label: 'Geek Day', icon: Sparkles },
+  { path: ROUTES.diaGeek, label: 'Geek Day', icon: Sparkles, requires: 'view_metrics' },
 ];
 
 /** Itens visíveis apenas para supervisor/admin. */
@@ -54,7 +56,7 @@ function SprintNavItem({
   collapsed: boolean;
   isActive: boolean;
 }) {
-  const [href, setHref] = useState(ROUTES.sprint);
+  const [href, setHref] = useState<string>(ROUTES.sprint);
 
   useEffect(() => {
     let cancelled = false;
@@ -151,7 +153,9 @@ export default function Sidebar() {
         {/* Navigation */}
         <nav className="flex-1 p-[8px] flex flex-col min-h-0">
           <div className="space-y-[8px] overflow-y-auto pr-[4px]">
-            {navigation.map((item) => {
+            {navigation
+              .filter((item) => !('requires' in item) || hasPermission(user, item.requires as string))
+              .map((item) => {
               const isActive = isNavRouteActive(item.path, location.pathname);
               const Icon = item.icon;
 
@@ -183,7 +187,7 @@ export default function Sidebar() {
                 </Link>
               );
             })}
-            {isSupervisorOrAdmin(user) &&
+            {hasPermission(user, 'manage_score') &&
               supervisorNavigation.map((item) => {
                 const isActive = isNavRouteActive(item.path, location.pathname);
                 const Icon = item.icon;

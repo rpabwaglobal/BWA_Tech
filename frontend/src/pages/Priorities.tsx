@@ -19,6 +19,7 @@ import {
 } from '@/components/ui/dialog';
 import { Badge } from '@/components/ui/badge';
 import { useAuth } from '@/context/AuthContext';
+import { hasPermission } from '@/lib/permissions';
 import api from '@/services/api';
 import { cardService, type Card as CardType, CARD_AREAS, CARD_TYPES, CARD_PRIORITIES, CARD_STATUSES } from '@/services/cardService';
 import { userService, type User as UserType } from '@/services/userService';
@@ -81,7 +82,7 @@ type UserWithCards = {
 export default function Priorities() {
   const navigate = useNavigate();
   const { user } = useAuth();
-  const isSupervisor = user?.role === 'supervisor' || user?.role === 'admin';
+  const isSupervisor = hasPermission(user, 'manage_weekly_priorities');
   const [usersWithCards, setUsersWithCards] = useState<UserWithCards[]>([]);
   const [loading, setLoading] = useState(true);
   const [periodo, setPeriodo] = useState<'dia' | 'semana'>('dia');
@@ -273,10 +274,10 @@ export default function Priorities() {
       const { available_cards, selected_card_ids } =
         await weeklyPriorityService.getDefinePriorityOptions(String(user.id));
 
-      setAvailableCards(available_cards as CardType[]);
+      setAvailableCards(available_cards as unknown as CardType[]);
       const selectedIds = new Set(selected_card_ids.map(String));
       setSelectedCardsForPriority(
-        available_cards.filter(card => selectedIds.has(String(card.id))) as CardType[]
+        available_cards.filter(card => selectedIds.has(String(card.id))) as unknown as CardType[]
       );
     } catch (error) {
       console.error('Erro ao carregar cards:', error);
@@ -360,7 +361,7 @@ export default function Priorities() {
       const createPromises = cardsToCreate.map(async (cardId) => {
         try {
           await weeklyPriorityService.create({
-            usuario: selectedUserForPriority.id,
+            usuario: String(selectedUserForPriority.id),
             card: cardId,
             semana_inicio: semanaInicio,
             semana_fim: semanaFim,

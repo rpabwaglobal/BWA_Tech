@@ -2,16 +2,25 @@ import { useEffect, useRef, useCallback } from 'react';
 import type { Notification } from '@/services/notificationService';
 
 type WebSocketMessage = {
-  type: 'notification' | 'pong';
+  type: 'notification' | 'pong' | 'permissions_changed' | 'account_deactivated';
   data?: Notification;
 };
 
 type UseWebSocketOptions = {
   onNotification?: (notification: Notification) => void;
+  /** Cargo/permissões/setor do usuário logado mudaram — deve refazer /users/me/ agora. */
+  onPermissionsChanged?: () => void;
+  /** Conta do usuário logado foi desativada — deve encerrar a sessão agora. */
+  onAccountDeactivated?: () => void;
   enabled?: boolean;
 };
 
-export function useWebSocket({ onNotification, enabled = true }: UseWebSocketOptions) {
+export function useWebSocket({
+  onNotification,
+  onPermissionsChanged,
+  onAccountDeactivated,
+  enabled = true,
+}: UseWebSocketOptions) {
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const reconnectAttemptsRef = useRef(0);
@@ -63,6 +72,10 @@ export function useWebSocket({ onNotification, enabled = true }: UseWebSocketOpt
           const message: WebSocketMessage = JSON.parse(event.data);
           if (message.type === 'notification' && message.data) {
             onNotification?.(message.data);
+          } else if (message.type === 'permissions_changed') {
+            onPermissionsChanged?.();
+          } else if (message.type === 'account_deactivated') {
+            onAccountDeactivated?.();
           }
           // 'pong' é mantido apenas como sinal de vida — nenhum side-effect.
         } catch (error) {
@@ -95,7 +108,7 @@ export function useWebSocket({ onNotification, enabled = true }: UseWebSocketOpt
     } catch (error) {
       console.error('Erro ao criar conexão WebSocket:', error);
     }
-  }, [enabled, onNotification]);
+  }, [enabled, onNotification, onPermissionsChanged, onAccountDeactivated]);
 
   const disconnect = useCallback(() => {
     if (reconnectTimeoutRef.current) {

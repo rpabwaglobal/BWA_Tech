@@ -78,12 +78,23 @@ class NotificationConsumer(AsyncWebsocketConsumer):
         # Enviar notificação para o WebSocket
         notification_data = event.get('notification', {})
         logger.info(f'Enviando notificacao via WebSocket para usuario {self.user_id}: {notification_data.get("titulo", "N/A")}')
-        
+
         await self.send(text_data=json.dumps({
             'type': 'notification',
             'data': notification_data
         }))
-    
+
+    async def permissions_changed(self, event):
+        # Cargo/permissões/setor do usuário mudou — cliente deve refazer
+        # GET /users/me/ e atualizar a UI (ver apps.accounts.realtime).
+        logger.info(f'Avisando usuario {self.user_id} de mudanca de permissoes')
+        await self.send(text_data=json.dumps({'type': 'permissions_changed'}))
+
+    async def account_deactivated(self, event):
+        # Usuário foi desativado — cliente deve encerrar a sessão na hora.
+        logger.info(f'Avisando usuario {self.user_id} de desativacao de conta')
+        await self.send(text_data=json.dumps({'type': 'account_deactivated'}))
+
     @database_sync_to_async
     def get_user_from_token(self, token_key):
         """Obter usuário a partir do token"""

@@ -3,6 +3,7 @@ from django.utils import timezone
 import os
 import re
 import unicodedata
+from apps.accounts.models import SetorCatalogo
 from .models import (
     Sprint,
     Project,
@@ -77,9 +78,20 @@ class SprintSerializer(serializers.ModelSerializer):
     cards_em_atraso = serializers.IntegerField(read_only=True)
     cards_entregues_atrasados = serializers.IntegerField(read_only=True)
     cards_abertos_atrasados = serializers.IntegerField(read_only=True)
+    setor = serializers.SlugRelatedField(
+        slug_field='codename', queryset=SetorCatalogo.objects.all(), required=False, allow_null=True)
+    setores_compartilhados = serializers.SlugRelatedField(
+        slug_field='codename', queryset=SetorCatalogo.objects.all(), many=True, required=False)
 
     def get_supervisor_name(self, obj):
         return format_user_name(obj.supervisor)
+
+    def _check_setor_perm(self, attrs):
+        request = self.context.get('request')
+        if request and ('setor' in attrs or 'setores_compartilhados' in attrs):
+            if not request.user.has_perm('accounts.manage_setor_sharing'):
+                raise serializers.ValidationError(
+                    'Você não tem permissão para alterar o setor ou o compartilhamento.')
 
     def get_data_fim(self, obj):
         if obj.fechamento_em:
@@ -101,6 +113,7 @@ class SprintSerializer(serializers.ModelSerializer):
         return max(1, (end_d - start_d).days + 1)
 
     def validate(self, attrs):
+        self._check_setor_perm(attrs)
         di = attrs.get('data_inicio')
         fe = attrs.get('fechamento_em')
         if self.instance:
@@ -136,6 +149,16 @@ class SprintSerializer(serializers.ModelSerializer):
         validated_data['duracao_dias'] = self._duracao_dias(
             validated_data['data_inicio'], validated_data['fechamento_em']
         )
+        # Setor obrigatório: default = setor primário do supervisor logado
+        # (M2M UserSetor com fallback no CharField), ou Tecnologia como
+        # fallback final (garante que nenhuma sprint nasça órfã).
+        if not validated_data.get('setor'):
+            from apps.accounts.scoping import setor_primario_do_usuario
+            request = self.context.get('request')
+            setor = setor_primario_do_usuario(request.user) if request else None
+            if setor is None:
+                setor = SetorCatalogo.objects.filter(codename='tecnologia').first()
+            validated_data['setor'] = setor
         return super().create(validated_data)
 
     def update(self, instance, validated_data):
@@ -152,6 +175,7 @@ class SprintSerializer(serializers.ModelSerializer):
                  'cards_total', 'cards_finalizados', 'cards_inviabilizados',
                  'cards_em_andamento', 'cards_em_atraso',
                  'cards_entregues_atrasados', 'cards_abertos_atrasados',
+                 'setor', 'setores_compartilhados',
                  'finalizada', 'created_at', 'updated_at']
         read_only_fields = [
             'created_at',
@@ -181,6 +205,18 @@ class ProjectSerializer(serializers.ModelSerializer):
     cards_count = serializers.IntegerField(source='cards.count', read_only=True)
     cards_entregues_count = serializers.IntegerField(read_only=True)
     cards_em_desenvolvimento_count = serializers.IntegerField(read_only=True)
+    setor = serializers.SlugRelatedField(
+        slug_field='codename', queryset=SetorCatalogo.objects.all(), required=False, allow_null=True)
+    setores_compartilhados = serializers.SlugRelatedField(
+        slug_field='codename', queryset=SetorCatalogo.objects.all(), many=True, required=False)
+
+    def validate(self, attrs):
+        request = self.context.get('request')
+        if request and ('setor' in attrs or 'setores_compartilhados' in attrs):
+            if not request.user.has_perm('accounts.manage_setor_sharing'):
+                raise serializers.ValidationError(
+                    'Você não tem permissão para alterar o setor ou o compartilhamento.')
+        return attrs
 
     def validate_nome(self, value):
         """
@@ -213,7 +249,7 @@ class ProjectSerializer(serializers.ModelSerializer):
                  'data_inicio_desenvolvimento', 'data_entrega', 'data_homologacao',
                  'data_adiamento_solicitada', 'nova_data_prevista', 'adiamento_aprovado',
                  'arquivado', 'arquivado_em', 'arquivado_por', 'arquivado_por_name',
-                 'is_system',
+                 'is_system', 'setor', 'setores_compartilhados',
                  'cards_count', 'cards_entregues_count', 'cards_em_desenvolvimento_count',
                  'created_at', 'updated_at']
         # `arquivado_em` e `arquivado_por` SÃO preenchidos pelo backend nas actions

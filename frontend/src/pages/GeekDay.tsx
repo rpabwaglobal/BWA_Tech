@@ -1,6 +1,7 @@
 import { useEffect, useState, useRef } from 'react';
 import confetti from 'canvas-confetti';
 import { useAuth } from '@/context/AuthContext';
+import { hasPermission } from '@/lib/permissions';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Avatar, AvatarImage, AvatarFallback } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
@@ -57,9 +58,15 @@ export default function GeekDay() {
   const confettiFiredRef = useRef(false);
   const winnerAvatarRef = useRef<HTMLDivElement>(null);
 
-  const isSupervisor = user?.role === 'supervisor' || user?.role === 'admin';
-  const isGestor = user?.role === 'supervisor' || user?.role === 'gerente' || user?.role === 'admin';
-  const canReset = user?.role === 'supervisor' || user?.role === 'gerente' || user?.role === 'admin';
+  // As 3 flags abaixo controlavam ações distintas (arrastar cards, girar a
+  // roleta, resetar) com listas de cargos ligeiramente diferentes entre si —
+  // mas o backend sempre usou a MESMA regra (supervisor/gerente/admin) pras
+  // 4 ações equivalentes. Unificadas na permissão granular `manage_geekday`,
+  // que reflete exatamente essa regra (editável por usuário na tela de
+  // Gerenciamento de Usuários).
+  const isSupervisor = hasPermission(user, 'manage_geekday');
+  const isGestor = hasPermission(user, 'manage_geekday');
+  const canReset = hasPermission(user, 'manage_geekday');
 
   const sensors = useSensors(
     useSensor(PointerSensor),

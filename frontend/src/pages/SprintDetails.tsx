@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type MouseEvent } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
+import { hasPermission } from '@/lib/permissions';
 import { useSprintKanbanWebSocket } from '@/hooks/useSprintKanbanWebSocket';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -363,8 +364,8 @@ export default function SprintDetails() {
     fechamento_em: '',
   });
 
-  const canCreate = user?.role === 'supervisor' || user?.role === 'admin';
-  const canFinalizar = user?.role === 'supervisor' || user?.role === 'admin';
+  const canCreate = hasPermission(user, 'manage_sprints');
+  const canFinalizar = hasPermission(user, 'finalize_sprints');
   const canCreateCard = true;
 
   useEffect(() => {
@@ -3185,8 +3186,7 @@ export default function SprintDetails() {
                   disabled={Boolean(
                     editingCard &&
                     editingCard.status === 'em_desenvolvimento' &&
-                    user?.role !== 'admin' &&
-                    user?.role !== 'supervisor'
+                    !hasPermission(user, 'approve_due_date_requests')
                   )}
                 />
                 {editingCard?.responsavel && String(editingCard.responsavel) === String(user?.id) && editingCard?.data_fim && (
@@ -3204,9 +3204,9 @@ export default function SprintDetails() {
                 {cardFormData.status === 'em_desenvolvimento' && (
                   <p className="text-xs text-[var(--color-muted-foreground)]">
                     * Obrigatório para cards em desenvolvimento (sugerida baseada na estimativa de complexidade)
-                    {editingCard && editingCard.status === 'em_desenvolvimento' && user?.role !== 'admin' && user?.role !== 'supervisor' && (
+                    {editingCard && editingCard.status === 'em_desenvolvimento' && !hasPermission(user, 'approve_due_date_requests') && (
                       <span className="block mt-1 text-[var(--color-destructive)]">
-                        Apenas administradores e supervisores podem alterar a data de entrega de cards em desenvolvimento.
+                        Você não tem permissão para alterar a data de entrega de cards em desenvolvimento; use "Solicitar mudança de data".
                       </span>
                     )}
                   </p>

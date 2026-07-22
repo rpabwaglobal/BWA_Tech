@@ -195,18 +195,22 @@ def outra_sprint_em_andamento(exclude_pk=None):
 def get_proxima_sprint(sprint):
     """
     Retorna a sprint de destino para replicação: sprint em andamento ou
-    a próxima por data_inicio. Retorna None se não houver.
+    a próxima por data_inicio, SEMPRE do mesmo setor da sprint finalizada
+    (senão a finalização moveria projetos/cards para outro setor
+    silenciosamente). Retorna None se não houver.
     """
     agora = timezone.now()
     fim_dia = timezone.localtime(sprint.fechamento_em).date()
+    mesmo_setor = Sprint.objects.filter(setor_id=sprint.setor_id)
     # 1) Outra sprint na janela ativa (mesma regra do dashboard / menu Sprints)
-    for candidata in Sprint.objects.filter(finalizada=False).exclude(pk=sprint.pk).order_by('data_inicio'):
+    for candidata in mesmo_setor.filter(finalizada=False).exclude(pk=sprint.pk).order_by('data_inicio'):
         if sprint_esta_em_andamento_janela(candidata):
             return candidata
     # 2) Próxima cadastrada com início (data local) após o dia de término desta sprint
-    proxima = Sprint.objects.filter(
+    proxima = mesmo_setor.filter(
+        finalizada=False,
         data_inicio__date__gt=fim_dia,
-    ).order_by('data_inicio').first()
+    ).exclude(pk=sprint.pk).order_by('data_inicio').first()
     return proxima
 
 
@@ -272,6 +276,11 @@ def finalizar_sprint_replicacao(sprint, criado_por_user=None):
                 )
                 projetos_destino_por_nome[nome_norm] = novo_projeto
                 projetos_criados += 1
+            # O compartilhamento entre setores acompanha o trabalho pendente
+            # (união, no caso de projeto reutilizado na sprint destino).
+            compartilhados = list(project.setores_compartilhados.all())
+            if compartilhados:
+                novo_projeto.setores_compartilhados.add(*compartilhados)
 
             for card in cards_pendentes:
                 _replicar_card_para_sprint(

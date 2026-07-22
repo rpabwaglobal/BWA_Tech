@@ -1,6 +1,7 @@
 import { useEffect, useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
+import { hasPermission } from '@/lib/permissions';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -42,7 +43,7 @@ import {
   Search,
   AlertTriangle,
 } from 'lucide-react';
-import { cn } from '@/lib/utils';
+import { cn, normalizeExternalUrl } from '@/lib/utils';
 import { Avatar, AvatarImage, AvatarFallback } from '@/components/ui/avatar';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { RequestDueDateChangeModal } from '@/components/RequestDueDateChangeModal';
@@ -75,7 +76,7 @@ export default function Projects() {
   const [deleteLoading, setDeleteLoading] = useState(false);
   const [previewLoading, setPreviewLoading] = useState(false);
 
-  const canManageProjects = user?.role === 'supervisor' || user?.role === 'admin';
+  const canManageProjects = hasPermission(user, 'manage_projects');
   
   // Estados para formulário de sugestão
   const [suggestionDialogOpen, setSuggestionDialogOpen] = useState(false);
@@ -135,7 +136,7 @@ export default function Projects() {
   // Demandas: somente supervisor/admin.
   // Solicitação de data: somente supervisor/admin.
   const canEvaluateDemands = user?.role === 'supervisor' || user?.role === 'admin';
-  const canEvaluateDateRequests = user?.role === 'supervisor' || user?.role === 'admin';
+  const canEvaluateDateRequests = hasPermission(user, 'approve_due_date_requests');
 
   // As duas tabs (Demandas e Solicitações de data) devem aparecer para todos.
   // Apenas aprovar/recusar continua restrito.

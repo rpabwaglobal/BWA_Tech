@@ -23,6 +23,15 @@ class Sprint(models.Model):
         verbose_name='Supervisor'
     )
     finalizada = models.BooleanField(default=False, verbose_name='Finalizada')
+    # Segmentação por setor (Fase 4+): Sprint é a autoridade; Project/Card herdam.
+    # `setor` = setor dono; `setores_compartilhados` = outros setores que também
+    # enxergam esta sprint. null=True durante a migração (backfill preenche tudo).
+    setor = models.ForeignKey(
+        'accounts.SetorCatalogo', on_delete=models.PROTECT, blank=True,
+        db_index=True, related_name='sprints', verbose_name='Setor')
+    setores_compartilhados = models.ManyToManyField(
+        'accounts.SetorCatalogo', blank=True, related_name='sprints_compartilhadas',
+        verbose_name='Setores com quem compartilha')
     created_at = models.DateTimeField(auto_now_add=True, verbose_name='Data de Criação')
     updated_at = models.DateTimeField(auto_now=True, verbose_name='Data de Atualização')
 
@@ -107,7 +116,6 @@ class Project(models.Model):
         related_name='projects_managed',
         null=True,
         blank=True,
-        limit_choices_to={'role': 'gerente'},
         verbose_name='Gerente Atribuído'
     )
     desenvolvedor = models.ForeignKey(
@@ -158,6 +166,13 @@ class Project(models.Model):
         verbose_name='Projeto Sistêmico',
         help_text='Projetos sistêmicos (Suporte, Sugestões, Projetos Descartados) são excluídos de métricas e operações em massa.',
     )
+    # Segmentação por setor (Fase 4+): default herdado da sprint no save().
+    setor = models.ForeignKey(
+        'accounts.SetorCatalogo', on_delete=models.PROTECT, blank=True,
+        db_index=True, related_name='projetos', verbose_name='Setor')
+    setores_compartilhados = models.ManyToManyField(
+        'accounts.SetorCatalogo', blank=True, related_name='projetos_compartilhados',
+        verbose_name='Setores com quem compartilha')
     created_at = models.DateTimeField(auto_now_add=True, verbose_name='Data de Criação')
     updated_at = models.DateTimeField(auto_now=True, verbose_name='Data de Atualização')
 
@@ -165,6 +180,13 @@ class Project(models.Model):
         verbose_name = 'Projeto'
         verbose_name_plural = 'Projetos'
         ordering = ['-created_at']
+
+    def save(self, *args, **kwargs):
+        # Herda o setor da sprint quando não definido (registros criados entre
+        # deploys nunca ficam órfãos).
+        if self.setor_id is None and self.sprint_id:
+            self.setor_id = Sprint.objects.filter(pk=self.sprint_id).values_list('setor_id', flat=True).first()
+        super().save(*args, **kwargs)
 
     def __str__(self):
         return f"{self.nome} - {self.get_status_display()}"
@@ -389,10 +411,19 @@ class Card(models.Model):
     created_at = models.DateTimeField(auto_now_add=True, verbose_name='Data de Criação')
     updated_at = models.DateTimeField(auto_now=True, verbose_name='Data de Atualização')
 
+    # Setor: ESPELHO do projeto (não editável direto). Mantido no save() e na
+    # reatribuição de projeto — resolve "card que muda de projeto".
+    setor = models.ForeignKey(
+        'accounts.SetorCatalogo', on_delete=models.PROTECT, blank=True,
+        db_index=True, related_name='cards', verbose_name='Setor')
+
     def save(self, *args, **kwargs):
         # data_inicio = instante em que o card entrou em desenvolvimento (não criação nem sprint).
         if self.status == CardStatus.A_DESENVOLVER:
             self.data_inicio = None
+        # Espelha o setor do projeto (sempre reflete o projeto atual).
+        if self.projeto_id:
+            self.setor_id = Project.objects.filter(pk=self.projeto_id).values_list('setor_id', flat=True).first()
         super().save(*args, **kwargs)
 
     class Meta:
@@ -687,7 +718,7 @@ class WeeklyPriority(models.Model):
         on_delete=models.CASCADE,
         related_name='weekly_priorities',
         verbose_name='Usuário',
-        limit_choices_to={'role__in': ['gerente', 'desenvolvedor', 'dados']}
+        limit_choices_to={'role__in': ['desenvolvedor']}
     )
     card = models.ForeignKey(
         Card,

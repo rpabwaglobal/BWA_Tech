@@ -2,6 +2,20 @@ import { createContext, useContext, useState, useEffect, useRef, useCallback } f
 import type { ReactNode } from 'react';
 import { authService } from '../services/authService';
 import type { User, RegisterData } from '../services/authService';
+import { userService } from '../services/userService';
+import { setCargoCatalog, setSetorCatalog } from '../lib/catalog-style';
+
+/** Popula o cache de cor/rótulo de cargos e setores (best-effort — falha
+ * silenciosa não bloqueia o login; os helpers têm fallback legado). */
+async function loadCatalogStyles(): Promise<void> {
+  try {
+    const [cargos, setores] = await Promise.all([userService.getCargos(), userService.getSetores()]);
+    setCargoCatalog(cargos);
+    setSetorCatalog(setores);
+  } catch {
+    /* ignora — fallback legado cobre */
+  }
+}
 
 type AuthContextType = {
   user: User | null;
@@ -51,6 +65,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       const currentUser = await authService.getCurrentUser();
       setUser(currentUser);
+      void loadCatalogStyles();
       scheduleExpiryLogout(() => void performLogout());
     } catch {
       localStorage.removeItem('auth_token');
@@ -85,6 +100,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const login = async (email: string, password: string) => {
     const response = await authService.login({ email, password });
     setUser(response.user);
+    void loadCatalogStyles();
     scheduleExpiryLogout(() => void performLogout());
   };
 

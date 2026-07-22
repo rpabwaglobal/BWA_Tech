@@ -40,7 +40,8 @@ from .models import (
 )
 from .services import finalizar_sprint_replicacao, get_sprint_ids_atribuiveis
 from apps.accounts.profile_picture_utils import get_profile_picture_url
-from apps.accounts.permissions import IsAdminOrSupervisor
+from apps.accounts.permissions import IsAdminOrSupervisor, HasPerm, NaoVisitanteEscreve
+from apps.accounts.scoping import scope_sprints, scope_projects, scope_cards, scope_card_scores
 from .serializers import (
     SprintSerializer, ProjectSerializer, CardSerializer, CardKanbanSerializer,
     CardMetricsSerializer,
@@ -106,26 +107,27 @@ class SprintViewSet(viewsets.ModelViewSet):
     ordering = ['-data_inicio']
 
     def get_permissions(self):
-        # Criar/editar/excluir sprint: só supervisor/admin (espelha `canCreate`
-        # no front). Restrições extras de sprint finalizada em update/destroy.
+        # Criar/editar/excluir sprint exige a permissão `manage_sprints`.
+        # Restrições extras de sprint finalizada (manage_closed_sprints) ficam
+        # em update/destroy.
         if self.action in ('create', 'update', 'partial_update', 'destroy'):
-            return [IsAdminOrSupervisor()]
+            return [HasPerm('manage_sprints')()]
         return super().get_permissions()
 
     def update(self, request, *args, **kwargs):
         sprint = self.get_object()
-        if _sprint_efetivamente_fechada(sprint) and request.user.role != 'admin':
+        if _sprint_efetivamente_fechada(sprint) and not request.user.has_perm('accounts.manage_closed_sprints'):
             return Response(
-                {'detail': 'Sprints finalizadas só podem ser editadas por administrador.'},
+                {'detail': 'Você não tem permissão para editar sprints finalizadas.'},
                 status=status.HTTP_403_FORBIDDEN,
             )
         return super().update(request, *args, **kwargs)
 
     def destroy(self, request, *args, **kwargs):
         sprint = self.get_object()
-        if _sprint_efetivamente_fechada(sprint) and request.user.role != 'admin':
+        if _sprint_efetivamente_fechada(sprint) and not request.user.has_perm('accounts.manage_closed_sprints'):
             return Response(
-                {'detail': 'Apenas administradores podem excluir sprints finalizadas.'},
+                {'detail': 'Você não tem permissão para excluir sprints finalizadas.'},
                 status=status.HTTP_403_FORBIDDEN,
             )
         return super().destroy(request, *args, **kwargs)
@@ -141,7 +143,7 @@ class SprintViewSet(viewsets.ModelViewSet):
         # - Entregue atrasado: finalizado_em > data_fim (do próprio card)
         # NÃO comparamos com sprint.fechamento_em — a fonte de verdade é
         # `data_fim` do card. Inviabilizado nunca conta como entrega.
-        return (
+        qs = (
             Sprint.objects.all()
             .annotate(
                 cards_total=Count('projects__cards', filter=not_excluded),
@@ -189,8 +191,9 @@ class SprintViewSet(viewsets.ModelViewSet):
                 ),
             )
         )
+        return scope_sprints(qs, self.request.user)  # fail-open enquanto flag OFF
 
-    @action(detail=True, methods=['get'], url_path='bundle')
+    @action(detail=True, methods=['get'], url_path='bundle', permission_classes=[HasPerm('view_metrics')])
     def bundle(self, request, pk=None):
         """
         Endpoint agregado da SprintDetails: retorna em UMA request tudo que a
@@ -282,9 +285,9 @@ class SprintViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['post'], url_path='finalizar')
     def finalizar(self, request, pk=None):
-        if request.user.role not in ['supervisor', 'admin']:
+        if not request.user.has_perm('accounts.finalize_sprints'):
             return Response(
-                {'detail': 'Apenas supervisor ou admin podem finalizar a sprint.'},
+                {'detail': 'Você não tem permissão para finalizar sprints.'},
                 status=status.HTTP_403_FORBIDDEN
             )
         sprint = self.get_object()
@@ -319,10 +322,10 @@ class ProjectViewSet(viewsets.ModelViewSet):
     ordering = ['-created_at']
 
     def get_permissions(self):
-        # Criar/editar projeto: só supervisor/admin (espelha `canManageProjects`
-        # no front). Excluir já é coberto por `_ensure_can_manage` no destroy.
+        # Criar/editar projeto exige `manage_projects`. Excluir é coberto por
+        # `_ensure_can_manage(delete_projects)` no destroy.
         if self.action in ('create', 'update', 'partial_update'):
-            return [IsAdminOrSupervisor()]
+            return [HasPerm('manage_projects')()]
         return super().get_permissions()
 
     def get_queryset(self):
@@ -342,6 +345,7 @@ class ProjectViewSet(viewsets.ModelViewSet):
                 ),
             )
         )
+        qs = scope_projects(qs, self.request.user)  # fail-open enquanto flag OFF
         # Em ações de detalhe (retrieve/update/destroy/custom @action detail=True)
         # NÃO filtramos por arquivado — caso contrário, acessar a URL direta de
         # um projeto arquivado retornaria 404, impedindo até de desarquivar.
@@ -384,7 +388,8 @@ class ProjectViewSet(viewsets.ModelViewSet):
                 ProjectKanbanStageConfig.objects.filter(project=project, stage=stage).update(order=idx)
 
     def _is_supervisor_editor(self, request):
-        return request.user.role in ['supervisor', 'admin']
+        # Gerenciar colunas do kanban do projeto e mover cards em massa.
+        return request.user.has_perm('accounts.manage_kanban_config')
 
     def _ensure_project_default_kanban_config(self, project: Project):
         """
@@ -613,12 +618,12 @@ class ProjectViewSet(viewsets.ModelViewSet):
     # exclusão. Acima disso, o JSON cresceria demais e o modal ficaria lento.
     _PREVIEW_CARDS_LIMIT = 100
 
-    def _ensure_can_manage(self, request):
-        """Retorna `Response` 403 se o usuário não pode gerenciar projetos.
+    def _ensure_can_manage(self, request, codename):
+        """Retorna `Response` 403 se o usuário não tem a permissão `codename`.
         Caso contrário, retorna None (segue o fluxo)."""
-        if not self._is_supervisor_editor(request):
+        if not request.user.has_perm(f'accounts.{codename}'):
             return Response(
-                {'detail': 'Apenas supervisores e administradores podem arquivar/excluir projetos.'},
+                {'detail': 'Você não tem permissão para esta ação.'},
                 status=status.HTTP_403_FORBIDDEN,
             )
         return None
@@ -664,9 +669,9 @@ class ProjectViewSet(viewsets.ModelViewSet):
 
     def destroy(self, request, *args, **kwargs):
         # NOTA DE COMPATIBILIDADE: antes desta mudança, qualquer usuário
-        # autenticado podia chamar DELETE /projects/<id>/. Agora exige
-        # supervisor/admin — alinha com a regra das ações em massa.
-        forbidden = self._ensure_can_manage(request)
+        # autenticado podia chamar DELETE /projects/<id>/. Agora exige a
+        # permissão `delete_projects`.
+        forbidden = self._ensure_can_manage(request, 'delete_projects')
         if forbidden:
             return forbidden
         instance = self.get_object()
@@ -679,7 +684,7 @@ class ProjectViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=['post'], url_path='bulk-archive')
     def bulk_archive(self, request):
-        forbidden = self._ensure_can_manage(request)
+        forbidden = self._ensure_can_manage(request, 'bulk_project_actions')
         if forbidden:
             return forbidden
         ids, err = self._resolve_ids(request)
@@ -701,7 +706,7 @@ class ProjectViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=['post'], url_path='bulk-unarchive')
     def bulk_unarchive(self, request):
-        forbidden = self._ensure_can_manage(request)
+        forbidden = self._ensure_can_manage(request, 'bulk_project_actions')
         if forbidden:
             return forbidden
         ids, err = self._resolve_ids(request)
@@ -732,7 +737,7 @@ class ProjectViewSet(viewsets.ModelViewSet):
         "em jogo" (sprint ativa AND status não-terminal). Inclui flag de
         truncamento quando há mais.
         """
-        forbidden = self._ensure_can_manage(request)
+        forbidden = self._ensure_can_manage(request, 'bulk_project_actions')
         if forbidden:
             return forbidden
         ids, err = self._resolve_ids(request)
@@ -793,7 +798,7 @@ class ProjectViewSet(viewsets.ModelViewSet):
     def bulk_delete(self, request):
         """Hard delete. CASCADE elimina cards/logs/etc do model — sem
         recuperação. O frontend obrigatoriamente passou pelo preview antes."""
-        forbidden = self._ensure_can_manage(request)
+        forbidden = self._ensure_can_manage(request, 'bulk_project_actions')
         if forbidden:
             return forbidden
         ids, err = self._resolve_ids(request)
@@ -815,23 +820,23 @@ class ProjectViewSet(viewsets.ModelViewSet):
 class KanbanStageViewSet(viewsets.ModelViewSet):
     queryset = KanbanStage.objects.all().order_by('key')
     serializer_class = KanbanStageSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, NaoVisitanteEscreve]
 
     def _is_supervisor_editor(self, request):
-        return request.user.role in ['supervisor', 'admin']
+        return request.user.has_perm('accounts.manage_global_kanban_stages')
 
     def perform_create(self, serializer):
         if not self._is_supervisor_editor(self.request):
             from rest_framework.exceptions import PermissionDenied
 
-            raise PermissionDenied('Apenas supervisor ou admin podem criar etapas do Kanban.')
+            raise PermissionDenied('Você não tem permissão para criar etapas globais do Kanban.')
         serializer.save()
 
 
 class CardViewSet(viewsets.ModelViewSet):
     queryset = Card.objects.all()
     serializer_class = CardSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, NaoVisitanteEscreve]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_fields = ['projeto', 'responsavel', 'status', 'prioridade', 'area', 'tipo']
     search_fields = ['nome', 'descricao']
@@ -856,13 +861,13 @@ class CardViewSet(viewsets.ModelViewSet):
         responsavel_id = self.request.query_params.get('responsavel', None)
         if responsavel_id:
             queryset = queryset.filter(responsavel_id=responsavel_id)
-        return queryset
+        return scope_cards(queryset, self.request.user)  # fail-open enquanto flag OFF
     
     def perform_create(self, serializer):
         """Define o criado_por automaticamente ao criar um card"""
         serializer.save(criado_por=self.request.user)
 
-    @action(detail=False, methods=['get'], url_path='metrics')
+    @action(detail=False, methods=['get'], url_path='metrics', permission_classes=[HasPerm('view_metrics')])
     def metrics(self, request):
         """
         Endpoint slim para a página de Métricas.
@@ -890,6 +895,7 @@ class CardViewSet(viewsets.ModelViewSet):
             )
             .order_by('-finalizado_em', '-created_at')
         )
+        qs = scope_cards(qs, request.user)  # escopa métricas por setor (fail-open enquanto flag OFF)
         serializer = CardMetricsSerializer(qs, many=True)
         response = Response(serializer.data)
         # Cache HTTP curto (60s) — alinhado com o cache SWR do frontend.
@@ -898,17 +904,20 @@ class CardViewSet(viewsets.ModelViewSet):
         return response
 
     def update(self, request, *args, **kwargs):
-        """Permite atualização apenas se o usuário for o criador ou supervisor/admin"""
+        """Permite atualização apenas se o usuário for o criador ou tiver a
+        permissão granular correspondente."""
         instance = self.get_object()
         user = request.user
-        is_privileged = user.role in ('supervisor', 'admin')
+        pode_locked = user.has_perm('accounts.manage_locked_cards')
+        pode_others = user.has_perm('accounts.manage_others_cards')
 
-        # Card finalizado/inviabilizado ou de sprint fechada: só admin/supervisor
-        # pode editar (cobre PATCH/PUT, inclusive mover status pelo board).
-        if not is_privileged and _card_edicao_restrita(instance):
+        # Card finalizado/inviabilizado ou de sprint fechada: só quem tem
+        # `manage_locked_cards` pode editar (cobre PATCH/PUT, inclusive mover
+        # status pelo board).
+        if not pode_locked and _card_edicao_restrita(instance):
             return Response(
-                {'detail': 'Cards finalizados/inviabilizados ou de sprints finalizadas '
-                           'só podem ser editados por supervisor ou admin.'},
+                {'detail': 'Você não tem permissão para editar cards finalizados/inviabilizados '
+                           'ou de sprints finalizadas.'},
                 status=status.HTTP_403_FORBIDDEN,
             )
 
@@ -921,8 +930,9 @@ class CardViewSet(viewsets.ModelViewSet):
             is_demanda = instance.projeto and instance.projeto.nome == 'Sugestões'
 
         if is_demanda:
-            # Para demandas: apenas o criador pode editar (ou supervisor/admin)
-            if not is_privileged:
+            # Para demandas: apenas o criador pode editar (ou quem gerencia
+            # cards de outros).
+            if not pode_others:
                 # Comparar IDs para evitar problemas de comparação de objetos
                 criado_por_id = instance.criado_por.id if instance.criado_por else None
                 user_id = user.id if user else None
@@ -935,16 +945,19 @@ class CardViewSet(viewsets.ModelViewSet):
         return super().update(request, *args, **kwargs)
     
     def destroy(self, request, *args, **kwargs):
-        """Permite exclusão apenas se o usuário for o criador ou supervisor/admin"""
+        """Permite exclusão apenas se o usuário for o criador ou tiver a
+        permissão granular correspondente."""
         instance = self.get_object()
         user = request.user
-        is_privileged = user.role in ('supervisor', 'admin')
+        pode_locked = user.has_perm('accounts.manage_locked_cards')
+        pode_others = user.has_perm('accounts.manage_others_cards')
 
-        # Card finalizado/inviabilizado ou de sprint fechada: só admin/supervisor exclui.
-        if not is_privileged and _card_edicao_restrita(instance):
+        # Card finalizado/inviabilizado ou de sprint fechada: só quem tem
+        # `manage_locked_cards` exclui.
+        if not pode_locked and _card_edicao_restrita(instance):
             return Response(
-                {'detail': 'Cards finalizados/inviabilizados ou de sprints finalizadas '
-                           'só podem ser excluídos por supervisor ou admin.'},
+                {'detail': 'Você não tem permissão para excluir cards finalizados/inviabilizados '
+                           'ou de sprints finalizadas.'},
                 status=status.HTTP_403_FORBIDDEN,
             )
 
@@ -957,8 +970,9 @@ class CardViewSet(viewsets.ModelViewSet):
             is_demanda = instance.projeto and instance.projeto.nome == 'Sugestões'
 
         if is_demanda:
-            # Para demandas: apenas o criador pode deletar (ou supervisor/admin)
-            if not is_privileged:
+            # Para demandas: apenas o criador pode deletar (ou quem gerencia
+            # cards de outros).
+            if not pode_others:
                 # Comparar IDs para evitar problemas de comparação de objetos
                 criado_por_id = instance.criado_por.id if instance.criado_por else None
                 user_id = user.id if user else None
@@ -970,7 +984,7 @@ class CardViewSet(viewsets.ModelViewSet):
 
         return super().destroy(request, *args, **kwargs)
     
-    @action(detail=False, methods=['get'], url_path='priorities_view')
+    @action(detail=False, methods=['get'], url_path='priorities_view', permission_classes=[HasPerm('view_metrics')])
     def priorities_view(self, request):
         """Retorna usuários com seus cards em desenvolvimento para a página de Prioridades"""
         from django.contrib.auth import get_user_model
@@ -1149,7 +1163,7 @@ class CardPinViewSet(viewsets.ModelViewSet):
 
 class EventViewSet(viewsets.ModelViewSet):
     serializer_class = EventSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, NaoVisitanteEscreve]
     filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
     filterset_fields = ['card', 'tipo', 'usuario']
     ordering_fields = ['data']
@@ -1168,7 +1182,7 @@ class EventViewSet(viewsets.ModelViewSet):
 
 class CardLogViewSet(viewsets.ModelViewSet):
     serializer_class = CardLogSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, NaoVisitanteEscreve]
     filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
     filterset_fields = ['card', 'tipo_evento', 'usuario']
     ordering_fields = ['data']
@@ -1275,7 +1289,7 @@ class WeeklyPriorityConfigViewSet(viewsets.ModelViewSet):
     """ViewSet para gerenciar a configuração do horário limite das prioridades semanais"""
     queryset = WeeklyPriorityConfig.objects.all()
     serializer_class = WeeklyPriorityConfigSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, NaoVisitanteEscreve]
     
     def get_queryset(self):
         # Retornar apenas a configuração (sempre será apenas uma)
@@ -1295,21 +1309,21 @@ class WeeklyPriorityConfigViewSet(viewsets.ModelViewSet):
     
     def perform_create(self, serializer):
         # Verificar se o usuário é supervisor ou admin
-        if self.request.user.role not in ['supervisor', 'admin']:
+        if not self.request.user.has_perm('accounts.manage_weekly_priorities'):
             from rest_framework.exceptions import PermissionDenied
             raise PermissionDenied("Apenas supervisores e administradores podem criar configurações de prioridades semanais.")
         serializer.save()
     
     def perform_update(self, serializer):
         # Verificar se o usuário é supervisor ou admin
-        if self.request.user.role not in ['supervisor', 'admin']:
+        if not self.request.user.has_perm('accounts.manage_weekly_priorities'):
             from rest_framework.exceptions import PermissionDenied
             raise PermissionDenied("Apenas supervisores e administradores podem atualizar configurações de prioridades semanais.")
         serializer.save()
     
     def destroy(self, request, *args, **kwargs):
         # Verificar se o usuário é supervisor ou admin
-        if request.user.role not in ['supervisor', 'admin']:
+        if not request.user.has_perm('accounts.manage_weekly_priorities'):
             from rest_framework.exceptions import PermissionDenied
             raise PermissionDenied("Apenas supervisores e administradores podem remover configurações de prioridades semanais.")
         return super().destroy(request, *args, **kwargs)
@@ -1317,7 +1331,8 @@ class WeeklyPriorityConfigViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['post'], url_path='close-week')
     def close_week(self, request):
         """Fecha a semana atual, marcando todos os cards não concluídos"""
-        if request.user.role not in ['supervisor', 'admin']:
+        if not request.user.has_perm('accounts.manage_weekly_priorities'):
+            from rest_framework.exceptions import PermissionDenied
             raise PermissionDenied("Apenas supervisores e administradores podem fechar a semana.")
         
         hoje = timezone.now().date()
@@ -1336,7 +1351,8 @@ class WeeklyPriorityConfigViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['post'], url_path='clear-priorities')
     def clear_priorities(self, request):
         """Limpa todas as prioridades da semana atual (apenas se a semana estiver fechada)"""
-        if request.user.role not in ['supervisor', 'admin']:
+        if not request.user.has_perm('accounts.manage_weekly_priorities'):
+            from rest_framework.exceptions import PermissionDenied
             raise PermissionDenied("Apenas supervisores e administradores podem limpar prioridades.")
         
         hoje = timezone.now().date()
@@ -1367,7 +1383,7 @@ class WeeklyPriorityViewSet(viewsets.ModelViewSet):
     """ViewSet para gerenciar as prioridades semanais"""
     queryset = WeeklyPriority.objects.all()
     serializer_class = WeeklyPrioritySerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, NaoVisitanteEscreve]
     filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
     filterset_fields = ['usuario', 'semana_inicio', 'semana_fim']
     ordering_fields = ['semana_inicio', 'usuario']
@@ -1398,7 +1414,7 @@ class WeeklyPriorityViewSet(viewsets.ModelViewSet):
     
     def perform_create(self, serializer):
         # Verificar se o usuário é supervisor ou admin
-        if self.request.user.role not in ['supervisor', 'admin']:
+        if not self.request.user.has_perm('accounts.manage_weekly_priorities'):
             from rest_framework.exceptions import PermissionDenied
             raise PermissionDenied("Apenas supervisores e administradores podem definir prioridades semanais.")
         
@@ -1432,7 +1448,7 @@ class WeeklyPriorityViewSet(viewsets.ModelViewSet):
     
     def perform_update(self, serializer):
         # Verificar se o usuário é supervisor ou admin
-        if self.request.user.role not in ['supervisor', 'admin']:
+        if not self.request.user.has_perm('accounts.manage_weekly_priorities'):
             from rest_framework.exceptions import PermissionDenied
             raise PermissionDenied("Apenas supervisores e administradores podem atualizar prioridades semanais.")
         semana_inicio = serializer.instance.semana_inicio
@@ -1444,7 +1460,7 @@ class WeeklyPriorityViewSet(viewsets.ModelViewSet):
 
     def destroy(self, request, *args, **kwargs):
         # Verificar se o usuário é supervisor ou admin
-        if request.user.role not in ['supervisor', 'admin']:
+        if not request.user.has_perm('accounts.manage_weekly_priorities'):
             from rest_framework.exceptions import PermissionDenied
             raise PermissionDenied("Apenas supervisores e administradores podem remover prioridades semanais.")
         instance = self.get_object()
@@ -1474,7 +1490,7 @@ class WeeklyPriorityViewSet(viewsets.ModelViewSet):
         """Cards disponíveis + prioridades já definidas (uma request leve para o modal)."""
         from rest_framework.exceptions import PermissionDenied, ValidationError
 
-        if request.user.role not in ['supervisor', 'admin']:
+        if not request.user.has_perm('accounts.manage_weekly_priorities'):
             raise PermissionDenied(
                 'Apenas supervisores e administradores podem definir prioridades semanais.'
             )
@@ -1525,7 +1541,7 @@ class WeeklyPriorityViewSet(viewsets.ModelViewSet):
             'semana_inicio': semana_inicio.isoformat(),
         })
 
-    @action(detail=False, methods=['get'], url_path='priorities_view')
+    @action(detail=False, methods=['get'], url_path='priorities_view', permission_classes=[HasPerm('view_metrics')])
     def priorities_view(self, request):
         """Retorna usuários com prioridades semanais e cards fechados nos últimos 7 dias."""
         from django.contrib.auth import get_user_model
@@ -1631,7 +1647,7 @@ class CardDueDateChangeRequestViewSet(viewsets.ModelViewSet):
     - Avaliação (aprovar/recusar): apenas supervisor/admin.
     """
     serializer_class = CardDueDateChangeRequestSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, NaoVisitanteEscreve]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_fields = ['status', 'requested_by', 'reviewed_by', 'card']
     search_fields = ['reason', 'card__nome', 'requested_by__username']
@@ -1676,8 +1692,8 @@ class CardDueDateChangeRequestViewSet(viewsets.ModelViewSet):
 
     def update(self, request, *args, **kwargs):
         # A avaliação (status) muda pelas actions approve/reject. PATCH/PUT direto
-        # só supervisor/admin — evita burlar o fluxo pelo endpoint.
-        if request.user.role not in ('supervisor', 'admin'):
+        # só quem gerencia solicitações de terceiros — evita burlar o fluxo pelo endpoint.
+        if not request.user.has_perm('accounts.manage_others_due_date_requests'):
             return Response(
                 {'detail': 'Apenas supervisor ou admin podem alterar solicitações.'},
                 status=status.HTTP_403_FORBIDDEN,
@@ -1686,7 +1702,7 @@ class CardDueDateChangeRequestViewSet(viewsets.ModelViewSet):
 
     def destroy(self, request, *args, **kwargs):
         instance = self.get_object()
-        is_privileged = request.user.role in ('supervisor', 'admin')
+        is_privileged = request.user.has_perm('accounts.manage_others_due_date_requests')
         is_dono_pendente = (
             instance.requested_by_id == request.user.id and instance.status == 'pending'
         )
@@ -1699,7 +1715,7 @@ class CardDueDateChangeRequestViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['post'])
     def approve(self, request, pk=None):
-        if request.user.role not in ['supervisor', 'admin']:
+        if not request.user.has_perm('accounts.approve_due_date_requests'):
             return Response({'detail': 'Apenas supervisor ou admin podem aprovar solicitações.'}, status=status.HTTP_403_FORBIDDEN)
 
         req = self.get_object()
@@ -1740,7 +1756,7 @@ class CardDueDateChangeRequestViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['post'])
     def reject(self, request, pk=None):
-        if request.user.role not in ['supervisor', 'admin']:
+        if not request.user.has_perm('accounts.approve_due_date_requests'):
             return Response({'detail': 'Apenas supervisor ou admin podem recusar solicitações.'}, status=status.HTTP_403_FORBIDDEN)
 
         req = self.get_object()
@@ -1763,10 +1779,10 @@ class CardDueDateChangeRequestViewSet(viewsets.ModelViewSet):
 class ScoreCriterionViewSet(viewsets.ModelViewSet):
     """CRUD dos critérios configuráveis do formulário de Score.
 
-    Restrito a Admin/Supervisor (feature de supervisão).
+    Restrito a quem tem a permissão `manage_score`.
     """
     serializer_class = ScoreCriterionSerializer
-    permission_classes = [IsAdminOrSupervisor]
+    permission_classes = [HasPerm('manage_score')]
 
     def get_queryset(self):
         qs = ScoreCriterion.objects.prefetch_related('opcoes').all()
@@ -1792,7 +1808,7 @@ class ScoreCriterionViewSet(viewsets.ModelViewSet):
 class CardScoreViewSet(viewsets.ModelViewSet):
     """Scores atribuídos aos cards (tabela 7.4) + edição/exclusão com histórico."""
     serializer_class = CardScoreSerializer
-    permission_classes = [IsAdminOrSupervisor]
+    permission_classes = [HasPerm('manage_score')]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_fields = ['card', 'setor_solicitante']
     search_fields = ['card__nome']
@@ -1800,7 +1816,7 @@ class CardScoreViewSet(viewsets.ModelViewSet):
     ordering = ['-score_final']
 
     def get_queryset(self):
-        return (
+        qs = (
             CardScore.objects
             .select_related(
                 'card', 'card__projeto', 'card__projeto__sprint', 'card__responsavel',
@@ -1811,6 +1827,8 @@ class CardScoreViewSet(viewsets.ModelViewSet):
                 'card__score_historico__usuario',
             )
         )
+        # Escopa por setor via o card dono (card__setor).
+        return scope_card_scores(qs, self.request.user)
 
     @action(detail=False, methods=['get'], url_path='pickable-cards')
     def pickable_cards(self, request):
@@ -1978,14 +1996,17 @@ class CardAnexoViewSet(viewsets.GenericViewSet):
         'card', 'card__projeto', 'card__projeto__sprint', 'enviado_por'
     ).all()
     serializer_class = CardAnexoSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, NaoVisitanteEscreve]
     pagination_class = None
     http_method_names = ['get', 'post', 'delete', 'head', 'options']
 
     def _pode_mutar(self, request, card):
-        """True se o usuário pode anexar/remover neste card."""
-        is_privileged = getattr(request.user, 'role', None) in ('supervisor', 'admin')
-        return is_privileged or not _card_edicao_restrita(card)
+        """True se o usuário pode anexar/remover neste card. Card travado
+        (finalizado/inviabilizado/sprint fechada) exige a permissão
+        `manage_locked_card_attachments`."""
+        if not _card_edicao_restrita(card):
+            return True
+        return request.user.has_perm('accounts.manage_locked_card_attachments')
 
     def list(self, request, *args, **kwargs):
         card_id = request.query_params.get('card')

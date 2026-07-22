@@ -8,14 +8,16 @@ from django.conf import settings
 from .models import GeekDayDraw, GeekDayConfig
 from .serializers import GeekDayDrawSerializer, GeekDayUserStatusSerializer
 from apps.accounts.profile_picture_utils import get_profile_picture_url
+from apps.accounts.permissions import HasPerm
 
 
 class GeekDayDrawViewSet(viewsets.ModelViewSet):
     """
-    ViewSet para gerenciar sorteios do Geek Day
+    ViewSet para gerenciar sorteios do Geek Day. Exige `view_metrics`
+    (Visitante não acessa); ações de escrita exigem também `manage_geekday`.
     """
     serializer_class = GeekDayDrawSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, HasPerm('view_metrics')]
 
     def get_queryset(self):
         return GeekDayDraw.objects.select_related('usuario', 'sorteado_por').all()
@@ -80,7 +82,7 @@ class GeekDayDrawViewSet(viewsets.ModelViewSet):
         Realiza um sorteio aleatório entre usuários que ainda não foram sorteados
         Apenas gestores podem realizar sorteios
         """
-        if request.user.role not in ['supervisor', 'gerente', 'admin']:
+        if not request.user.has_perm('accounts.manage_geekday'):
             return Response(
                 {'detail': 'Apenas gestores podem realizar sorteios.'},
                 status=status.HTTP_403_FORBIDDEN
@@ -161,7 +163,7 @@ class GeekDayDrawViewSet(viewsets.ModelViewSet):
         Marca um usuário manualmente como sorteado
         Apenas gestores podem marcar
         """
-        if request.user.role not in ['supervisor', 'gerente', 'admin']:
+        if not request.user.has_perm('accounts.manage_geekday'):
             return Response(
                 {'detail': 'Apenas gestores podem marcar usuários como sorteados.'},
                 status=status.HTTP_403_FORBIDDEN
@@ -219,7 +221,7 @@ class GeekDayDrawViewSet(viewsets.ModelViewSet):
         Remove o status de sorteado de um usuário (apaga o último sorteio dele)
         Apenas gestores podem desmarcar
         """
-        if request.user.role not in ['supervisor', 'gerente', 'admin']:
+        if not request.user.has_perm('accounts.manage_geekday'):
             return Response(
                 {'detail': 'Apenas gestores podem desmarcar usuários como sorteados.'},
                 status=status.HTTP_403_FORBIDDEN
@@ -275,7 +277,7 @@ class GeekDayDrawViewSet(viewsets.ModelViewSet):
         Reseta todos os sorteios (permite que todos sejam sorteados novamente)
         Apenas gestores podem resetar
         """
-        if request.user.role not in ['supervisor', 'gerente', 'admin']:
+        if not request.user.has_perm('accounts.manage_geekday'):
             return Response(
                 {'detail': 'Apenas gestores podem resetar sorteios.'},
                 status=status.HTTP_403_FORBIDDEN

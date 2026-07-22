@@ -217,6 +217,12 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 # Custom User Model
 AUTH_USER_MODEL = 'accounts.User'
 
+# Segmentação por setor: quando False (padrão durante a migração/backfill),
+# os helpers de escopo (apps/accounts/scoping.py) são fail-open — nada é
+# filtrado, sistema idêntico ao atual. Ligar para True SÓ após verificar que
+# 100% dos dados (sprints/projetos/cards) têm setor (zero órfãos).
+SETOR_SCOPING_ENABLED = os.getenv('SETOR_SCOPING_ENABLED', 'false').strip().lower() in ('true', '1', 'yes')
+
 # REST Framework configuration
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': [

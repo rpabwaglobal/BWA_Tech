@@ -25,6 +25,8 @@ from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
+from apps.accounts.permissions import HasPerm
+
 logger = logging.getLogger(__name__)
 
 from .generators import resolve as resolve_generator
@@ -37,9 +39,11 @@ _ACTIVE_STATUSES = (ReportJob.Status.PENDING, ReportJob.Status.RUNNING)
 
 
 class ReportJobViewSet(viewsets.ModelViewSet):
-    """CRUD de jobs de relatório. Sempre escopado ao usuário autenticado."""
+    """CRUD de jobs de relatório. Sempre escopado ao usuário autenticado.
+    Relatórios são dados consolidados/sensíveis → exigem `view_metrics`
+    (Visitante não acessa)."""
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, HasPerm('view_metrics')]
     serializer_class = ReportJobSerializer
     # Sem filterset_fields — query params são tratados em get_queryset.
     http_method_names = ['get', 'post', 'delete', 'head', 'options']

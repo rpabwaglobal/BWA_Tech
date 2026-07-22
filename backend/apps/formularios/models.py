@@ -72,6 +72,10 @@ class ChamadoSuporte(models.Model):
     responsavel = models.CharField(max_length=200, blank=True, null=True)
     responsavel_solucao = models.CharField(max_length=200, blank=True, null=True)
     descricao_resolucao = models.TextField(blank=True, null=True)
+    # Segmentação por setor (Fase 2 best-effort): derivado por e-mail no create.
+    setor = models.ForeignKey(
+        'accounts.SetorCatalogo', on_delete=models.SET_NULL, null=True, blank=True,
+        db_index=True, related_name='chamados', verbose_name='Setor')
     data_abertura = models.DateTimeField(auto_now_add=True)
     data_atualizacao = models.DateTimeField(auto_now=True)
 

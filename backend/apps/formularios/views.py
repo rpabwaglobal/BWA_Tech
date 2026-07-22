@@ -34,15 +34,6 @@ logger = logging.getLogger(__name__)
 _VALID_STATUSES = {choice.value for choice in ChamadoSuporteStatus}
 
 
-def _is_privileged(user) -> bool:
-    """Privilegiado = supervisor/admin/gerente ou superuser. Usado em
-    múltiplos pontos pra restringir mutações sensíveis."""
-    if not user.is_authenticated:
-        return False
-    role = getattr(user, 'role', None)
-    return role in ChamadoSuporteViewSet.PRIVILEGED_ROLES or user.is_superuser
-
-
 def _user_can_access_chamado(request, chamado_id: int) -> bool:
     """True se o usuário é privilegiado OU dono do chamado.
 
@@ -51,7 +42,7 @@ def _user_can_access_chamado(request, chamado_id: int) -> bool:
     como conferir o owner aqui, então libera (a gate real fica no portal, já
     consultado pelo frontend). Em modo local, o filtro por email é a autoridade.
     """
-    if _is_privileged(request.user):
+    if request.user.has_perm('accounts.view_all_tickets'):
         return True
     user_email = (request.user.email or '').strip().lower()
     local_qs = ChamadoSuporte.objects.filter(pk=chamado_id)
@@ -77,9 +68,6 @@ class ChamadoSuporteViewSet(viewsets.ModelViewSet):
     pagination_class = None
     http_method_names = ['get', 'post', 'patch', 'head', 'options']
 
-    # Roles privilegiados que podem ver/alterar chamados de QUALQUER usuário.
-    PRIVILEGED_ROLES = {'admin', 'supervisor', 'gerente'}
-
     # Campos que SÓ usuários privilegiados podem mutar via PATCH. Usuário comum
     # autenticado dono do chamado consegue, no máximo, abrir um novo — não
     # marca o próprio como Resolvido/Cancelado nem altera responsável/notas.
@@ -95,7 +83,7 @@ class ChamadoSuporteViewSet(viewsets.ModelViewSet):
         user = self.request.user
         if not user.is_authenticated:
             return qs.none()
-        if _is_privileged(user):
+        if user.has_perm('accounts.view_all_tickets'):
             return qs
         # Filtragem por email do usuário autenticado (case-insensitive)
         user_email = (user.email or '').strip().lower()
@@ -122,10 +110,30 @@ class ChamadoSuporteViewSet(viewsets.ModelViewSet):
         # estourar antes, o WS não envia evento fantasma.
         with transaction.atomic():
             instance = serializer.save()
+            # Deriva o setor do chamado pelo e-mail do solicitante (best-effort).
+            self._derivar_setor(instance)
             read = ChamadoSuporteReadSerializer(instance)
             payload = read.data
             transaction.on_commit(lambda: broadcast_chamado('chamado_created', payload))
         return Response(payload, status=status.HTTP_201_CREATED)
+
+    @staticmethod
+    def _derivar_setor(chamado):
+        """Setor do chamado = setor primário do usuário dono do e-mail. Silencioso
+        se não houver correspondência (chamados do portal externo)."""
+        if chamado.setor_id:
+            return
+        from apps.accounts.models import User
+        from apps.accounts.scoping import setor_primario_do_usuario
+        email = (chamado.usuario_email or '').strip().lower()
+        if not email:
+            return
+        u = User.objects.filter(email__iexact=email).first()
+        if u:
+            s = setor_primario_do_usuario(u)
+            if s:
+                chamado.setor = s
+                chamado.save(update_fields=['setor'])
 
     def partial_update(self, request, *args, **kwargs):
         instance = self.get_object()
@@ -137,9 +145,10 @@ class ChamadoSuporteViewSet(viewsets.ModelViewSet):
         patch_sr.is_valid(raise_exception=True)
         data = patch_sr.validated_data
 
-        # [C1] Campos que só privilegiados mutam. Usuário comum não fecha
-        # próprio chamado, não muda responsável solução, nem move entre tabs.
-        if not _is_privileged(request.user):
+        # [C1] Campos que só quem tem `manage_ticket_resolution` muta. Usuário
+        # comum não fecha próprio chamado, não muda responsável solução, nem
+        # move entre tabs.
+        if not request.user.has_perm('accounts.manage_ticket_resolution'):
             forbidden = self._PRIVILEGED_PATCH_FIELDS & data.keys()
             if forbidden:
                 raise PermissionDenied(
@@ -217,7 +226,7 @@ class ChamadoSuporteViewSet(viewsets.ModelViewSet):
           - Sem limit/offset, retorna lista pura (compat com chamadas legadas).
         """
         qs = self.get_queryset()
-        if _is_privileged(request.user):
+        if request.user.has_perm('accounts.view_all_tickets'):
             email = request.query_params.get('usuario_email')
             if email:
                 qs = qs.filter(usuario_email__iexact=email.strip())
@@ -276,9 +285,9 @@ class ChamadoSuporteViewSet(viewsets.ModelViewSet):
         """Marca/desmarca o chamado como "notificado". Operação só pra
         privilegiados — usuário comum NÃO falseia métricas de notificação
         do próprio chamado (A1)."""
-        if not _is_privileged(request.user):
+        if not request.user.has_perm('accounts.notify_ticket_user'):
             raise PermissionDenied(
-                detail={'detail': 'Apenas suporte/admin pode alterar a flag de notificação.'},
+                detail={'detail': 'Você não tem permissão para alterar a flag de notificação.'},
             )
         instance = self.get_object()
         # [M3] Payload vazio = no-op (antes forçava True silenciosamente).
@@ -390,10 +399,10 @@ class ChamadoSuporteResolucaoViewSet(viewsets.GenericViewSet):
                 {'detail': 'Informe chamado_id válido.'},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        # Anexar resolução é parte de concluir o chamado — operação de suporte/admin.
-        if not _is_privileged(request.user):
+        # Anexar resolução é parte de concluir o chamado — exige `manage_ticket_resolution`.
+        if not request.user.has_perm('accounts.manage_ticket_resolution'):
             raise PermissionDenied(
-                detail={'detail': 'Apenas suporte/admin pode anexar a resolução do chamado.'},
+                detail={'detail': 'Você não tem permissão para anexar a resolução do chamado.'},
             )
 
         serializer = ChamadoResolucaoSerializer(data=request.data, context={'request': request})

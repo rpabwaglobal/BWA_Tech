@@ -10,9 +10,6 @@ from .realtime import SUPORTE_KANBAN_GROUP
 logger = logging.getLogger(__name__)
 
 
-PRIVILEGED_ROLES = frozenset({'admin', 'supervisor', 'gerente'})
-
-
 class SuporteKanbanConsumer(AsyncWebsocketConsumer):
     """Conecta usuários autenticados (Token query/header) ao grupo Kanban.
 
@@ -42,9 +39,10 @@ class SuporteKanbanConsumer(AsyncWebsocketConsumer):
             await self.close()
             return
 
-        # Resolve role e email pra filtragem em suporte_kanban_push.
-        role = getattr(self.user, 'role', None)
-        self.is_privileged = bool(role in PRIVILEGED_ROLES or self.user.is_superuser)
+        # Resolve permissão e email pra filtragem em suporte_kanban_push.
+        # `has_perm` toca o ORM (cache de permissões) — precisa rodar em thread
+        # síncrona no contexto async do consumer.
+        self.is_privileged = await self._user_can_view_all_tickets()
         self.user_email_lower = (self.user.email or '').strip().lower()
 
         await self.channel_layer.group_add(SUPORTE_KANBAN_GROUP, self.channel_name)
@@ -94,3 +92,9 @@ class SuporteKanbanConsumer(AsyncWebsocketConsumer):
             return token.user if token.user.is_active else None
         except Token.DoesNotExist:
             return None
+
+    @database_sync_to_async
+    def _user_can_view_all_tickets(self):
+        """Privilegiado = tem a permissão granular `view_all_tickets` (recebe
+        eventos de todos os chamados, não só os do próprio email)."""
+        return bool(self.user and self.user.has_perm('accounts.view_all_tickets'))
