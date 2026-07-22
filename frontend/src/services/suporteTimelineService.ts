@@ -37,4 +37,27 @@ export const suporteTimelineService = {
     const { data } = await api.post<SuporteTimelineEntry>('/formularios/suporte-timeline/', payload);
     return data;
   },
+
+  /**
+   * Data em que cada chamado mudou de etapa pela última vez, segundo a
+   * timeline local — sempre gravada no BWA, mesmo com o chamado em si vindo
+   * do portal externo (modo proxy). Use isto para calcular SLA/tempo de
+   * resolução: `chamado.data_atualizacao` é reescrito por QUALQUER save
+   * (ex.: mover entre tabs, o proxy do portal retocando o registro), sem
+   * relação alguma com a conclusão de fato do ticket.
+   * Chamados sem nenhuma troca de etapa registrada não aparecem no mapa —
+   * o caller decide o fallback (ex.: `data_atualizacao`).
+   */
+  async getResolvidoEmMap(chamadoIds: number[]): Promise<Record<number, string>> {
+    const ids = [...new Set(chamadoIds)].filter((id) => Number.isFinite(id));
+    if (ids.length === 0) return {};
+    const { data } = await api.get<Record<string, string>>(
+      `/formularios/suporte-timeline/resolvido-em/?chamado_ids=${ids.join(',')}`,
+    );
+    const result: Record<number, string> = {};
+    for (const [id, iso] of Object.entries(data)) {
+      result[Number(id)] = iso;
+    }
+    return result;
+  },
 };

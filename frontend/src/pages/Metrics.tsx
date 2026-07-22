@@ -243,7 +243,7 @@ function MetricsDeliveredCardRow({
       <button
         type="button"
         className="w-full rounded-md border border-[var(--color-border)] bg-[var(--color-card)] p-3 text-left text-sm transition-colors hover:bg-[var(--color-accent)]"
-        onClick={() => void onSelect(card.id)}
+        onClick={() => void onSelect(String(card.id))}
       >
         <div className="flex flex-wrap items-start justify-between gap-2">
           <span className="font-medium text-[var(--color-foreground)]">{card.nome}</span>
@@ -496,7 +496,7 @@ export default function Metrics() {
   const cardsPerUserData = useMemo(() => {
     // Cards sem responsável NÃO entram nas métricas por pessoa (regra de
     // negócio definida com o usuário). Aparecem apenas em contadores totais.
-    let list = closedCards.filter((c) => c.responsavel != null && c.responsavel !== '');
+    let list = closedCards.filter((c) => c.responsavel != null && String(c.responsavel) !== '');
     if (cardsSprintFilter) {
       const want = String(cardsSprintFilter);
       list = list.filter((c) => resolveCardSprintId(c, projects) === want);
@@ -656,7 +656,7 @@ export default function Metrics() {
   };
 
   const handleSelectAllLeaderboardUsers = () => {
-    setLeaderboardSelectedUserIds(users.map((u) => u.id));
+    setLeaderboardSelectedUserIds(users.map((u) => String(u.id)));
   };
 
   const handleClearLeaderboardUsers = () => {
@@ -688,7 +688,7 @@ export default function Metrics() {
 
   const leaderboardData = useMemo(() => {
     // Cards sem responsável são ignorados no leaderboard.
-    let list = closedCards.filter((c) => c.responsavel != null && c.responsavel !== '');
+    let list = closedCards.filter((c) => c.responsavel != null && String(c.responsavel) !== '');
     // Filtros temporais usam SEMPRE a data real de entrega (finalizado_em),
     // não a data agendada (data_fim). Um card entregue em janeiro com prazo
     // dezembro precisa aparecer em janeiro.
@@ -794,7 +794,7 @@ export default function Metrics() {
   ]);
 
   const closedCardsForOnTime = useMemo(() => {
-    let list = closedCards.filter((c) => c.responsavel != null && c.responsavel !== '');
+    let list = closedCards.filter((c) => c.responsavel != null && String(c.responsavel) !== '');
     if (onTimeScope === 'sprint' && onTimeSprint) {
       const sprintId = String(onTimeSprint);
       list = list.filter((c) => resolveCardSprintId(c, projects) === sprintId);
@@ -1259,7 +1259,7 @@ export default function Metrics() {
       // Excluir cards de projetos sistêmicos das métricas de projeto.
       if (isSystemProject(card)) continue;
       if (!cardInPeriod(card)) continue;
-      const pid = card.projeto;
+      const pid = String(card.projeto);
       const stats =
         cardCounts.get(pid) ?? {
           total: 0,
@@ -1289,7 +1289,7 @@ export default function Metrics() {
       // Excluir projetos sistêmicos das métricas (regra de negócio).
       if (project.is_system || isSpecialProjectName(project.nome)) continue;
 
-      const stats = cardCounts.get(project.id);
+      const stats = cardCounts.get(String(project.id));
       if (stats) {
         if (!mostCards || stats.total > mostCards.stats.total) {
           mostCards = { project, stats };
@@ -1634,7 +1634,7 @@ export default function Metrics() {
                     interval={0}
                     tickLine={false}
                     axisLine={false}
-                    tick={(props: { x: number; y: number; payload?: { value?: string }; index?: number }) => {
+                    tick={((props: { x: number; y: number; payload?: { value?: string }; index?: number }) => {
                       const { x, y, payload, index } = props;
                       const i =
                         typeof index === 'number' && index >= 0
@@ -1646,7 +1646,6 @@ export default function Metrics() {
                         <g transform={`translate(${x},${y})`}>
                           <foreignObject x={-236} y={-18} width={232} height={36} style={{ overflow: 'visible' }}>
                             <div
-                              xmlns="http://www.w3.org/1999/xhtml"
                               className="flex h-9 min-h-9 items-center gap-2 pr-1"
                             >
                               <Avatar className="h-7 w-7 shrink-0 rounded-full border border-[var(--color-border)]/60">
@@ -1664,7 +1663,7 @@ export default function Metrics() {
                           </foreignObject>
                         </g>
                       );
-                    }}
+                    }) as never}
                   />
                   <ChartTooltip content={<ChartTooltipContent nameKey="name" />} />
                   <Bar
@@ -1674,7 +1673,7 @@ export default function Metrics() {
                     name="Entregas"
                     cursor="pointer"
                     onClick={(data) =>
-                      handleCardsPerUserBarClick(data as { userId: string; name: string })
+                      handleCardsPerUserBarClick(data as unknown as { userId: string; name: string })
                     }
                   >
                     {cardsPerUserData.map((row) => (
@@ -1913,7 +1912,7 @@ export default function Metrics() {
                     interval={0}
                     tickLine={false}
                     axisLine={false}
-                    tick={(props: { x: number; y: number; payload?: { value?: string }; index?: number }) => {
+                    tick={((props: { x: number; y: number; payload?: { value?: string }; index?: number }) => {
                       const { x, y, payload, index } = props;
                       const i =
                         typeof index === 'number' && index >= 0
@@ -1934,7 +1933,6 @@ export default function Metrics() {
                         <g transform={`translate(${x},${y})`}>
                           <foreignObject x={-236} y={-18} width={232} height={36} style={{ overflow: 'visible' }}>
                             <div
-                              xmlns="http://www.w3.org/1999/xhtml"
                               className="flex h-9 min-h-9 items-center gap-2 pr-1"
                             >
                               <Avatar
@@ -1954,7 +1952,7 @@ export default function Metrics() {
                           </foreignObject>
                         </g>
                       );
-                    }}
+                    }) as never}
                   />
                   <ChartTooltip content={<ChartTooltipContent nameKey="name" />} />
                   <Bar
@@ -1964,7 +1962,7 @@ export default function Metrics() {
                     name="Entregas"
                     cursor="pointer"
                     onClick={(data) =>
-                      handleLeaderboardBarClick(data as { userId: string; name: string })
+                      handleLeaderboardBarClick(data as unknown as { userId: string; name: string })
                     }
                   >
                     {leaderboardData.map((row) => (

@@ -7,7 +7,7 @@ interface DropdownMenuContextValue {
   /** Ref do wrapper externo — usado pelo Content para excluir cliques no
    *  trigger (irmão dele) do handler de "click outside". Sem isto o
    *  click no trigger gera mousedown→fecha + click→reabre (flicker). */
-  wrapperRef: React.RefObject<HTMLDivElement>
+  wrapperRef: React.RefObject<HTMLDivElement | null>
 }
 
 const DropdownMenuContext = React.createContext<DropdownMenuContextValue | undefined>(undefined)

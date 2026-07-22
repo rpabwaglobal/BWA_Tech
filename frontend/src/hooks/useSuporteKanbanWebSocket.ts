@@ -61,7 +61,7 @@ export function useSuporteKanbanWebSocket(opts: {
     function connect() {
       if (cancelled) return;
       try {
-        ws = new WebSocket(buildSuporteKanbanWsUrl(token));
+        ws = new WebSocket(buildSuporteKanbanWsUrl(token as string));
       } catch {
         scheduleReconnect();
         return;

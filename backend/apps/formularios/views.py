@@ -12,6 +12,7 @@ from .models import (
     ChamadoSuporteResolucao,
     ChamadoSuporteStatus,
     ChamadoSuporteTimeline,
+    ChamadoSuporteTimelineTipo,
     SuporteMotivo,
     SuporteTipo,
 )
@@ -343,6 +344,48 @@ class ChamadoSuporteTimelineViewSet(mixins.ListModelMixin, mixins.CreateModelMix
                 detail={'detail': 'Você não tem acesso a esse chamado.'},
             )
         serializer.save(usuario=self.request.user)
+
+    @action(detail=False, methods=['get'], url_path='resolvido-em')
+    def resolvido_em(self, request):
+        """Data em que cada chamado mudou de etapa pela última vez, segundo a
+        timeline local — sempre gravada no BWA (`ChamadoSuporteTimeline`),
+        mesmo quando o chamado em si vive no portal externo (modo proxy).
+
+        Existe porque `ChamadoSuporte.data_atualizacao` é `auto_now=True`:
+        reescrito em QUALQUER save (ex.: mover entre tabs, o proxy do portal
+        re-tocando o registro), sem relação com a conclusão de fato. A
+        timeline só ganha um evento `etapa_alterada` quando o usuário
+        realmente move o card no quadro (`logSuporteChamadoChanges` no
+        frontend) — por isso é a fonte confiável pra medir SLA.
+
+        GET ?chamado_ids=1,2,3 → {"1": "2026-06-03T14:25:00-03:00", ...}
+        (chamados sem nenhum evento de troca de etapa registrada ficam de
+        fora do mapa — o caller decide o fallback, ex.: data_atualizacao).
+        """
+        if not _is_privileged(request.user):
+            raise PermissionDenied(detail={'detail': 'Sem permissão para consultar esses dados.'})
+        ids_param = request.query_params.get('chamado_ids', '')
+        try:
+            ids = {int(x) for x in ids_param.split(',') if x.strip()}
+        except ValueError:
+            return Response(
+                {'detail': 'chamado_ids deve ser uma lista de inteiros separados por vírgula.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if not ids:
+            return Response({})
+        qs = (
+            ChamadoSuporteTimeline.objects
+            .filter(chamado_id__in=ids, tipo_evento=ChamadoSuporteTimelineTipo.ETAPA_ALTERADA)
+            .order_by('chamado_id', '-data')
+            .values_list('chamado_id', 'data')
+        )
+        result = {}
+        for chamado_id, data in qs:
+            # Primeiro visto por chamado_id (após ORDER BY -data) = o mais recente.
+            if chamado_id not in result:
+                result[chamado_id] = data.isoformat()
+        return Response(result)
 
 
 class ChamadoSuporteResolucaoViewSet(viewsets.GenericViewSet):

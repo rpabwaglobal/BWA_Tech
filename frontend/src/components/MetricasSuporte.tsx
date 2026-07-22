@@ -19,6 +19,7 @@ import { FilterSelect } from '@/components/ui/filter-select';
 import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
 import { suporteService, catalogNome, type ChamadoSuporte } from '@/services/suporteService';
+import { suporteTimelineService } from '@/services/suporteTimelineService';
 import { userService, type User } from '@/services/userService';
 
 /** Cor da barra por cargo — mesma paleta do gráfico "Cards finalizados por
@@ -573,10 +574,15 @@ function TabelaSlaSuporte({
   tickets,
   opcoes,
   infoDe,
+  resolvidoEmMap,
 }: {
   tickets: ChamadoSuporte[];
   opcoes: Opcoes;
   infoDe: (nome: string) => UserInfo;
+  /** chamado.id → ISO da última troca de etapa (timeline local). Fonte
+   * confiável de "quando foi resolvido"; `data_atualizacao` é auto_now e
+   * pode ser reescrito por toques sem relação com a conclusão. */
+  resolvidoEmMap: Record<number, string>;
 }) {
   const filtro = useTicketFilter(tickets, opcoes);
   const linhas = useMemo(() => {
@@ -586,7 +592,11 @@ function TabelaSlaSuporte({
       const nome = (t.responsavel_solucao ?? '').trim();
       if (!nome) continue;
       const abertura = t.data_abertura ? new Date(t.data_abertura) : null;
-      const resolucao = t.data_atualizacao ? new Date(t.data_atualizacao) : null;
+      // Prioriza a timeline (evento real de troca de etapa); cai pra
+      // data_atualizacao só quando o ticket não tem esse evento registrado
+      // (ex.: resolvido antes de a timeline automática existir).
+      const resolvidoIso = resolvidoEmMap[t.id] ?? t.data_atualizacao;
+      const resolucao = resolvidoIso ? new Date(resolvidoIso) : null;
       if (!abertura || !resolucao || Number.isNaN(abertura.getTime()) || Number.isNaN(resolucao.getTime())) {
         continue;
       }
@@ -607,7 +617,7 @@ function TabelaSlaSuporte({
       .sort(
         (a, b) => b.pct - a.pct || b.total - a.total || a.nome.localeCompare(b.nome, 'pt-BR'),
       );
-  }, [filtro.filtrados, infoDe]);
+  }, [filtro.filtrados, infoDe, resolvidoEmMap]);
 
   const totalResolvidos = linhas.reduce((s, l) => s + l.total, 0);
   const totalOnTime = linhas.reduce((s, l) => s + l.onTime, 0);
@@ -864,6 +874,7 @@ function BarRankCard({
 export function MetricasSuporte() {
   const [tickets, setTickets] = useState<ChamadoSuporte[]>([]);
   const [users, setUsers] = useState<User[]>([]);
+  const [resolvidoEmMap, setResolvidoEmMap] = useState<Record<number, string>>({});
   const [loading, setLoading] = useState(true);
   const [erro, setErro] = useState<string | null>(null);
 
@@ -878,6 +889,17 @@ export function MetricasSuporte() {
         if (cancelled) return;
         setTickets(list);
         setUsers(us);
+        // Data real de resolução (via timeline local) só interessa a tickets
+        // já resolvidos — é o que entra no cálculo de SLA.
+        const resolvidoIds = list.filter((t) => t.status === 'Resolvido').map((t) => t.id);
+        void suporteTimelineService
+          .getResolvidoEmMap(resolvidoIds)
+          .then((map) => {
+            if (!cancelled) setResolvidoEmMap(map);
+          })
+          .catch(() => {
+            /* fallback: TabelaSlaSuporte usa data_atualizacao quando o mapa não tem o id */
+          });
       })
       .catch(() => {
         if (!cancelled) setErro('Não foi possível carregar os tickets de suporte.');
@@ -983,7 +1005,7 @@ export function MetricasSuporte() {
       </div>
 
       {/* Um gráfico por linha, na ordem pedida */}
-      <TabelaSlaSuporte tickets={tickets} opcoes={opcoes} infoDe={infoDe} />
+      <TabelaSlaSuporte tickets={tickets} opcoes={opcoes} infoDe={infoDe} resolvidoEmMap={resolvidoEmMap} />
 
       <ResponsavelCard tickets={tickets} opcoes={opcoes} infoDe={infoDe} />
 
