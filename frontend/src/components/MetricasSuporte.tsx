@@ -585,19 +585,24 @@ function TabelaSlaSuporte({
   resolvidoEmMap: Record<number, string>;
 }) {
   const filtro = useTicketFilter(tickets, opcoes);
-  const linhas = useMemo(() => {
+  const { linhas, semDataConclusao } = useMemo(() => {
     const map = new Map<string, { total: number; onTime: number; late: number }>();
+    let semData = 0;
     for (const t of filtro.filtrados) {
       if (t.status !== 'Resolvido') continue;
       const nome = (t.responsavel_solucao ?? '').trim();
       if (!nome) continue;
+      // Só a timeline (evento real de troca pra etapa Concluído) conta pro
+      // SLA. `data_atualizacao` NÃO é usado nem como fallback — é auto_now e
+      // pode ser reescrito por toques sem relação com a conclusão (essa era
+      // a causa do bug: um card resolvido dia 03 aparecia "atualizado" dia
+      // 11 sem nenhuma mudança de etapa real). Ticket sem esse evento
+      // registrado fica de fora do cálculo em vez de entrar com data errada.
+      const resolvidoIso = resolvidoEmMap[t.id];
       const abertura = t.data_abertura ? new Date(t.data_abertura) : null;
-      // Prioriza a timeline (evento real de troca de etapa); cai pra
-      // data_atualizacao só quando o ticket não tem esse evento registrado
-      // (ex.: resolvido antes de a timeline automática existir).
-      const resolvidoIso = resolvidoEmMap[t.id] ?? t.data_atualizacao;
       const resolucao = resolvidoIso ? new Date(resolvidoIso) : null;
       if (!abertura || !resolucao || Number.isNaN(abertura.getTime()) || Number.isNaN(resolucao.getTime())) {
+        semData += 1;
         continue;
       }
       const horas = (resolucao.getTime() - abertura.getTime()) / 3_600_000;
@@ -607,7 +612,7 @@ function TabelaSlaSuporte({
       else rec.late += 1;
       map.set(nome, rec);
     }
-    return [...map.entries()]
+    const linhas = [...map.entries()]
       .map(([nome, r]) => ({
         nome,
         ...r,
@@ -617,6 +622,7 @@ function TabelaSlaSuporte({
       .sort(
         (a, b) => b.pct - a.pct || b.total - a.total || a.nome.localeCompare(b.nome, 'pt-BR'),
       );
+    return { linhas, semDataConclusao: semData };
   }, [filtro.filtrados, infoDe, resolvidoEmMap]);
 
   const totalResolvidos = linhas.reduce((s, l) => s + l.total, 0);
@@ -631,13 +637,23 @@ function TabelaSlaSuporte({
           Consistência de SLA (24h)
         </CardTitle>
         <CardDescription>
-          Tickets resolvidos dentro do prazo de {SLA_HORAS}h (da abertura até a resolução), por
-          responsável — {filtro.label}.
+          Tickets resolvidos dentro do prazo de {SLA_HORAS}h (da abertura até a data em que o
+          card foi movido pra etapa Concluído), por responsável — {filtro.label}.
           {totalResolvidos > 0 && (
             <>
               {' '}
               No período: <strong>{totalOnTime}</strong> de <strong>{totalResolvidos}</strong>{' '}
               resolvidos no prazo (<strong>{pctGeral}%</strong>).
+            </>
+          )}
+          {semDataConclusao > 0 && (
+            <>
+              {' '}
+              <span className="text-[var(--color-warning,#b45309)]">
+                {semDataConclusao} ticket{semDataConclusao > 1 ? 's' : ''} resolvido
+                {semDataConclusao > 1 ? 's' : ''} sem data de conclusão registrada — fora deste
+                cálculo (o card nunca teve a etapa alterada pelo quadro do BWA).
+              </span>
             </>
           )}
         </CardDescription>
