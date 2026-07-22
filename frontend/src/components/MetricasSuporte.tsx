@@ -381,13 +381,18 @@ function ResponsavelCard({
   tickets,
   opcoes,
   infoDe,
+  resolvidoEmMap,
 }: {
   tickets: ChamadoSuporte[];
   opcoes: Opcoes;
   infoDe: (nome: string) => UserInfo;
+  /** chamado.id → ISO da conclusão (timeline). Usado pra separar o modal em
+   * dentro/fora do prazo, igual à tabela de SLA. */
+  resolvidoEmMap: Record<number, string>;
 }) {
   const filtro = useTicketFilter(tickets, opcoes);
   const [sel, setSel] = useState<string | null>(null);
+  const [tab, setTab] = useState<'onTime' | 'late' | 'sem'>('onTime');
   const rows = useMemo(
     () =>
       rankBy(filtro.filtrados, (t) => t.responsavel_solucao).map((r) => {
@@ -411,6 +416,18 @@ function ResponsavelCard({
         : [],
     [sel, filtro.filtrados],
   );
+  // Mesmas abas da tabela de SLA. `semMedicao` mantém o total do modal igual
+  // ao número da barra (o gráfico conta todo ticket com responsável, inclusive
+  // os que ainda não foram resolvidos).
+  const grupos = useMemo(() => agruparPorSla(ticketsSel, resolvidoEmMap), [ticketsSel, resolvidoEmMap]);
+  const abrirResponsavel = (nome: string) => {
+    const g = agruparPorSla(
+      filtro.filtrados.filter((t) => (t.responsavel_solucao ?? '').trim() === nome),
+      resolvidoEmMap,
+    );
+    setTab(g.onTime.length ? 'onTime' : g.late.length ? 'late' : 'sem');
+    setSel(nome);
+  };
 
   return (
     <Card>
@@ -493,8 +510,7 @@ function ResponsavelCard({
                   radius={[0, 4, 4, 0]}
                   cursor="pointer"
                   onClick={((data: { name?: string }) => {
-                    const nome = data?.name ?? null;
-                    setSel(nome);
+                    if (data?.name) abrirResponsavel(data.name);
                   }) as never}
                 >
                   {chartData.map((row) => (
@@ -516,7 +532,7 @@ function ResponsavelCard({
         }}
         containerClassName="max-w-2xl"
       >
-        <DialogContent onClose={() => setSel(null)}>
+        <DialogContent onClose={() => setSel(null)} className="flex max-h-[90vh] flex-col overflow-hidden">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Trophy className="h-5 w-5" />
@@ -524,6 +540,16 @@ function ResponsavelCard({
             </DialogTitle>
             <p className="text-sm text-[var(--color-muted-foreground)]">
               {ticketsSel.length} ticket(s) — {filtro.label}
+              {grupos.onTime.length + grupos.late.length > 0 && (
+                <>
+                  {' '}
+                  · {grupos.onTime.length} de {grupos.onTime.length + grupos.late.length} no prazo (
+                  {Math.round(
+                    (grupos.onTime.length / (grupos.onTime.length + grupos.late.length)) * 100,
+                  )}
+                  %)
+                </>
+              )}
             </p>
           </DialogHeader>
 
@@ -532,33 +558,86 @@ function ResponsavelCard({
               Nenhum ticket deste responsável no período filtrado.
             </p>
           ) : (
-            <ul className="mt-4 divide-y divide-[var(--color-border)]">
-              {ticketsSel.map((t) => {
-                const d = ticketDate(t);
-                return (
-                  <li key={t.id} className="py-3">
-                    <div className="flex items-start justify-between gap-3">
-                      <span className="text-sm font-medium text-[var(--color-foreground)]">
-                        #{t.id} · {catalogNome(t.tipo)}
-                      </span>
-                      <span className="shrink-0 text-xs text-[var(--color-muted-foreground)]">
-                        {d ? d.toLocaleDateString('pt-BR') : '—'}
-                      </span>
-                    </div>
-                    <div className="mt-0.5 text-xs text-[var(--color-muted-foreground)]">
-                      {catalogNome(t.item)} — {catalogNome(t.motivo)}
-                    </div>
-                    {t.descricao && (
-                      <p className="mt-1 text-xs text-[var(--color-foreground)]/80">{t.descricao}</p>
+            <div className="mt-2 flex min-h-0 flex-1 flex-col gap-0">
+              <div className="flex gap-[8px] border-b border-[var(--color-border)]">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  disabled={grupos.onTime.length === 0}
+                  onClick={() => setTab('onTime')}
+                  className={cn(
+                    'h-auto rounded-none border-b-2 border-transparent px-[16px] py-[8px]',
+                    tab === 'onTime'
+                      ? 'border-[var(--color-primary)] font-semibold text-[var(--color-primary)]'
+                      : 'text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]',
+                  )}
+                >
+                  No prazo ({grupos.onTime.length})
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  disabled={grupos.late.length === 0}
+                  onClick={() => setTab('late')}
+                  className={cn(
+                    'h-auto rounded-none border-b-2 border-transparent px-[16px] py-[8px]',
+                    tab === 'late'
+                      ? 'border-[var(--color-primary)] font-semibold text-[var(--color-primary)]'
+                      : 'text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]',
+                  )}
+                >
+                  Fora do prazo ({grupos.late.length})
+                </Button>
+                {grupos.semMedicao.length > 0 && (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    onClick={() => setTab('sem')}
+                    title="Tickets ainda não resolvidos ou sem data de conclusão registrada"
+                    className={cn(
+                      'h-auto rounded-none border-b-2 border-transparent px-[16px] py-[8px]',
+                      tab === 'sem'
+                        ? 'border-[var(--color-primary)] font-semibold text-[var(--color-primary)]'
+                        : 'text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]',
                     )}
-                    <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px] text-[var(--color-muted-foreground)]">
-                      <span>Solicitante: {t.usuario_nome}</span>
-                      <span>Status: {t.status}</span>
-                    </div>
-                  </li>
-                );
-              })}
-            </ul>
+                  >
+                    Sem medição ({grupos.semMedicao.length})
+                  </Button>
+                )}
+              </div>
+              <div className="min-h-0 max-h-[min(60vh,520px)] flex-1 overflow-y-auto pr-1 pt-3">
+                {tab === 'sem' ? (
+                  grupos.semMedicao.length > 0 ? (
+                    <ul className="space-y-2">
+                      {grupos.semMedicao.map((t) => (
+                        <SlaTicketRow key={t.id} ticket={t} medida={null} />
+                      ))}
+                    </ul>
+                  ) : (
+                    <p className="text-sm text-[var(--color-muted-foreground)]">
+                      Nenhum ticket sem medição neste filtro.
+                    </p>
+                  )
+                ) : (tab === 'onTime' ? grupos.onTime : grupos.late).length > 0 ? (
+                  <ul className="space-y-2">
+                    {(tab === 'onTime' ? grupos.onTime : grupos.late).map((item) => (
+                      <SlaTicketRow key={item.ticket.id} ticket={item.ticket} medida={item} />
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="text-sm text-[var(--color-muted-foreground)]">
+                    {tab === 'onTime'
+                      ? 'Nenhum ticket no prazo neste filtro.'
+                      : 'Nenhum ticket fora do prazo neste filtro.'}
+                  </p>
+                )}
+              </div>
+              <DialogFooter className="mt-0 shrink-0 border-t border-[var(--color-border)] pt-4">
+                <Button type="button" variant="outline" onClick={() => setSel(null)}>
+                  Fechar
+                </Button>
+              </DialogFooter>
+            </div>
           )}
         </DialogContent>
       </Dialog>
@@ -586,6 +665,44 @@ type SlaLinha = {
   lateTickets: SlaTicket[];
 };
 
+/** Mede um ticket: abertura → conclusão (data da timeline). Retorna null
+ * quando não dá pra medir — não resolvido, sem abertura, ou sem evento de
+ * conclusão registrado. Fonte ÚNICA da medição: as duas telas (tabela de SLA
+ * e modal do gráfico de responsáveis) usam esta função pra não divergirem. */
+function medirSla(t: ChamadoSuporte, resolvidoEmMap: Record<number, string>): SlaTicket | null {
+  if (t.status !== 'Resolvido') return null;
+  const iso = resolvidoEmMap[t.id];
+  if (!iso || !t.data_abertura) return null;
+  const abertura = new Date(t.data_abertura);
+  const resolucao = new Date(iso);
+  if (Number.isNaN(abertura.getTime()) || Number.isNaN(resolucao.getTime())) return null;
+  return {
+    ticket: t,
+    abertura,
+    resolucao,
+    horas: (resolucao.getTime() - abertura.getTime()) / 3_600_000,
+  };
+}
+
+/** Separa uma lista de tickets nas abas do modal. `semMedicao` existe pra o
+ * total do modal bater com o número mostrado no gráfico/tabela. */
+function agruparPorSla(tickets: ChamadoSuporte[], resolvidoEmMap: Record<number, string>) {
+  const onTime: SlaTicket[] = [];
+  const late: SlaTicket[] = [];
+  const semMedicao: ChamadoSuporte[] = [];
+  for (const t of tickets) {
+    const medida = medirSla(t, resolvidoEmMap);
+    if (!medida) semMedicao.push(t);
+    else if (medida.horas <= SLA_HORAS) onTime.push(medida);
+    else late.push(medida);
+  }
+  const recentesPrimeiro = (a: SlaTicket, b: SlaTicket) => b.resolucao.getTime() - a.resolucao.getTime();
+  onTime.sort(recentesPrimeiro);
+  late.sort(recentesPrimeiro);
+  semMedicao.sort((a, b) => (b.data_abertura ?? '').localeCompare(a.data_abertura ?? ''));
+  return { onTime, late, semMedicao };
+}
+
 /** "3h12" / "2d 4h" — leitura rápida do tempo de resolução. */
 function formatDuracao(horas: number): string {
   if (horas < 1) return `${Math.max(1, Math.round(horas * 60))}min`;
@@ -610,9 +727,12 @@ function formatDataHora(d: Date): string {
 }
 
 /** Linha de ticket no modal de SLA — espelha o MetricsDeliveredCardRow da
- * página de Métricas (mesmo layout de badge + grade de datas). */
-function SlaTicketRow({ item, variant }: { item: SlaTicket; variant: 'onTime' | 'late' }) {
-  const { ticket: t, abertura, resolucao, horas } = item;
+ * página de Métricas (mesmo layout de badge + grade de datas). A variante sai
+ * da própria medição: badge e grupo nunca podem divergir. `medida = null` é o
+ * ticket que não dá pra medir (não resolvido ou sem data de conclusão). */
+function SlaTicketRow({ ticket: t, medida }: { ticket: ChamadoSuporte; medida: SlaTicket | null }) {
+  const variant = medida ? (medida.horas <= SLA_HORAS ? 'onTime' : 'late') : 'sem';
+  const aberturaTxt = t.data_abertura ? formatDataHora(new Date(t.data_abertura)) : '—';
   return (
     <li>
       <div className="w-full rounded-md border border-[var(--color-border)] bg-[var(--color-card)] p-3 text-left text-sm">
@@ -622,11 +742,15 @@ function SlaTicketRow({ item, variant }: { item: SlaTicket; variant: 'onTime' | 
           </span>
           {variant === 'onTime' ? (
             <Badge className="shrink-0 border-green-600/40 bg-green-500/15 text-green-800 dark:text-green-400">
-              No prazo · {formatDuracao(horas)}
+              No prazo · {formatDuracao(medida!.horas)}
+            </Badge>
+          ) : variant === 'late' ? (
+            <Badge className="shrink-0 border-red-600/40 bg-red-500/15 text-red-800 dark:text-red-400">
+              Fora do prazo · {formatDuracao(medida!.horas)}
             </Badge>
           ) : (
-            <Badge className="shrink-0 border-red-600/40 bg-red-500/15 text-red-800 dark:text-red-400">
-              Fora do prazo · {formatDuracao(horas)}
+            <Badge variant="secondary" className="shrink-0">
+              {t.status === 'Resolvido' ? 'Sem data de conclusão' : t.status}
             </Badge>
           )}
         </div>
@@ -637,11 +761,13 @@ function SlaTicketRow({ item, variant }: { item: SlaTicket; variant: 'onTime' | 
         <dl className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-xs sm:grid-cols-3">
           <div>
             <dt className="text-[var(--color-muted-foreground)]">Aberto em</dt>
-            <dd className="font-medium text-[var(--color-foreground)]">{formatDataHora(abertura)}</dd>
+            <dd className="font-medium text-[var(--color-foreground)]">{aberturaTxt}</dd>
           </div>
           <div>
             <dt className="text-[var(--color-muted-foreground)]">Concluído em</dt>
-            <dd className="font-medium text-[var(--color-foreground)]">{formatDataHora(resolucao)}</dd>
+            <dd className="font-medium text-[var(--color-foreground)]">
+              {medida ? formatDataHora(medida.resolucao) : '—'}
+            </dd>
           </div>
           <div>
             <dt className="text-[var(--color-muted-foreground)]">Tempo até a conclusão</dt>
@@ -651,10 +777,15 @@ function SlaTicketRow({ item, variant }: { item: SlaTicket; variant: 'onTime' | 
                 variant === 'late' ? 'text-[var(--color-destructive)]' : 'text-[var(--color-foreground)]',
               )}
             >
-              {formatDuracao(horas)}
+              {medida ? formatDuracao(medida.horas) : '—'}
             </dd>
           </div>
         </dl>
+        {!medida && t.status === 'Resolvido' && (
+          <p className="mt-2 text-xs text-[var(--color-warning,#b45309)]">
+            Sem registro de mudança de etapa no quadro do BWA — fora do cálculo de SLA.
+          </p>
+        )}
         {t.descricao && (
           <p className="mt-2 line-clamp-2 text-xs text-[var(--color-foreground)]/80">{t.descricao}</p>
         )}
@@ -701,18 +832,14 @@ function TabelaSlaSuporte({
       // a causa do bug: um card resolvido dia 03 aparecia "atualizado" dia
       // 11 sem nenhuma mudança de etapa real). Ticket sem esse evento
       // registrado fica de fora do cálculo em vez de entrar com data errada.
-      const resolvidoIso = resolvidoEmMap[t.id];
-      const abertura = t.data_abertura ? new Date(t.data_abertura) : null;
-      const resolucao = resolvidoIso ? new Date(resolvidoIso) : null;
-      if (!abertura || !resolucao || Number.isNaN(abertura.getTime()) || Number.isNaN(resolucao.getTime())) {
+      const item = medirSla(t, resolvidoEmMap);
+      if (!item) {
         semData += 1;
         continue;
       }
-      const horas = (resolucao.getTime() - abertura.getTime()) / 3_600_000;
       const rec = map.get(nome) ?? { total: 0, onTime: 0, late: 0, onTimeTickets: [], lateTickets: [] };
       rec.total += 1;
-      const item: SlaTicket = { ticket: t, abertura, resolucao, horas };
-      if (horas <= SLA_HORAS) {
+      if (item.horas <= SLA_HORAS) {
         rec.onTime += 1;
         rec.onTimeTickets.push(item);
       } else {
@@ -955,7 +1082,7 @@ function TabelaSlaSuporte({
                 {(tab === 'onTime' ? selLinha.onTimeTickets : selLinha.lateTickets).length > 0 ? (
                   <ul className="space-y-2">
                     {(tab === 'onTime' ? selLinha.onTimeTickets : selLinha.lateTickets).map((item) => (
-                      <SlaTicketRow key={item.ticket.id} item={item} variant={tab} />
+                      <SlaTicketRow key={item.ticket.id} ticket={item.ticket} medida={item} />
                     ))}
                   </ul>
                 ) : (
@@ -1253,7 +1380,12 @@ export function MetricasSuporte() {
         erroResolvidoEm={erroResolvidoEm}
       />
 
-      <ResponsavelCard tickets={tickets} opcoes={opcoes} infoDe={infoDe} />
+      <ResponsavelCard
+        tickets={tickets}
+        opcoes={opcoes}
+        infoDe={infoDe}
+        resolvidoEmMap={resolvidoEmMap}
+      />
 
       <GraficoAberturaPorDia tickets={tickets} opcoes={opcoes} />
 
