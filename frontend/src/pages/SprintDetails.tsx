@@ -241,6 +241,9 @@ export default function SprintDetails() {
   // Filter state for projects
   const [projectStatusFilter, setProjectStatusFilter] = useState<string>('');
   const [projectDeveloperFilter, setProjectDeveloperFilter] = useState<string>('');
+  // "Meus Cards" (Atalhos Rápidos) aparece aceso/pressionado enquanto o
+  // filtro de responsável estiver no próprio usuário logado.
+  const meusCardsAtivo = !!user?.id && projectDeveloperFilter === String(user.id);
 
   // Deep-link `?dev=<id>` (Dashboard → "Meus Cards") — pré-filtra por responsável.
   useEffect(() => {
@@ -1878,7 +1881,8 @@ export default function SprintDetails() {
               </Button>
               <Button
                 type="button"
-                variant="outline"
+                variant={meusCardsAtivo ? 'default' : 'outline'}
+                aria-pressed={meusCardsAtivo}
                 onClick={() => {
                   // Já estamos nesta sprint — seta o filtro direto em vez de
                   // navegar pra `?dev=<id>`: como a URL não muda (mesma
@@ -1886,8 +1890,9 @@ export default function SprintDetails() {
                   // o query param não dispara de novo. Isso deixava o botão
                   // "morto" depois de limpar o filtro pela barra (que só
                   // mexe no state, nunca na URL) e clicar de novo.
+                  // Toggle: clicar de novo com o filtro já ativo desliga.
                   if (!user?.id) return;
-                  setProjectDeveloperFilter(String(user.id));
+                  setProjectDeveloperFilter(meusCardsAtivo ? '' : String(user.id));
                 }}
                 disabled={!sprint}
                 title={!sprint ? 'Nenhuma sprint em andamento' : undefined}
