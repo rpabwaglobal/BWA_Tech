@@ -135,7 +135,7 @@ export function KanbanCardPreview({ card, className, topRightSlot, onClick }: Ka
               {responsavelRoleLabel && (
                 <Badge
                   variant="secondary"
-                  className={`text-[10px] px-[6px] py-[2px] rounded-full ${responsavelRoleColor}`}
+                  className={`whitespace-nowrap text-[10px] px-[6px] py-[2px] rounded-full ${responsavelRoleColor}`}
                 >
                   {responsavelRoleLabel}
                 </Badge>

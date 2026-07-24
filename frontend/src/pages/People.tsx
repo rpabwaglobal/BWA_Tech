@@ -1421,7 +1421,7 @@ export default function People() {
         </Avatar>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
-        <Badge className={getRoleColor(user.role)}>
+        <Badge className={`whitespace-nowrap ${getRoleColor(user.role)}`}>
           <div className="flex items-center gap-1">
             {getRoleIcon(user.role)}
                 <span>{getRoleLabel(user.role)}</span>

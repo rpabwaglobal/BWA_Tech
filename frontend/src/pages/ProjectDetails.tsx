@@ -326,7 +326,7 @@ function DragOverlayCard({
               {responsibleRoleLabel ? (
                 <Badge
                   variant="secondary"
-                  className={`text-[10px] px-[6px] py-[2px] rounded-full ${responsibleUser ? getRoleColor(responsibleUser.role) : ''}`}
+                  className={`whitespace-nowrap text-[10px] px-[6px] py-[2px] rounded-full ${responsibleUser ? getRoleColor(responsibleUser.role) : ''}`}
                 >
                   {responsibleRoleLabel}
                 </Badge>
@@ -698,7 +698,7 @@ function KanbanCard({
               {responsibleRoleLabel ? (
                 <Badge
                   variant="secondary"
-                  className={`text-[10px] px-[6px] py-[2px] rounded-full ${responsibleUser ? getRoleColor(responsibleUser.role) : ''}`}
+                  className={`whitespace-nowrap text-[10px] px-[6px] py-[2px] rounded-full ${responsibleUser ? getRoleColor(responsibleUser.role) : ''}`}
                 >
                   {responsibleRoleLabel}
                 </Badge>
