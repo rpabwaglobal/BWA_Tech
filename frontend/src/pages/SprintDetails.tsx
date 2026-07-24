@@ -1859,17 +1859,61 @@ export default function SprintDetails() {
               )}
             </Button>
           )}
-          {sprint && isSprintEmAndamentoJanela(sprint) && (
-            <Button
-              variant="outline"
-              size="default"
-              onClick={() => navigate(ROUTES.sprintGerenciar)}
-              className="h-[40px]"
-            >
-              <FolderKanban className="mr-[8px] h-[16px] w-[16px]" />
-              Gerenciar Sprints
-            </Button>
-          )}
+          {/* Atalhos Rápidos — bloco idêntico ao do Dashboard (rótulo em cima,
+              botões numa linha abaixo), dimensionado só ao conteúdo (shrink-0),
+              no lugar onde antes ficava o botão avulso "Gerenciar Sprints". */}
+          <div className="shrink-0 rounded-lg border border-[var(--color-border)] bg-[var(--color-card)]/40 px-3 py-2.5">
+            <div className="text-[10px] uppercase tracking-wider font-medium text-[var(--color-muted-foreground)] mb-2">
+              Atalhos Rápidos
+            </div>
+            <div className="flex gap-2">
+              <Button
+                type="button"
+                variant="default"
+                onClick={() => setQuickCreateOpen(true)}
+                className="gap-2"
+              >
+                <Plus className="h-4 w-4" />
+                Criar Card
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => {
+                  if (!sprint || !user?.id) return;
+                  navigate(`${ROUTES.sprintPorId(String(sprint.id))}?dev=${user.id}`);
+                }}
+                disabled={!sprint}
+                title={!sprint ? 'Nenhuma sprint em andamento' : undefined}
+                className="gap-2"
+              >
+                <ListChecks className="h-4 w-4" />
+                Meus Cards
+              </Button>
+              {sprint && isSprintEmAndamentoJanela(sprint) && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => navigate(ROUTES.sprintGerenciar)}
+                  className="gap-2"
+                >
+                  <FolderKanban className="h-4 w-4" />
+                  Gerenciar Sprints
+                </Button>
+              )}
+              {isAdminUser(user) && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => navigate(ROUTES.administracao)}
+                  className="gap-2"
+                >
+                  <Shield className="h-4 w-4" />
+                  Administração
+                </Button>
+              )}
+            </div>
+          </div>
           {canCreate && sprint && !isSprintFinished(sprint) && (
             <>
               <Button
@@ -1889,50 +1933,6 @@ export default function SprintDetails() {
                 <Trash2 className="h-[16px] w-[16px] text-red-500" />
               </Button>
             </>
-          )}
-        </div>
-      </div>
-
-      {/* Atalhos Rápidos — bloco idêntico ao do Dashboard (mesma marcação:
-          rótulo em cima, botões numa linha abaixo). */}
-      <div className="mb-[16px] shrink-0 rounded-lg border border-[var(--color-border)] bg-[var(--color-card)]/40 px-3 py-2.5">
-        <div className="text-[10px] uppercase tracking-wider font-medium text-[var(--color-muted-foreground)] mb-2">
-          Atalhos Rápidos
-        </div>
-        <div className="flex gap-2">
-          <Button
-            type="button"
-            variant="default"
-            onClick={() => setQuickCreateOpen(true)}
-            className="gap-2"
-          >
-            <Plus className="h-4 w-4" />
-            Criar Card
-          </Button>
-          <Button
-            type="button"
-            variant="outline"
-            onClick={() => {
-              if (!sprint || !user?.id) return;
-              navigate(`${ROUTES.sprintPorId(String(sprint.id))}?dev=${user.id}`);
-            }}
-            disabled={!sprint}
-            title={!sprint ? 'Nenhuma sprint em andamento' : undefined}
-            className="gap-2"
-          >
-            <ListChecks className="h-4 w-4" />
-            Meus Cards
-          </Button>
-          {isAdminUser(user) && (
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => navigate(ROUTES.administracao)}
-              className="gap-2"
-            >
-              <Shield className="h-4 w-4" />
-              Administração
-            </Button>
           )}
         </div>
       </div>
