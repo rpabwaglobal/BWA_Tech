@@ -38,7 +38,8 @@ import {
   ChevronUp,
   CheckCircle2,
   AlertCircle,
-  XCircle,
+  ListChecks,
+  Shield,
 } from 'lucide-react';
 import { calcularDiasTotais, calcularDiasUteis } from '@/lib/dateUtils';
 import {
@@ -52,6 +53,8 @@ import {
   isSprintEmAndamentoJanela,
 } from '@/lib/sprintFechamento';
 import { ROUTES } from '@/routes';
+import { QuickCreateCardModal } from '@/components/QuickCreateCardModal';
+import { isAdminUser } from '@/lib/roles';
 
 type SortField = 'nome' | 'created_at' | 'supervisor_name' | 'projects_count';
 type SortDirection = 'asc' | 'desc';
@@ -95,6 +98,8 @@ export default function Sprints() {
   const canCreate = user?.role === 'supervisor' || user?.role === 'admin';
   const canDeleteFinished = user?.role === 'admin';
   const canFinalizar = user?.role === 'supervisor' || user?.role === 'admin';
+  // Atalhos rápidos (espelham os do Dashboard).
+  const [quickCreateOpen, setQuickCreateOpen] = useState(false);
 
   const activeSprintPrincipal = useMemo(
     () => getSprintEmAndamentoPrincipal(sprints),
@@ -555,6 +560,47 @@ export default function Sprints() {
         </div>
       </div>
 
+      {/* Atalhos Rápidos — mesmos do Dashboard (Criar Card, Meus Cards,
+          Administração), pra não precisar voltar ao painel. */}
+      <div className="inline-flex flex-wrap items-center gap-[8px] rounded-lg border border-[var(--color-border)] bg-[var(--color-card)]/40 px-3 py-2.5">
+        <span className="text-[10px] uppercase tracking-wider font-medium text-[var(--color-muted-foreground)] mr-1">
+          Atalhos Rápidos
+        </span>
+        <Button type="button" variant="default" onClick={() => setQuickCreateOpen(true)} className="gap-2">
+          <Plus className="h-4 w-4" />
+          Criar Card
+        </Button>
+        <Button
+          type="button"
+          variant="outline"
+          onClick={() => {
+            if (!activeSprintPrincipal || !user?.id) return;
+            navigate(`${ROUTES.sprintPorId(String(activeSprintPrincipal.id))}?dev=${user.id}`);
+          }}
+          disabled={!activeSprintPrincipal}
+          title={!activeSprintPrincipal ? 'Nenhuma sprint em andamento' : undefined}
+          className="gap-2"
+        >
+          <ListChecks className="h-4 w-4" />
+          Meus Cards
+        </Button>
+        <Button
+          type="button"
+          variant="outline"
+          onClick={() => navigate(ROUTES.sprintGerenciar)}
+          className="gap-2"
+        >
+          <Calendar className="h-4 w-4" />
+          Gerenciar Sprints
+        </Button>
+        {isAdminUser(user) && (
+          <Button type="button" variant="outline" onClick={() => navigate(ROUTES.administracao)} className="gap-2">
+            <Shield className="h-4 w-4" />
+            Administração
+          </Button>
+        )}
+      </div>
+
       {sprintsEmAndamentoJanela.length > 1 && (
         <div className="flex items-start gap-[12px] rounded-[8px] border border-amber-500/40 bg-amber-500/10 p-[16px] text-sm text-[var(--color-foreground)]">
           <AlertCircle className="mt-[2px] h-[18px] w-[18px] shrink-0 text-amber-600" />
@@ -742,7 +788,7 @@ export default function Sprints() {
                       </CardHeader>
                       <CardContent className="p-[24px] pt-0">
                         {/* Subcards de Estatísticas */}
-                        <div className="grid grid-cols-2 md:grid-cols-5 lg:grid-cols-6 gap-[16px]">
+                        <div className="grid grid-cols-2 md:grid-cols-4 gap-[16px]">
                           <div className="bg-[var(--color-muted)]/30 rounded-[8px] border border-[var(--color-border)] p-[16px]">
                             <div className="flex items-center gap-[8px] mb-[8px]">
                               <FolderKanban className="h-[16px] w-[16px] text-[var(--color-muted-foreground)]" />
@@ -778,28 +824,6 @@ export default function Sprints() {
                             <p className="text-2xl font-bold text-blue-600">
                               {stats.emAndamento}
                             </p>
-                          </div>
-                          <div className="bg-[var(--color-muted)]/30 rounded-[8px] border border-[var(--color-border)] p-[16px]">
-                            <div className="flex flex-col gap-[6px]">
-                              <div>
-                                <div className="flex items-center gap-[8px] mb-[2px]">
-                                  <XCircle className="h-[16px] w-[16px] text-red-600" />
-                                  <span className="text-xs text-[var(--color-muted-foreground)]">Entregues atrasados</span>
-                                </div>
-                                <p className="text-2xl font-bold text-red-600 leading-none">
-                                  {sprint.cards_entregues_atrasados ?? 0}
-                                </p>
-                              </div>
-                              <div>
-                                <div className="flex items-center gap-[8px] mb-[2px]">
-                                  <AlertCircle className="h-[16px] w-[16px] text-amber-600" />
-                                  <span className="text-xs text-[var(--color-muted-foreground)]">Abertos atrasados</span>
-                                </div>
-                                <p className="text-2xl font-bold text-amber-600 leading-none">
-                                  {sprint.cards_abertos_atrasados ?? 0}
-                                </p>
-                              </div>
-                            </div>
                           </div>
                         </div>
                       </CardContent>
@@ -1279,6 +1303,8 @@ export default function Sprints() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <QuickCreateCardModal isOpen={quickCreateOpen} onClose={() => setQuickCreateOpen(false)} />
     </div>
   );
 }
