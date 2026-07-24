@@ -1880,8 +1880,14 @@ export default function SprintDetails() {
                 type="button"
                 variant="outline"
                 onClick={() => {
-                  if (!sprint || !user?.id) return;
-                  navigate(`${ROUTES.sprintPorId(String(sprint.id))}?dev=${user.id}`);
+                  // Já estamos nesta sprint — seta o filtro direto em vez de
+                  // navegar pra `?dev=<id>`: como a URL não muda (mesma
+                  // rota), o Router não gera nova location e o efeito que lê
+                  // o query param não dispara de novo. Isso deixava o botão
+                  // "morto" depois de limpar o filtro pela barra (que só
+                  // mexe no state, nunca na URL) e clicar de novo.
+                  if (!user?.id) return;
+                  setProjectDeveloperFilter(String(user.id));
                 }}
                 disabled={!sprint}
                 title={!sprint ? 'Nenhuma sprint em andamento' : undefined}
