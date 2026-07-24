@@ -38,8 +38,6 @@ import {
   ChevronUp,
   CheckCircle2,
   AlertCircle,
-  ListChecks,
-  Shield,
 } from 'lucide-react';
 import { calcularDiasTotais, calcularDiasUteis } from '@/lib/dateUtils';
 import {
@@ -53,8 +51,6 @@ import {
   isSprintEmAndamentoJanela,
 } from '@/lib/sprintFechamento';
 import { ROUTES } from '@/routes';
-import { QuickCreateCardModal } from '@/components/QuickCreateCardModal';
-import { isAdminUser } from '@/lib/roles';
 
 type SortField = 'nome' | 'created_at' | 'supervisor_name' | 'projects_count';
 type SortDirection = 'asc' | 'desc';
@@ -98,8 +94,6 @@ export default function Sprints() {
   const canCreate = user?.role === 'supervisor' || user?.role === 'admin';
   const canDeleteFinished = user?.role === 'admin';
   const canFinalizar = user?.role === 'supervisor' || user?.role === 'admin';
-  // Atalhos rápidos (espelham os do Dashboard).
-  const [quickCreateOpen, setQuickCreateOpen] = useState(false);
 
   const activeSprintPrincipal = useMemo(
     () => getSprintEmAndamentoPrincipal(sprints),
@@ -558,47 +552,6 @@ export default function Sprints() {
             </Button>
           )}
         </div>
-      </div>
-
-      {/* Atalhos Rápidos — mesmos do Dashboard (Criar Card, Meus Cards,
-          Administração), pra não precisar voltar ao painel. */}
-      <div className="inline-flex flex-wrap items-center gap-[8px] rounded-lg border border-[var(--color-border)] bg-[var(--color-card)]/40 px-3 py-2.5">
-        <span className="text-[10px] uppercase tracking-wider font-medium text-[var(--color-muted-foreground)] mr-1">
-          Atalhos Rápidos
-        </span>
-        <Button type="button" variant="default" onClick={() => setQuickCreateOpen(true)} className="gap-2">
-          <Plus className="h-4 w-4" />
-          Criar Card
-        </Button>
-        <Button
-          type="button"
-          variant="outline"
-          onClick={() => {
-            if (!activeSprintPrincipal || !user?.id) return;
-            navigate(`${ROUTES.sprintPorId(String(activeSprintPrincipal.id))}?dev=${user.id}`);
-          }}
-          disabled={!activeSprintPrincipal}
-          title={!activeSprintPrincipal ? 'Nenhuma sprint em andamento' : undefined}
-          className="gap-2"
-        >
-          <ListChecks className="h-4 w-4" />
-          Meus Cards
-        </Button>
-        <Button
-          type="button"
-          variant="outline"
-          onClick={() => navigate(ROUTES.sprintGerenciar)}
-          className="gap-2"
-        >
-          <Calendar className="h-4 w-4" />
-          Gerenciar Sprints
-        </Button>
-        {isAdminUser(user) && (
-          <Button type="button" variant="outline" onClick={() => navigate(ROUTES.administracao)} className="gap-2">
-            <Shield className="h-4 w-4" />
-            Administração
-          </Button>
-        )}
       </div>
 
       {sprintsEmAndamentoJanela.length > 1 && (
@@ -1303,8 +1256,6 @@ export default function Sprints() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-
-      <QuickCreateCardModal isOpen={quickCreateOpen} onClose={() => setQuickCreateOpen(false)} />
     </div>
   );
 }

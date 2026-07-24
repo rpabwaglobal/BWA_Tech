@@ -78,9 +78,13 @@ import {
   Download,
   Filter,
   Trophy,
+  ListChecks,
+  Shield,
 } from 'lucide-react';
 import { calcularDiasTotais, calcularDiasUteis, formatDate, formatDateTime } from '@/lib/dateUtils';
 import { ATRASADO_STATUS_BADGE } from '@/lib/dueDateBadgeClasses';
+import { QuickCreateCardModal } from '@/components/QuickCreateCardModal';
+import { isAdminUser } from '@/lib/roles';
 import {
   fechamentoIsoToDatetimeLocal,
   datetimeLocalToFechamentoIso,
@@ -156,6 +160,8 @@ export default function SprintDetails() {
   const [sprint, setSprint] = useState<Sprint | null>(null);
   const [projects, setProjects] = useState<Project[]>([]);
   const [cards, setCards] = useState<CardType[]>([]);
+  // Atalhos rápidos (mesmos do Dashboard).
+  const [quickCreateOpen, setQuickCreateOpen] = useState(false);
 
   /** Invalida o cache SWR desta sprint + o cache de métricas globais.
    * Chamar SEMPRE que um card é criado/editado/movido/excluído (local ou
@@ -1495,19 +1501,6 @@ export default function SprintDetails() {
     sprintProjectIdsSet.has(String(c.projeto || '').trim()),
   );
   const visibleCardsForList = getFilteredAndSortedCards(sprintCardsForList);
-  const deliveredLateCount = sprintCardsForList.filter(
-    (card) =>
-      card.status === 'finalizado' &&
-      !!card.data_fim &&
-      new Date(card.data_fim).getTime() > new Date(sprint.fechamento_em).getTime(),
-  ).length;
-  const openLateCount = sprintCardsForList.filter(
-    (card) =>
-      card.status !== 'finalizado' &&
-      card.status !== 'inviabilizado' &&
-      !!card.data_fim &&
-      new Date(card.data_fim).getTime() < Date.now(),
-  ).length;
 
   const selectedColumnDefs = SPRINT_CARDS_COLUMN_DEFS.filter((c) => selectedColumnIds.includes(c.id));
   const selectedColumnDefsSafe = selectedColumnDefs;
@@ -1843,14 +1836,6 @@ export default function SprintDetails() {
                 <Clock className="h-[14px] w-[14px]" />
                 {calcularDiasTotais(sprintInicioDiaParaCalendario(sprint), sprintFimDiaParaCalendario(sprint))} dias ({calcularDiasUteis(sprintInicioDiaParaCalendario(sprint), sprintFimDiaParaCalendario(sprint))} úteis)
               </span>
-              <div className="flex flex-col gap-[2px] shrink-0">
-                <Badge variant="outline" className="text-[11px] w-fit">
-                  Entregues atrasados: {deliveredLateCount}
-                </Badge>
-                <Badge variant="outline" className="text-[11px] w-fit">
-                  Abertos atrasados: {openLateCount}
-                </Badge>
-              </div>
             </div>
           </div>
         </div>
@@ -1904,6 +1889,50 @@ export default function SprintDetails() {
                 <Trash2 className="h-[16px] w-[16px] text-red-500" />
               </Button>
             </>
+          )}
+        </div>
+      </div>
+
+      {/* Atalhos Rápidos — bloco idêntico ao do Dashboard (mesma marcação:
+          rótulo em cima, botões numa linha abaixo). */}
+      <div className="mb-[16px] shrink-0 rounded-lg border border-[var(--color-border)] bg-[var(--color-card)]/40 px-3 py-2.5">
+        <div className="text-[10px] uppercase tracking-wider font-medium text-[var(--color-muted-foreground)] mb-2">
+          Atalhos Rápidos
+        </div>
+        <div className="flex gap-2">
+          <Button
+            type="button"
+            variant="default"
+            onClick={() => setQuickCreateOpen(true)}
+            className="gap-2"
+          >
+            <Plus className="h-4 w-4" />
+            Criar Card
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => {
+              if (!sprint || !user?.id) return;
+              navigate(`${ROUTES.sprintPorId(String(sprint.id))}?dev=${user.id}`);
+            }}
+            disabled={!sprint}
+            title={!sprint ? 'Nenhuma sprint em andamento' : undefined}
+            className="gap-2"
+          >
+            <ListChecks className="h-4 w-4" />
+            Meus Cards
+          </Button>
+          {isAdminUser(user) && (
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => navigate(ROUTES.administracao)}
+              className="gap-2"
+            >
+              <Shield className="h-4 w-4" />
+              Administração
+            </Button>
           )}
         </div>
       </div>
@@ -3488,6 +3517,8 @@ export default function SprintDetails() {
         onClose={() => setLogsModalOpen(false)}
         refreshTrigger={logsRefreshTrigger}
       />
+
+      <QuickCreateCardModal isOpen={quickCreateOpen} onClose={() => setQuickCreateOpen(false)} />
     </div>
   );
 }
