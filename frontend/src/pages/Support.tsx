@@ -345,7 +345,14 @@ function chamadoToStage(c: ChamadoSuporte): StageKey {
   return 'a_desenvolver';
 }
 
-function patchForStage(
+/** Rótulo da etapa do quadro para um chamado. Exportado porque as métricas de
+ * suporte reaproveitam o `ChamadoDetailDialog` daqui e precisam alimentar a
+ * mesma prop (o texto vai pra timeline do ticket). */
+export function getKanbanStageLabel(c: ChamadoSuporte): string {
+  return STAGES.find((s) => s.key === chamadoToStage(c))?.label ?? c.status;
+}
+
+export function patchForStage(
   target: StageKey,
   chamado: ChamadoSuporte,
   assigneeName: string,
@@ -509,11 +516,6 @@ export default function Support() {
   }));
 
   const bumpTimeline = useCallback(() => setTimelineRefreshNonce((n) => n + 1), []);
-
-  const getKanbanStageLabel = useCallback(
-    (c: ChamadoSuporte) => STAGES.find((s) => s.key === chamadoToStage(c))?.label ?? c.status,
-    [],
-  );
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
@@ -1024,7 +1026,7 @@ export default function Support() {
       await logSuporteChamadoChanges(before, updated, getKanbanStageLabel);
       bumpTimeline();
     },
-    [getKanbanStageLabel, bumpTimeline],
+    [bumpTimeline],
   );
 
   const handlePendenciaConfirm = useCallback(
@@ -1223,7 +1225,7 @@ export default function Support() {
         setConcludingTicketId(null);
       }
     },
-    [assigneeName, getKanbanStageLabel, bumpTimeline, load],
+    [assigneeName, bumpTimeline, load],
   );
 
   return (
@@ -2503,7 +2505,7 @@ function EmpresaField({ label, value }: { label: string; value: string }) {
   );
 }
 
-function ChamadoDetailDialog({
+export function ChamadoDetailDialog({
   chamado,
   open,
   onOpenChange,

@@ -14,12 +14,23 @@ import {
 import { Loader2, Headset, Trophy, Users, Layers, Tag, Target } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { FilterSelect } from '@/components/ui/filter-select';
 import { Input } from '@/components/ui/input';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { suporteService, catalogNome, type ChamadoSuporte } from '@/services/suporteService';
+import { suporteTimelineService } from '@/services/suporteTimelineService';
 import { userService, type User } from '@/services/userService';
+import {
+  ChamadoDetailDialog,
+  getKanbanStageLabel,
+  patchForStage,
+} from '@/pages/Support';
+import { useAuth } from '@/context/AuthContext';
+import { logSuporteChamadoChanges } from '@/lib/suporteTimelineLog';
+import { suporteResolucaoService } from '@/services/suporteResolucaoService';
 
 /** Cor da barra por cargo — mesma paleta do gráfico "Cards finalizados por
  * usuário" (Metrics.tsx). */
@@ -378,13 +389,21 @@ function ResponsavelCard({
   tickets,
   opcoes,
   infoDe,
+  resolvidoEmMap,
+  onAbrirCard,
 }: {
   tickets: ChamadoSuporte[];
   opcoes: Opcoes;
   infoDe: (nome: string) => UserInfo;
+  /** chamado.id → ISO da conclusão (timeline). Usado pra separar o modal em
+   * dentro/fora do prazo, igual à tabela de SLA. */
+  resolvidoEmMap: Record<number, string>;
+  /** Abre o card real do Suporte por cima, sem fechar esta lista. */
+  onAbrirCard: (t: ChamadoSuporte) => void;
 }) {
   const filtro = useTicketFilter(tickets, opcoes);
   const [sel, setSel] = useState<string | null>(null);
+  const [tab, setTab] = useState<'onTime' | 'late' | 'sem'>('onTime');
   const rows = useMemo(
     () =>
       rankBy(filtro.filtrados, (t) => t.responsavel_solucao).map((r) => {
@@ -408,6 +427,18 @@ function ResponsavelCard({
         : [],
     [sel, filtro.filtrados],
   );
+  // Mesmas abas da tabela de SLA. `semMedicao` mantém o total do modal igual
+  // ao número da barra (o gráfico conta todo ticket com responsável, inclusive
+  // os que ainda não foram resolvidos).
+  const grupos = useMemo(() => agruparPorSla(ticketsSel, resolvidoEmMap), [ticketsSel, resolvidoEmMap]);
+  const abrirResponsavel = (nome: string) => {
+    const g = agruparPorSla(
+      filtro.filtrados.filter((t) => (t.responsavel_solucao ?? '').trim() === nome),
+      resolvidoEmMap,
+    );
+    setTab(g.onTime.length ? 'onTime' : g.late.length ? 'late' : 'sem');
+    setSel(nome);
+  };
 
   return (
     <Card>
@@ -490,8 +521,7 @@ function ResponsavelCard({
                   radius={[0, 4, 4, 0]}
                   cursor="pointer"
                   onClick={((data: { name?: string }) => {
-                    const nome = data?.name ?? null;
-                    setSel(nome);
+                    if (data?.name) abrirResponsavel(data.name);
                   }) as never}
                 >
                   {chartData.map((row) => (
@@ -513,7 +543,7 @@ function ResponsavelCard({
         }}
         containerClassName="max-w-2xl"
       >
-        <DialogContent onClose={() => setSel(null)}>
+        <DialogContent onClose={() => setSel(null)} className="flex max-h-[90vh] flex-col overflow-hidden">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Trophy className="h-5 w-5" />
@@ -521,6 +551,16 @@ function ResponsavelCard({
             </DialogTitle>
             <p className="text-sm text-[var(--color-muted-foreground)]">
               {ticketsSel.length} ticket(s) — {filtro.label}
+              {grupos.onTime.length + grupos.late.length > 0 && (
+                <>
+                  {' '}
+                  · {grupos.onTime.length} de {grupos.onTime.length + grupos.late.length} no prazo (
+                  {Math.round(
+                    (grupos.onTime.length / (grupos.onTime.length + grupos.late.length)) * 100,
+                  )}
+                  %)
+                </>
+              )}
             </p>
           </DialogHeader>
 
@@ -529,33 +569,96 @@ function ResponsavelCard({
               Nenhum ticket deste responsável no período filtrado.
             </p>
           ) : (
-            <ul className="mt-4 divide-y divide-[var(--color-border)]">
-              {ticketsSel.map((t) => {
-                const d = ticketDate(t);
-                return (
-                  <li key={t.id} className="py-3">
-                    <div className="flex items-start justify-between gap-3">
-                      <span className="text-sm font-medium text-[var(--color-foreground)]">
-                        #{t.id} · {catalogNome(t.tipo)}
-                      </span>
-                      <span className="shrink-0 text-xs text-[var(--color-muted-foreground)]">
-                        {d ? d.toLocaleDateString('pt-BR') : '—'}
-                      </span>
-                    </div>
-                    <div className="mt-0.5 text-xs text-[var(--color-muted-foreground)]">
-                      {catalogNome(t.item)} — {catalogNome(t.motivo)}
-                    </div>
-                    {t.descricao && (
-                      <p className="mt-1 text-xs text-[var(--color-foreground)]/80">{t.descricao}</p>
+            <div className="mt-2 flex min-h-0 flex-1 flex-col gap-0">
+              <div className="flex gap-[8px] border-b border-[var(--color-border)]">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  disabled={grupos.onTime.length === 0}
+                  onClick={() => setTab('onTime')}
+                  className={cn(
+                    'h-auto rounded-none border-b-2 border-transparent px-[16px] py-[8px]',
+                    tab === 'onTime'
+                      ? 'border-[var(--color-primary)] font-semibold text-[var(--color-primary)]'
+                      : 'text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]',
+                  )}
+                >
+                  No prazo ({grupos.onTime.length})
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  disabled={grupos.late.length === 0}
+                  onClick={() => setTab('late')}
+                  className={cn(
+                    'h-auto rounded-none border-b-2 border-transparent px-[16px] py-[8px]',
+                    tab === 'late'
+                      ? 'border-[var(--color-primary)] font-semibold text-[var(--color-primary)]'
+                      : 'text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]',
+                  )}
+                >
+                  Fora do prazo ({grupos.late.length})
+                </Button>
+                {grupos.semMedicao.length > 0 && (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    onClick={() => setTab('sem')}
+                    title="Tickets ainda não resolvidos ou sem data de conclusão registrada"
+                    className={cn(
+                      'h-auto rounded-none border-b-2 border-transparent px-[16px] py-[8px]',
+                      tab === 'sem'
+                        ? 'border-[var(--color-primary)] font-semibold text-[var(--color-primary)]'
+                        : 'text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]',
                     )}
-                    <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px] text-[var(--color-muted-foreground)]">
-                      <span>Solicitante: {t.usuario_nome}</span>
-                      <span>Status: {t.status}</span>
-                    </div>
-                  </li>
-                );
-              })}
-            </ul>
+                  >
+                    Sem medição ({grupos.semMedicao.length})
+                  </Button>
+                )}
+              </div>
+              <div className="min-h-0 max-h-[min(60vh,520px)] flex-1 overflow-y-auto pr-1 pt-3">
+                {tab === 'sem' ? (
+                  grupos.semMedicao.length > 0 ? (
+                    <ul className="space-y-2">
+                      {grupos.semMedicao.map((t) => (
+                        <SlaTicketRow
+                          key={t.id}
+                          ticket={t}
+                          medida={null}
+                          onSelect={onAbrirCard}
+                        />
+                      ))}
+                    </ul>
+                  ) : (
+                    <p className="text-sm text-[var(--color-muted-foreground)]">
+                      Nenhum ticket sem medição neste filtro.
+                    </p>
+                  )
+                ) : (tab === 'onTime' ? grupos.onTime : grupos.late).length > 0 ? (
+                  <ul className="space-y-2">
+                    {(tab === 'onTime' ? grupos.onTime : grupos.late).map((item) => (
+                      <SlaTicketRow
+                        key={item.ticket.id}
+                        ticket={item.ticket}
+                        medida={item}
+                        onSelect={onAbrirCard}
+                      />
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="text-sm text-[var(--color-muted-foreground)]">
+                    {tab === 'onTime'
+                      ? 'Nenhum ticket no prazo neste filtro.'
+                      : 'Nenhum ticket fora do prazo neste filtro.'}
+                  </p>
+                )}
+              </div>
+              <DialogFooter className="mt-0 shrink-0 border-t border-[var(--color-border)] pt-4">
+                <Button type="button" variant="outline" onClick={() => setSel(null)}>
+                  Fechar
+                </Button>
+              </DialogFooter>
+            </div>
           )}
         </DialogContent>
       </Dialog>
@@ -566,6 +669,165 @@ function ResponsavelCard({
 /** SLA de resolução dos tickets: 24h entre a abertura e a resolução. */
 const SLA_HORAS = 24;
 
+/** Ticket já medido: guarda as duas pontas e o tempo, pra listar no modal
+ * sem recalcular. `resolucao` vem da timeline (nunca de data_atualizacao). */
+type SlaTicket = {
+  ticket: ChamadoSuporte;
+  abertura: Date;
+  resolucao: Date;
+  horas: number;
+};
+
+type SlaLinha = {
+  total: number;
+  onTime: number;
+  late: number;
+  onTimeTickets: SlaTicket[];
+  lateTickets: SlaTicket[];
+};
+
+/** Mede um ticket: abertura → conclusão (data da timeline). Retorna null
+ * quando não dá pra medir — não resolvido, sem abertura, ou sem evento de
+ * conclusão registrado. Fonte ÚNICA da medição: as duas telas (tabela de SLA
+ * e modal do gráfico de responsáveis) usam esta função pra não divergirem. */
+function medirSla(t: ChamadoSuporte, resolvidoEmMap: Record<number, string>): SlaTicket | null {
+  if (t.status !== 'Resolvido') return null;
+  const iso = resolvidoEmMap[t.id];
+  if (!iso || !t.data_abertura) return null;
+  const abertura = new Date(t.data_abertura);
+  const resolucao = new Date(iso);
+  if (Number.isNaN(abertura.getTime()) || Number.isNaN(resolucao.getTime())) return null;
+  return {
+    ticket: t,
+    abertura,
+    resolucao,
+    horas: (resolucao.getTime() - abertura.getTime()) / 3_600_000,
+  };
+}
+
+/** Separa uma lista de tickets nas abas do modal. `semMedicao` existe pra o
+ * total do modal bater com o número mostrado no gráfico/tabela. */
+function agruparPorSla(tickets: ChamadoSuporte[], resolvidoEmMap: Record<number, string>) {
+  const onTime: SlaTicket[] = [];
+  const late: SlaTicket[] = [];
+  const semMedicao: ChamadoSuporte[] = [];
+  for (const t of tickets) {
+    const medida = medirSla(t, resolvidoEmMap);
+    if (!medida) semMedicao.push(t);
+    else if (medida.horas <= SLA_HORAS) onTime.push(medida);
+    else late.push(medida);
+  }
+  const recentesPrimeiro = (a: SlaTicket, b: SlaTicket) => b.resolucao.getTime() - a.resolucao.getTime();
+  onTime.sort(recentesPrimeiro);
+  late.sort(recentesPrimeiro);
+  semMedicao.sort((a, b) => (b.data_abertura ?? '').localeCompare(a.data_abertura ?? ''));
+  return { onTime, late, semMedicao };
+}
+
+/** "3h12" / "2d 4h" — leitura rápida do tempo de resolução. */
+function formatDuracao(horas: number): string {
+  if (horas < 1) return `${Math.max(1, Math.round(horas * 60))}min`;
+  if (horas < 24) {
+    const h = Math.floor(horas);
+    const m = Math.round((horas - h) * 60);
+    return m ? `${h}h${String(m).padStart(2, '0')}` : `${h}h`;
+  }
+  const d = Math.floor(horas / 24);
+  const h = Math.round(horas % 24);
+  return h ? `${d}d ${h}h` : `${d}d`;
+}
+
+function formatDataHora(d: Date): string {
+  return d.toLocaleString('pt-BR', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+/** Linha de ticket no modal de SLA — espelha o MetricsDeliveredCardRow da
+ * página de Métricas (mesmo layout de badge + grade de datas). A variante sai
+ * da própria medição: badge e grupo nunca podem divergir. `medida = null` é o
+ * ticket que não dá pra medir (não resolvido ou sem data de conclusão). */
+function SlaTicketRow({
+  ticket: t,
+  medida,
+  onSelect,
+}: {
+  ticket: ChamadoSuporte;
+  medida: SlaTicket | null;
+  /** Abre o card real no quadro de Suporte. */
+  onSelect: (ticket: ChamadoSuporte) => void;
+}) {
+  const variant = medida ? (medida.horas <= SLA_HORAS ? 'onTime' : 'late') : 'sem';
+  const aberturaTxt = t.data_abertura ? formatDataHora(new Date(t.data_abertura)) : '—';
+  return (
+    <li>
+      <button
+        type="button"
+        onClick={() => onSelect(t)}
+        title="Abrir este ticket no quadro de Suporte"
+        className="w-full rounded-md border border-[var(--color-border)] bg-[var(--color-card)] p-3 text-left text-sm transition-colors hover:bg-[var(--color-accent)]"
+      >
+        <div className="flex flex-wrap items-start justify-between gap-2">
+          <span className="font-medium text-[var(--color-foreground)]">
+            #{t.id} · {catalogNome(t.item)} — {catalogNome(t.motivo)}
+          </span>
+          {variant === 'onTime' ? (
+            <Badge className="shrink-0 border-green-600/40 bg-green-500/15 text-green-800 dark:text-green-400">
+              No prazo · {formatDuracao(medida!.horas)}
+            </Badge>
+          ) : variant === 'late' ? (
+            <Badge className="shrink-0 border-red-600/40 bg-red-500/15 text-red-800 dark:text-red-400">
+              Fora do prazo · {formatDuracao(medida!.horas)}
+            </Badge>
+          ) : (
+            <Badge variant="secondary" className="shrink-0">
+              {t.status === 'Resolvido' ? 'Sem data de conclusão' : t.status}
+            </Badge>
+          )}
+        </div>
+        <p className="mt-1 text-xs text-[var(--color-muted-foreground)]">
+          {catalogNome(t.tipo)}
+          {t.usuario_nome ? ` · Solicitante: ${t.usuario_nome}` : ''}
+        </p>
+        <dl className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-xs sm:grid-cols-3">
+          <div>
+            <dt className="text-[var(--color-muted-foreground)]">Aberto em</dt>
+            <dd className="font-medium text-[var(--color-foreground)]">{aberturaTxt}</dd>
+          </div>
+          <div>
+            <dt className="text-[var(--color-muted-foreground)]">Concluído em</dt>
+            <dd className="font-medium text-[var(--color-foreground)]">
+              {medida ? formatDataHora(medida.resolucao) : '—'}
+            </dd>
+          </div>
+          <div>
+            <dt className="text-[var(--color-muted-foreground)]">Tempo até a conclusão</dt>
+            <dd
+              className={cn(
+                'font-medium',
+                variant === 'late' ? 'text-[var(--color-destructive)]' : 'text-[var(--color-foreground)]',
+              )}
+            >
+              {medida ? formatDuracao(medida.horas) : '—'}
+            </dd>
+          </div>
+        </dl>
+        {!medida && t.status === 'Resolvido' && (
+          <p className="mt-2 text-xs text-[var(--color-warning,#b45309)]">
+            Sem registro de mudança de etapa no quadro do BWA — fora do cálculo de SLA.
+          </p>
+        )}
+        {t.descricao && (
+          <p className="mt-2 line-clamp-2 text-xs text-[var(--color-foreground)]/80">{t.descricao}</p>
+        )}
+      </button>
+    </li>
+  );
+}
 /** Tabela de consistência de SLA (mesmo layout da "Consistência de entrega" dos
  * projetos/cards), por responsável pela solução. Considera apenas tickets
  * resolvidos e classifica dentro/fora do prazo de 24h. */
@@ -573,45 +835,79 @@ function TabelaSlaSuporte({
   tickets,
   opcoes,
   infoDe,
+  resolvidoEmMap,
+  erroResolvidoEm,
+  onAbrirCard,
 }: {
   tickets: ChamadoSuporte[];
   opcoes: Opcoes;
   infoDe: (nome: string) => UserInfo;
+  /** chamado.id → ISO da última troca de etapa (timeline local). Fonte
+   * confiável de "quando foi resolvido"; `data_atualizacao` é auto_now e
+   * pode ser reescrito por toques sem relação com a conclusão. */
+  resolvidoEmMap: Record<number, string>;
+  /** true = não foi possível carregar as datas de conclusão. Sem elas o SLA
+   * não é calculável — mostramos o aviso em vez de números incorretos. */
+  erroResolvidoEm: boolean;
+  /** Abre o card real do Suporte por cima, sem fechar esta lista. */
+  onAbrirCard: (t: ChamadoSuporte) => void;
 }) {
   const filtro = useTicketFilter(tickets, opcoes);
-  const linhas = useMemo(() => {
-    const map = new Map<string, { total: number; onTime: number; late: number }>();
+  /** Responsável selecionado (clique na linha) → abre o modal com os tickets. */
+  const [sel, setSel] = useState<string | null>(null);
+  const [tab, setTab] = useState<'onTime' | 'late'>('onTime');
+  const { linhas, semDataConclusao } = useMemo(() => {
+    const map = new Map<string, SlaLinha>();
+    let semData = 0;
     for (const t of filtro.filtrados) {
       if (t.status !== 'Resolvido') continue;
       const nome = (t.responsavel_solucao ?? '').trim();
       if (!nome) continue;
-      const abertura = t.data_abertura ? new Date(t.data_abertura) : null;
-      const resolucao = t.data_atualizacao ? new Date(t.data_atualizacao) : null;
-      if (!abertura || !resolucao || Number.isNaN(abertura.getTime()) || Number.isNaN(resolucao.getTime())) {
+      // Só a timeline (evento real de troca pra etapa Concluído) conta pro
+      // SLA. `data_atualizacao` NÃO é usado nem como fallback — é auto_now e
+      // pode ser reescrito por toques sem relação com a conclusão (essa era
+      // a causa do bug: um card resolvido dia 03 aparecia "atualizado" dia
+      // 11 sem nenhuma mudança de etapa real). Ticket sem esse evento
+      // registrado fica de fora do cálculo em vez de entrar com data errada.
+      const item = medirSla(t, resolvidoEmMap);
+      if (!item) {
+        semData += 1;
         continue;
       }
-      const horas = (resolucao.getTime() - abertura.getTime()) / 3_600_000;
-      const rec = map.get(nome) ?? { total: 0, onTime: 0, late: 0 };
+      const rec = map.get(nome) ?? { total: 0, onTime: 0, late: 0, onTimeTickets: [], lateTickets: [] };
       rec.total += 1;
-      if (horas <= SLA_HORAS) rec.onTime += 1;
-      else rec.late += 1;
+      if (item.horas <= SLA_HORAS) {
+        rec.onTime += 1;
+        rec.onTimeTickets.push(item);
+      } else {
+        rec.late += 1;
+        rec.lateTickets.push(item);
+      }
       map.set(nome, rec);
     }
-    return [...map.entries()]
+    // Mais recentes primeiro dentro de cada aba do modal.
+    const porConclusaoDesc = (a: SlaTicket, b: SlaTicket) => b.resolucao.getTime() - a.resolucao.getTime();
+    const linhas = [...map.entries()]
       .map(([nome, r]) => ({
         nome,
         ...r,
+        onTimeTickets: [...r.onTimeTickets].sort(porConclusaoDesc),
+        lateTickets: [...r.lateTickets].sort(porConclusaoDesc),
         pct: r.total ? Math.round((r.onTime / r.total) * 100) : 0,
         foto: infoDe(nome).foto,
       }))
       .sort(
         (a, b) => b.pct - a.pct || b.total - a.total || a.nome.localeCompare(b.nome, 'pt-BR'),
       );
-  }, [filtro.filtrados, infoDe]);
+    return { linhas, semDataConclusao: semData };
+  }, [filtro.filtrados, infoDe, resolvidoEmMap]);
 
   const totalResolvidos = linhas.reduce((s, l) => s + l.total, 0);
   const totalOnTime = linhas.reduce((s, l) => s + l.onTime, 0);
   const pctGeral = totalResolvidos ? Math.round((totalOnTime / totalResolvidos) * 100) : 0;
+  // Linha do responsável aberto no modal. Derivada (não duplicada em estado)
+  // pra acompanhar sozinha a troca de filtro de período.
+  const selLinha = useMemo(() => linhas.find((l) => l.nome === sel) ?? null, [linhas, sel]);
 
   return (
     <Card>
@@ -621,8 +917,8 @@ function TabelaSlaSuporte({
           Consistência de SLA (24h)
         </CardTitle>
         <CardDescription>
-          Tickets resolvidos dentro do prazo de {SLA_HORAS}h (da abertura até a resolução), por
-          responsável — {filtro.label}.
+          Tickets resolvidos dentro do prazo de {SLA_HORAS}h (da abertura até a data em que o
+          card foi movido pra etapa Concluído), por responsável — {filtro.label}.
           {totalResolvidos > 0 && (
             <>
               {' '}
@@ -630,11 +926,27 @@ function TabelaSlaSuporte({
               resolvidos no prazo (<strong>{pctGeral}%</strong>).
             </>
           )}
+          {!erroResolvidoEm && semDataConclusao > 0 && (
+            <>
+              {' '}
+              <span className="text-[var(--color-warning,#b45309)]">
+                {semDataConclusao} ticket{semDataConclusao > 1 ? 's' : ''} resolvido
+                {semDataConclusao > 1 ? 's' : ''} sem data de conclusão registrada — fora deste
+                cálculo (o card nunca teve a etapa alterada pelo quadro do BWA).
+              </span>
+            </>
+          )}
         </CardDescription>
         {filtro.ui}
       </CardHeader>
       <CardContent>
-        {linhas.length === 0 ? (
+        {erroResolvidoEm ? (
+          <p className="py-6 text-center text-sm text-[var(--color-destructive)]">
+            Não foi possível carregar as datas de conclusão dos tickets. O SLA depende delas para
+            ser calculado corretamente, então preferimos não exibir números do que exibir errado.
+            Recarregue a página; se persistir, avise o time de tecnologia.
+          </p>
+        ) : linhas.length === 0 ? (
           <p className="py-6 text-center text-sm text-[var(--color-muted-foreground)]">
             Nenhum ticket resolvido no período.
           </p>
@@ -696,8 +1008,30 @@ function TabelaSlaSuporte({
                     ) : (
                       <span className="text-[var(--color-foreground)]">{rank}</span>
                     );
+                  const abrir = () => {
+                    if (row.total === 0) return;
+                    // Abre já na aba que tem conteúdo (se só houver atrasados,
+                    // não faz sentido cair numa aba vazia).
+                    setTab(row.onTime > 0 ? 'onTime' : 'late');
+                    setSel(row.nome);
+                  };
                   return (
-                    <tr key={row.nome} className={`${rowBg} border-b border-[var(--color-border)]`}>
+                    <tr
+                      key={row.nome}
+                      role={row.total > 0 ? 'button' : undefined}
+                      tabIndex={row.total > 0 ? 0 : undefined}
+                      title={row.total > 0 ? 'Ver tickets deste responsável' : undefined}
+                      className={`${rowBg} border-b border-[var(--color-border)]${
+                        row.total > 0 ? ' cursor-pointer hover:opacity-90' : ''
+                      }`}
+                      onClick={abrir}
+                      onKeyDown={(e) => {
+                        if (row.total > 0 && (e.key === 'Enter' || e.key === ' ')) {
+                          e.preventDefault();
+                          abrir();
+                        }
+                      }}
+                    >
                       <td className="w-0 whitespace-nowrap border-r border-[var(--color-border)] p-3">
                         <div className="flex justify-center">{topCell}</div>
                       </td>
@@ -728,6 +1062,88 @@ function TabelaSlaSuporte({
           </div>
         )}
       </CardContent>
+
+      {/* Clique numa linha → tickets do responsável, separados por dentro/fora
+          do prazo (mesmas abas do modal "Cards entregues" de Métricas). */}
+      <Dialog
+        open={selLinha != null}
+        onOpenChange={(o) => {
+          if (!o) setSel(null);
+        }}
+        containerClassName="max-w-2xl"
+      >
+        <DialogContent onClose={() => setSel(null)} className="flex max-h-[90vh] flex-col overflow-hidden">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Target className="h-5 w-5" />
+              Tickets resolvidos
+            </DialogTitle>
+            <p className="text-sm text-[var(--color-muted-foreground)]">
+              {selLinha ? `${selLinha.nome} · ${filtro.label}` : ''}
+              {selLinha ? ` · ${selLinha.onTime} de ${selLinha.total} no prazo (${selLinha.pct}%)` : ''}
+            </p>
+          </DialogHeader>
+          {selLinha && (
+            <div className="mt-2 flex min-h-0 flex-1 flex-col gap-0">
+              <div className="flex gap-[8px] border-b border-[var(--color-border)]">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  disabled={selLinha.onTimeTickets.length === 0}
+                  onClick={() => setTab('onTime')}
+                  className={cn(
+                    'h-auto rounded-none border-b-2 border-transparent px-[16px] py-[8px]',
+                    tab === 'onTime'
+                      ? 'border-[var(--color-primary)] font-semibold text-[var(--color-primary)]'
+                      : 'text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]',
+                  )}
+                >
+                  No prazo ({selLinha.onTimeTickets.length})
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  disabled={selLinha.lateTickets.length === 0}
+                  onClick={() => setTab('late')}
+                  className={cn(
+                    'h-auto rounded-none border-b-2 border-transparent px-[16px] py-[8px]',
+                    tab === 'late'
+                      ? 'border-[var(--color-primary)] font-semibold text-[var(--color-primary)]'
+                      : 'text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]',
+                  )}
+                >
+                  Fora do prazo ({selLinha.lateTickets.length})
+                </Button>
+              </div>
+              <div className="min-h-0 max-h-[min(60vh,520px)] flex-1 overflow-y-auto pr-1 pt-3">
+                {(tab === 'onTime' ? selLinha.onTimeTickets : selLinha.lateTickets).length > 0 ? (
+                  <ul className="space-y-2">
+                    {(tab === 'onTime' ? selLinha.onTimeTickets : selLinha.lateTickets).map((item) => (
+                      <SlaTicketRow
+                        key={item.ticket.id}
+                        ticket={item.ticket}
+                        medida={item}
+                        onSelect={onAbrirCard}
+                      />
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="text-sm text-[var(--color-muted-foreground)]">
+                    {tab === 'onTime'
+                      ? 'Nenhum ticket no prazo neste filtro.'
+                      : 'Nenhum ticket fora do prazo neste filtro.'}
+                  </p>
+                )}
+              </div>
+              <DialogFooter className="mt-0 shrink-0 border-t border-[var(--color-border)] pt-4">
+                <Button type="button" variant="outline" onClick={() => setSel(null)}>
+                  Fechar
+                </Button>
+              </DialogFooter>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </Card>
   );
 }
@@ -862,10 +1278,71 @@ function BarRankCard({
 }
 
 export function MetricasSuporte() {
+  const { user } = useAuth();
   const [tickets, setTickets] = useState<ChamadoSuporte[]>([]);
   const [users, setUsers] = useState<User[]>([]);
+  const [resolvidoEmMap, setResolvidoEmMap] = useState<Record<number, string>>({});
+  const [erroResolvidoEm, setErroResolvidoEm] = useState(false);
   const [loading, setLoading] = useState(true);
   const [erro, setErro] = useState<string | null>(null);
+
+  // ---- Card real do Suporte, aberto por cima das listas -------------------
+  // Reaproveita o ChamadoDetailDialog do quadro (timeline, anexos, pegar card,
+  // concluir) em vez de reconstruir o detalhe aqui. Fica no componente raiz
+  // pra os dois cards de métricas compartilharem a mesma fiação, e as listas
+  // continuam montadas atrás — fechar o card devolve o usuário à lista.
+  const [detailChamado, setDetailChamado] = useState<ChamadoSuporte | null>(null);
+  const [timelineRefreshNonce, setTimelineRefreshNonce] = useState(0);
+  const [concludingTicketId, setConcludingTicketId] = useState<number | null>(null);
+  const assigneeName = user ? displayUserName(user as unknown as User) : '';
+  const bumpTimeline = useCallback(() => setTimelineRefreshNonce((n) => n + 1), []);
+
+  /** Reflete no estado local a alteração feita dentro do card (responsável,
+   * conclusão), pra tabela e gráficos acompanharem sem recarregar tudo. */
+  const aplicarTicketAtualizado = useCallback((c: ChamadoSuporte) => {
+    setTickets((prev) => prev.map((x) => (x.id === c.id ? c : x)));
+    setDetailChamado((d) => (d?.id === c.id ? c : d));
+  }, []);
+
+  /** Mesma sequência do quadro de Suporte (handleConcluirTicketNoCard):
+   * conclui no portal → registra na timeline → salva o link no Django local. */
+  const concluirTicket = useCallback(
+    async (
+      chamado: ChamadoSuporte,
+      notasResolucao: string,
+      extras?: { link?: string | null; arquivo?: File | null },
+    ) => {
+      const noteTrim = notasResolucao.trim();
+      if (!noteTrim) return;
+      setConcludingTicketId(chamado.id);
+      setErro(null);
+      const link = extras?.link?.trim() || null;
+      const arquivo = extras?.arquivo ?? null;
+      try {
+        const patch = patchForStage('finalizado', chamado, assigneeName, noteTrim);
+        const updated = await suporteService.patchResolucao(chamado.id, patch, arquivo);
+        aplicarTicketAtualizado(updated);
+        await logSuporteChamadoChanges(chamado, updated, getKanbanStageLabel);
+        bumpTimeline();
+        // A conclusão vira um evento de etapa na timeline → o SLA deste ticket
+        // passa a ser mensurável; sem isso ele cairia em "Sem medição".
+        setResolvidoEmMap((prev) => ({ ...prev, [chamado.id]: new Date().toISOString() }));
+        if (link) {
+          try {
+            await suporteResolucaoService.save({ chamado_id: chamado.id, link, arquivo: null });
+            bumpTimeline();
+          } catch {
+            setErro('Ticket concluído, mas não foi possível salvar o link de resolução.');
+          }
+        }
+      } catch (err) {
+        setErro(err instanceof Error ? err.message : 'Erro ao concluir ticket.');
+      } finally {
+        setConcludingTicketId(null);
+      }
+    },
+    [assigneeName, aplicarTicketAtualizado, bumpTimeline],
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -878,6 +1355,19 @@ export function MetricasSuporte() {
         if (cancelled) return;
         setTickets(list);
         setUsers(us);
+        // Datas reais de conclusão (timeline local) — base do cálculo de SLA.
+        // Se isto falhar, o SLA NÃO cai pra data_atualizacao (era o bug):
+        // sinalizamos o erro e a tabela avisa em vez de mostrar número errado.
+        void suporteTimelineService
+          .getResolvidoEmMap()
+          .then((map) => {
+            if (cancelled) return;
+            setResolvidoEmMap(map);
+            setErroResolvidoEm(false);
+          })
+          .catch(() => {
+            if (!cancelled) setErroResolvidoEm(true);
+          });
       })
       .catch(() => {
         if (!cancelled) setErro('Não foi possível carregar os tickets de suporte.');
@@ -983,9 +1473,22 @@ export function MetricasSuporte() {
       </div>
 
       {/* Um gráfico por linha, na ordem pedida */}
-      <TabelaSlaSuporte tickets={tickets} opcoes={opcoes} infoDe={infoDe} />
+      <TabelaSlaSuporte
+        tickets={tickets}
+        opcoes={opcoes}
+        infoDe={infoDe}
+        resolvidoEmMap={resolvidoEmMap}
+        erroResolvidoEm={erroResolvidoEm}
+        onAbrirCard={setDetailChamado}
+      />
 
-      <ResponsavelCard tickets={tickets} opcoes={opcoes} infoDe={infoDe} />
+      <ResponsavelCard
+        tickets={tickets}
+        opcoes={opcoes}
+        infoDe={infoDe}
+        resolvidoEmMap={resolvidoEmMap}
+        onAbrirCard={setDetailChamado}
+      />
 
       <GraficoAberturaPorDia tickets={tickets} opcoes={opcoes} />
 
@@ -1011,6 +1514,23 @@ export function MetricasSuporte() {
         tickets={tickets}
         opcoes={opcoes}
         keyFn={(t) => t.usuario_nome}
+      />
+
+      {/* Card real do Suporte — abre por cima das listas, que continuam
+          montadas atrás; fechar aqui devolve o usuário à lista onde estava. */}
+      <ChamadoDetailDialog
+        chamado={detailChamado}
+        open={!!detailChamado}
+        onOpenChange={(o) => !o && setDetailChamado(null)}
+        assigneeName={assigneeName}
+        users={users}
+        getKanbanStageLabel={getKanbanStageLabel}
+        timelineRefreshNonce={timelineRefreshNonce}
+        bumpTimeline={bumpTimeline}
+        concludingTicketId={concludingTicketId}
+        onConcluirTicket={concluirTicket}
+        onUpdated={aplicarTicketAtualizado}
+        onError={setErro}
       />
     </div>
   );

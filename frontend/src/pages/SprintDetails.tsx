@@ -79,9 +79,13 @@ import {
   Download,
   Filter,
   Trophy,
+  ListChecks,
+  Shield,
 } from 'lucide-react';
 import { calcularDiasTotais, calcularDiasUteis, formatDate, formatDateTime } from '@/lib/dateUtils';
 import { ATRASADO_STATUS_BADGE } from '@/lib/dueDateBadgeClasses';
+import { QuickCreateCardModal } from '@/components/QuickCreateCardModal';
+import { isAdminUser } from '@/lib/roles';
 import {
   fechamentoIsoToDatetimeLocal,
   datetimeLocalToFechamentoIso,
@@ -157,6 +161,8 @@ export default function SprintDetails() {
   const [sprint, setSprint] = useState<Sprint | null>(null);
   const [projects, setProjects] = useState<Project[]>([]);
   const [cards, setCards] = useState<CardType[]>([]);
+  // Atalhos rápidos (mesmos do Dashboard).
+  const [quickCreateOpen, setQuickCreateOpen] = useState(false);
 
   /** Invalida o cache SWR desta sprint + o cache de métricas globais.
    * Chamar SEMPRE que um card é criado/editado/movido/excluído (local ou
@@ -236,6 +242,9 @@ export default function SprintDetails() {
   // Filter state for projects
   const [projectStatusFilter, setProjectStatusFilter] = useState<string>('');
   const [projectDeveloperFilter, setProjectDeveloperFilter] = useState<string>('');
+  // "Meus Cards" (Atalhos Rápidos) aparece aceso/pressionado enquanto o
+  // filtro de responsável estiver no próprio usuário logado.
+  const meusCardsAtivo = !!user?.id && projectDeveloperFilter === String(user.id);
 
   // Deep-link `?dev=<id>` (Dashboard → "Meus Cards") — pré-filtra por responsável.
   useEffect(() => {
@@ -1496,19 +1505,6 @@ export default function SprintDetails() {
     sprintProjectIdsSet.has(String(c.projeto || '').trim()),
   );
   const visibleCardsForList = getFilteredAndSortedCards(sprintCardsForList);
-  const deliveredLateCount = sprintCardsForList.filter(
-    (card) =>
-      card.status === 'finalizado' &&
-      !!card.data_fim &&
-      new Date(card.data_fim).getTime() > new Date(sprint.fechamento_em).getTime(),
-  ).length;
-  const openLateCount = sprintCardsForList.filter(
-    (card) =>
-      card.status !== 'finalizado' &&
-      card.status !== 'inviabilizado' &&
-      !!card.data_fim &&
-      new Date(card.data_fim).getTime() < Date.now(),
-  ).length;
 
   const selectedColumnDefs = SPRINT_CARDS_COLUMN_DEFS.filter((c) => selectedColumnIds.includes(c.id));
   const selectedColumnDefsSafe = selectedColumnDefs;
@@ -1764,7 +1760,7 @@ export default function SprintDetails() {
               {responsibleRoleLabel ? (
                 <Badge
                   variant="secondary"
-                  className={`text-[10px] px-[6px] py-[2px] rounded-full ${responsibleUser ? getRoleColor(responsibleUser.role) : ''}`}
+                  className={`whitespace-nowrap text-[10px] px-[6px] py-[2px] rounded-full ${responsibleUser ? getRoleColor(responsibleUser.role) : ''}`}
                 >
                   {responsibleRoleLabel}
                 </Badge>
@@ -1844,14 +1840,6 @@ export default function SprintDetails() {
                 <Clock className="h-[14px] w-[14px]" />
                 {calcularDiasTotais(sprintInicioDiaParaCalendario(sprint), sprintFimDiaParaCalendario(sprint))} dias ({calcularDiasUteis(sprintInicioDiaParaCalendario(sprint), sprintFimDiaParaCalendario(sprint))} úteis)
               </span>
-              <div className="flex flex-col gap-[2px] shrink-0">
-                <Badge variant="outline" className="text-[11px] w-fit">
-                  Entregues atrasados: {deliveredLateCount}
-                </Badge>
-                <Badge variant="outline" className="text-[11px] w-fit">
-                  Abertos atrasados: {openLateCount}
-                </Badge>
-              </div>
             </div>
           </div>
         </div>
@@ -1875,17 +1863,69 @@ export default function SprintDetails() {
               )}
             </Button>
           )}
-          {sprint && isSprintEmAndamentoJanela(sprint) && (
-            <Button
-              variant="outline"
-              size="default"
-              onClick={() => navigate(ROUTES.sprintGerenciar)}
-              className="h-[40px]"
-            >
-              <FolderKanban className="mr-[8px] h-[16px] w-[16px]" />
-              Gerenciar Sprints
-            </Button>
-          )}
+          {/* Atalhos Rápidos — bloco idêntico ao do Dashboard (rótulo em cima,
+              botões numa linha abaixo), dimensionado só ao conteúdo (shrink-0),
+              no lugar onde antes ficava o botão avulso "Gerenciar Sprints". */}
+          <div className="shrink-0 rounded-lg border border-[var(--color-border)] bg-[var(--color-card)]/40 px-3 py-2.5">
+            <div className="text-[10px] uppercase tracking-wider font-medium text-[var(--color-muted-foreground)] mb-2">
+              Atalhos Rápidos
+            </div>
+            <div className="flex gap-2">
+              <Button
+                type="button"
+                variant="default"
+                onClick={() => setQuickCreateOpen(true)}
+                className="gap-2"
+              >
+                <Plus className="h-4 w-4" />
+                Criar Card
+              </Button>
+              <Button
+                type="button"
+                variant={meusCardsAtivo ? 'default' : 'outline'}
+                aria-pressed={meusCardsAtivo}
+                onClick={() => {
+                  // Já estamos nesta sprint — seta o filtro direto em vez de
+                  // navegar pra `?dev=<id>`: como a URL não muda (mesma
+                  // rota), o Router não gera nova location e o efeito que lê
+                  // o query param não dispara de novo. Isso deixava o botão
+                  // "morto" depois de limpar o filtro pela barra (que só
+                  // mexe no state, nunca na URL) e clicar de novo.
+                  // Toggle: clicar de novo com o filtro já ativo desliga.
+                  if (!user?.id) return;
+                  setProjectDeveloperFilter(meusCardsAtivo ? '' : String(user.id));
+                }}
+                disabled={!sprint}
+                title={!sprint ? 'Nenhuma sprint em andamento' : undefined}
+                className="gap-2"
+              >
+                <ListChecks className="h-4 w-4" />
+                Meus Cards
+              </Button>
+              {sprint && isSprintEmAndamentoJanela(sprint) && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => navigate(ROUTES.sprintGerenciar)}
+                  className="gap-2"
+                >
+                  <FolderKanban className="h-4 w-4" />
+                  Gerenciar Sprints
+                </Button>
+              )}
+              {isAdminUser(user) && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => navigate(ROUTES.administracao)}
+                  className="gap-2"
+                >
+                  <Shield className="h-4 w-4" />
+                  Administração
+                </Button>
+              )}
+            </div>
+          </div>
           {canCreate && sprint && !isSprintFinished(sprint) && (
             <>
               <Button
@@ -3488,6 +3528,8 @@ export default function SprintDetails() {
         onClose={() => setLogsModalOpen(false)}
         refreshTrigger={logsRefreshTrigger}
       />
+
+      <QuickCreateCardModal isOpen={quickCreateOpen} onClose={() => setQuickCreateOpen(false)} />
     </div>
   );
 }

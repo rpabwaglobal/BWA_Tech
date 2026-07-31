@@ -1842,7 +1842,7 @@ export default function Metrics() {
                                   onChange={(e) => handleToggleLeaderboardUser(String(u.id), e.target.checked)}
                                   onClick={(e) => e.stopPropagation()}
                                 />
-                                <Badge className={`shrink-0 w-[64px] ${getRoleBadgeColor(u.role)} justify-center text-xs`}>
+                                <Badge className={`shrink-0 w-[64px] ${getRoleBadgeColor(u.role)} justify-center whitespace-nowrap text-xs`}>
                                   {getRoleLabel(u.role)}
                                 </Badge>
                                 <span className="truncate">{getShortDisplayName(u)}</span>
@@ -2305,7 +2305,7 @@ export default function Metrics() {
                                     onChange={(e) => handleToggleOnTimeScopeUser(uid, e.target.checked)}
                                     onClick={(e) => e.stopPropagation()}
                                   />
-                                  <Badge className={`shrink-0 w-[64px] ${getRoleBadgeColor(u.role)} justify-center text-xs`}>
+                                  <Badge className={`shrink-0 w-[64px] ${getRoleBadgeColor(u.role)} justify-center whitespace-nowrap text-xs`}>
                                     {getRoleLabel(u.role)}
                                   </Badge>
                                   <span className="truncate">{getShortDisplayName(u)}</span>
@@ -2544,7 +2544,7 @@ export default function Metrics() {
                                   </AvatarFallback>
                                 </Avatar>
                                 {u.role ? (
-                                  <Badge className={`${getRoleColor(u.role)} w-[64px] shrink-0 justify-center text-[10px]`}>
+                                  <Badge className={`${getRoleColor(u.role)} w-[64px] shrink-0 justify-center whitespace-nowrap text-[10px]`}>
                                     {getRoleLabel(u.role)}
                                   </Badge>
                                 ) : (

@@ -39,7 +39,6 @@ import {
   ChevronUp,
   CheckCircle2,
   AlertCircle,
-  XCircle,
 } from 'lucide-react';
 import { calcularDiasTotais, calcularDiasUteis } from '@/lib/dateUtils';
 import {
@@ -743,7 +742,7 @@ export default function Sprints() {
                       </CardHeader>
                       <CardContent className="p-[24px] pt-0">
                         {/* Subcards de Estatísticas */}
-                        <div className="grid grid-cols-2 md:grid-cols-5 lg:grid-cols-6 gap-[16px]">
+                        <div className="grid grid-cols-2 md:grid-cols-4 gap-[16px]">
                           <div className="bg-[var(--color-muted)]/30 rounded-[8px] border border-[var(--color-border)] p-[16px]">
                             <div className="flex items-center gap-[8px] mb-[8px]">
                               <FolderKanban className="h-[16px] w-[16px] text-[var(--color-muted-foreground)]" />
@@ -779,28 +778,6 @@ export default function Sprints() {
                             <p className="text-2xl font-bold text-blue-600">
                               {stats.emAndamento}
                             </p>
-                          </div>
-                          <div className="bg-[var(--color-muted)]/30 rounded-[8px] border border-[var(--color-border)] p-[16px]">
-                            <div className="flex flex-col gap-[6px]">
-                              <div>
-                                <div className="flex items-center gap-[8px] mb-[2px]">
-                                  <XCircle className="h-[16px] w-[16px] text-red-600" />
-                                  <span className="text-xs text-[var(--color-muted-foreground)]">Entregues atrasados</span>
-                                </div>
-                                <p className="text-2xl font-bold text-red-600 leading-none">
-                                  {sprint.cards_entregues_atrasados ?? 0}
-                                </p>
-                              </div>
-                              <div>
-                                <div className="flex items-center gap-[8px] mb-[2px]">
-                                  <AlertCircle className="h-[16px] w-[16px] text-amber-600" />
-                                  <span className="text-xs text-[var(--color-muted-foreground)]">Abertos atrasados</span>
-                                </div>
-                                <p className="text-2xl font-bold text-amber-600 leading-none">
-                                  {sprint.cards_abertos_atrasados ?? 0}
-                                </p>
-                              </div>
-                            </div>
                           </div>
                         </div>
                       </CardContent>

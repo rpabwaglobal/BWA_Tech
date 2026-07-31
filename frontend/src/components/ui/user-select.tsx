@@ -149,7 +149,7 @@ export function UserSelect({ users, value, onChange, disabled = false, placehold
         <div className="flex items-center gap-2 flex-1 min-w-0">
           {selectedUser ? (
             <>
-              <Badge className={`${getRoleColor(selectedUser.role)} w-[64px] justify-center`}>
+              <Badge className={`${getRoleColor(selectedUser.role)} w-[64px] shrink-0 justify-center whitespace-nowrap`}>
                 {getRoleLabel(selectedUser.role)}
               </Badge>
               <span className="truncate">
@@ -209,7 +209,7 @@ export function UserSelect({ users, value, onChange, disabled = false, placehold
                       isSelected ? 'bg-[var(--color-accent)]' : ''
                     }`}
                   >
-                    <Badge className={`${getRoleColor(user.role)} w-[64px] justify-center`}>
+                    <Badge className={`${getRoleColor(user.role)} w-[64px] shrink-0 justify-center whitespace-nowrap`}>
                       {getRoleLabel(user.role)}
                     </Badge>
                     <span className="text-sm">

@@ -139,7 +139,7 @@ export function FilterSelect({
           ) : selectedOption ? (
             <>
               {selectedOption.role ? (
-                <Badge className={`${getRoleColor(selectedOption.role)} w-[64px] shrink-0 justify-center px-1 text-[10px]`}>
+                <Badge className={`${getRoleColor(selectedOption.role)} w-[64px] shrink-0 justify-center whitespace-nowrap px-1 text-[10px]`}>
                   {getRoleLabel(selectedOption.role)}
                 </Badge>
               ) : null}
@@ -210,7 +210,7 @@ export function FilterSelect({
                     ) : null}
                     {anyHasRole ? (
                       opt.role ? (
-                        <Badge className={`${getRoleColor(opt.role)} w-[64px] shrink-0 justify-center text-[10px]`}>
+                        <Badge className={`${getRoleColor(opt.role)} w-[64px] shrink-0 justify-center whitespace-nowrap text-[10px]`}>
                           {getRoleLabel(opt.role)}
                         </Badge>
                       ) : (

@@ -123,7 +123,7 @@ export default function People() {
                         <p className="truncate text-sm font-medium text-[var(--color-foreground)]">{displayName(u)}</p>
                         <p className="truncate text-xs text-[var(--color-muted-foreground)]">{u.email}</p>
                       </div>
-                      <Badge className="border shrink-0" style={chipStyle(getCargoColor(u.role))}>
+                      <Badge className="border shrink-0 whitespace-nowrap" style={chipStyle(getCargoColor(u.role))}>
                         {getCargoLabel(u.role) || u.role_display}
                       </Badge>
                     </div>

@@ -12,6 +12,7 @@ from .models import (
     ChamadoSuporteResolucao,
     ChamadoSuporteStatus,
     ChamadoSuporteTimeline,
+    ChamadoSuporteTimelineTipo,
     SuporteMotivo,
     SuporteTipo,
 )
@@ -352,6 +353,61 @@ class ChamadoSuporteTimelineViewSet(mixins.ListModelMixin, mixins.CreateModelMix
                 detail={'detail': 'Você não tem acesso a esse chamado.'},
             )
         serializer.save(usuario=self.request.user)
+
+    @action(detail=False, methods=['get'], url_path='resolvido-em')
+    def resolvido_em(self, request):
+        """Data em que cada chamado mudou de etapa pela última vez, segundo a
+        timeline local — sempre gravada no BWA (`ChamadoSuporteTimeline`),
+        mesmo quando o chamado em si vive no portal externo (modo proxy).
+
+        Existe porque `ChamadoSuporte.data_atualizacao` é `auto_now=True`:
+        reescrito em QUALQUER save (ex.: mover entre tabs, o proxy do portal
+        re-tocando o registro), sem relação com a conclusão de fato. A
+        timeline só ganha um evento `etapa_alterada` quando o usuário
+        realmente move o card no quadro (`logSuporteChamadoChanges` no
+        frontend) — por isso é a fonte confiável pra medir SLA.
+
+        GET → {"1": "2026-06-03T14:25:00-03:00", ...} (todos os acessíveis)
+        GET ?chamado_ids=1,2,3 → só esses. O parâmetro é OPCIONAL de propósito:
+        a tela de métricas tem centenas de tickets e mandar todos os ids na
+        query string estourava o limite prático de URL.
+
+        Escopo igual ao do `list`: privilegiado vê tudo; usuário comum só os
+        chamados dele (em modo proxy, com a tabela local vazia, o critério de
+        posse não se aplica — mesma semântica de `_user_can_access_chamado`).
+        Chamados sem nenhum evento de troca de etapa ficam de fora do mapa.
+        """
+        ids_param = (request.query_params.get('chamado_ids') or '').strip()
+        ids = None
+        if ids_param:
+            try:
+                ids = {int(x) for x in ids_param.split(',') if x.strip()}
+            except ValueError:
+                return Response(
+                    {'detail': 'chamado_ids deve ser uma lista de inteiros separados por vírgula.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+        qs = ChamadoSuporteTimeline.objects.filter(
+            tipo_evento=ChamadoSuporteTimelineTipo.ETAPA_ALTERADA)
+        if ids:
+            qs = qs.filter(chamado_id__in=ids)
+        if not _is_privileged(request.user):
+            # Versão em lote do `_user_can_access_chamado`: exclui só os
+            # chamados que existem localmente e pertencem a outra pessoa.
+            email = (request.user.email or '').strip().lower()
+            alheios = ChamadoSuporte.objects.all()
+            if email:
+                alheios = alheios.exclude(usuario_email__iexact=email)
+            alheios_ids = set(alheios.values_list('id', flat=True))
+            if alheios_ids:
+                qs = qs.exclude(chamado_id__in=alheios_ids)
+        qs = qs.order_by('chamado_id', '-data').values_list('chamado_id', 'data')
+        result = {}
+        for chamado_id, data in qs:
+            # Primeiro visto por chamado_id (após ORDER BY -data) = o mais recente.
+            if chamado_id not in result:
+                result[chamado_id] = data.isoformat()
+        return Response(result)
 
 
 class ChamadoSuporteResolucaoViewSet(viewsets.GenericViewSet):
