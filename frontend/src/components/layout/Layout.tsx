@@ -17,7 +17,7 @@ const pageTitlesExact: Record<string, string> = {
   [ROUTES.suporte]: 'Suporte',
   [ROUTES.diaGeek]: 'Geek Day',
   [ROUTES.configuracoes]: 'Configurações',
-  [ROUTES.administracao]: 'Administração',
+  [ROUTES.perfil]: 'Meu perfil',
   '/tree': 'Árvore de Projetos',
   '/suggestions': 'Sugestões',
 };
@@ -50,8 +50,6 @@ export default function Layout() {
       pageTitle = 'Geek Day';
     } else if (pathname.startsWith(ROUTES.configuracoes)) {
       pageTitle = 'Configurações';
-    } else if (pathname.startsWith(ROUTES.administracao)) {
-      pageTitle = 'Administração';
     } else {
       pageTitle = 'BWA Tech';
     }

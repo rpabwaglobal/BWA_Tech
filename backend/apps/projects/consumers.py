@@ -146,9 +146,17 @@ class SprintKanbanConsumer(AsyncWebsocketConsumer):
             await self.close(code=4002)
             return
 
-        if not await self._sprint_exists(sprint_id):
-            logger.warning('SprintKanbanWS: sprint %s não existe', sprint_id)
-            await self.close(code=4004)
+        # Entrar no grupo é receber TODA movimentação de card da sprint em tempo
+        # real, e isso não aparece em tela nenhuma — sem escopo, saber o id
+        # bastaria para acompanhar a operação de outro setor sem deixar rastro.
+        # Sprint inexistente cai no mesmo ramo (filtro vazio) e fecha com o mesmo
+        # código de propósito: separar os casos diria ao cliente quais ids existem.
+        if not await self._pode_ver_sprint(sprint_id):
+            logger.warning(
+                'SprintKanbanWS: sprint %s inacessível para %s',
+                sprint_id, self.user.username,
+            )
+            await self.close(code=4003)
             return
 
         self.group_name = f'sprint_{sprint_id}_kanban'
@@ -203,7 +211,15 @@ class SprintKanbanConsumer(AsyncWebsocketConsumer):
             return None
 
     @database_sync_to_async
-    def _sprint_exists(self, sprint_id: int) -> bool:
-        # Import local — evita ciclo de import em consumers.py
+    def _pode_ver_sprint(self, sprint_id: int) -> bool:
+        """A sprint existe E o escopo por setor do usuário a alcança?
+
+        Fail-open enquanto `SETOR_SCOPING_ENABLED` estiver False: `scope_sprints`
+        devolve o queryset intacto, então hoje isto recusa apenas sprint
+        inexistente — exatamente o que a checagem anterior fazia.
+        """
+        # Imports locais — evitam ciclo de import em consumers.py
+        from apps.accounts.scoping import scope_sprints
+
         from .models import Sprint
-        return Sprint.objects.filter(pk=sprint_id).exists()
+        return scope_sprints(Sprint.objects.filter(pk=sprint_id), self.user).exists()

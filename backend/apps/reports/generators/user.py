@@ -54,7 +54,7 @@ class Report(BaseReport):
         period_end = _parse_date(self.filters.get('period_end'))
 
         qs = (
-            Card.objects.select_related('projeto', 'projeto__sprint')
+            self.cards_visiveis().select_related('projeto', 'projeto__sprint')
             .filter(
                 responsavel=target,
                 projeto__arquivado=False,

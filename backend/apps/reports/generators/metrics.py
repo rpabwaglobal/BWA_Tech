@@ -78,7 +78,7 @@ class Report(BaseReport):
                 continue
 
         cards_qs = (
-            Card.objects.select_related('projeto', 'responsavel', 'projeto__sprint')
+            self.cards_visiveis().select_related('projeto', 'responsavel', 'projeto__sprint')
             .filter(projeto__arquivado=False, projeto__is_system=False)
         )
         if sprint_ids:
@@ -99,7 +99,7 @@ class Report(BaseReport):
         closed_cards = list(closed_qs)
         # Quando há sprints selecionadas, throughput mostra só elas;
         # senão, todas (ordem mais recente primeiro).
-        sprints_qs = Sprint.objects.all().order_by('-data_inicio')
+        sprints_qs = self.sprints_visiveis().all().order_by('-data_inicio')
         if sprint_ids:
             sprints_qs = sprints_qs.filter(id__in=sprint_ids)
         sprints = list(sprints_qs)
@@ -126,7 +126,7 @@ class Report(BaseReport):
                         f'{c.responsavel.first_name} {c.responsavel.last_name}'.strip()
                         or c.responsavel.username
                     ),
-                    'role': c.responsavel.role if c.responsavel else '',
+                    'role': c.responsavel.get_role_display() if c.responsavel else '',
                     'count': 0,
                 },
             )
@@ -186,7 +186,7 @@ class Report(BaseReport):
                         f'{c.responsavel.first_name} {c.responsavel.last_name}'.strip()
                         or c.responsavel.username
                     ),
-                    'role': c.responsavel.role if c.responsavel else '',
+                    'role': c.responsavel.get_role_display() if c.responsavel else '',
                     **_new_bucket(),
                 })
                 accumulate_card_dev_time(u, c)
@@ -294,7 +294,7 @@ class Report(BaseReport):
             except (TypeError, ValueError):
                 pass
         if ids:
-            names = list(Sprint.objects.filter(id__in=ids).values_list('nome', flat=True))
+            names = list(self.sprints_visiveis().filter(id__in=ids).values_list('nome', flat=True))
             label = ', '.join(names) if names else ', '.join(f'#{i}' for i in ids)
             out.append(FilterDisplay('Sprint(s)', label))
         return out

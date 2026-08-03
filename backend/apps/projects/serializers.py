@@ -33,8 +33,13 @@ from .models import (
 )
 from apps.accounts.serializers import UserSerializer
 from apps.accounts.profile_picture_utils import get_profile_picture_url
+# Import de módulo (não de app): `apps.accounts.scoping` só importa os models de
+# projects DENTRO das funções, então não há ciclo de import aqui.
+from apps.accounts.scoping import (cards_editaveis, projetos_editaveis,
+                                   scope_cards, scope_projects, scope_sprints,
+                                   scope_users, sprints_editaveis)
 from .dev_time_format import format_minutos_uteis, format_segundos_corridos
-from .services import outra_sprint_em_andamento, sprint_esta_em_andamento_janela
+from .services import sprint_conflitante_na_janela
 
 
 class DevTimeFormattedMixin(serializers.Serializer):
@@ -62,6 +67,120 @@ def format_user_name(user):
     return user.username
 
 
+def _checar_destino_do_setor(serializer, valor, campo_id, scope_fn, editaveis_fn,
+                             msg_fora_do_escopo, msg_somente_leitura=None):
+    """Gate de setor de um campo GRAVÁVEL que aponta para outro objeto.
+
+    POR QUE AQUI, e não no `queryset=` do campo: o queryset de um
+    `PrimaryKeyRelatedField` é avaliado UMA vez, quando a classe é definida —
+    ali não existe request nenhum para escopar. Validar no `validate_<campo>`
+    faz a pergunta no momento em que o usuário já é conhecido (via
+    `context['request']`) e ainda devolve uma mensagem legível em vez do
+    genérico "objeto inválido" do DRF.
+
+    São DUAS perguntas, cada uma presa à SUA flag, porque o furo tem dois lados:
+
+    - Visibilidade (`scope_*`, `SETOR_SCOPING_ENABLED`): a resposta do POST/PATCH
+      devolve o alvo serializado (`projeto_detail`, `sprint_detail`,
+      `card_detail`). Aceitar um alvo de outro setor entrega o objeto inteiro na
+      resposta da própria escrita — vazamento que escopar a LISTAGEM não fecha,
+      porque esse caminho não passa por listagem nenhuma.
+    - Escrita (`*_editaveis`, `SETOR_WRITE_ENFORCEMENT_ENABLED`): pendurar
+      conteúdo dentro do item de outro setor é escrita cruzada, e item
+      emprestado apenas para LEITURA não recebe conteúdo novo. Quando apontar
+      para o alvo não é escrever DENTRO dele (o pin, que é marcador pessoal),
+      passa-se `editaveis_fn=None` e fica só o gate de visibilidade.
+
+    Ambos os helpers são fail-open com a flag correspondente desligada — com as
+    duas OFF (hoje) esta função não recusa absolutamente nada.
+    """
+    request = serializer.context.get('request')
+    user = getattr(request, 'user', None)
+    # Sem request não há usuário para escopar. O serializer também roda fora da
+    # API (task, shell, script de dados); explodir nesses caminhos seria pior que
+    # o furo — o gate existe para quem chega pela API, e lá o request sempre vem.
+    if valor is None or user is None:
+        return valor
+    # Update que NÃO muda a relação não passa pelo gate. O item pode ter sido
+    # emprestado sozinho (card sem o projeto, projeto sem a sprint) e nesse caso
+    # o pai legitimamente fica fora do escopo de quem edita: barrar aqui
+    # impediria de salvar um item recebido só porque o payload repete o pai atual.
+    if (serializer.instance is not None
+            and getattr(serializer.instance, campo_id, None) == valor.pk):
+        return valor
+    # `_default_manager` em vez do model literal: a mesma função serve Card,
+    # Project e Sprint, e o alvo já veio resolvido pelo campo do DRF.
+    alvo = type(valor)._default_manager.filter(pk=valor.pk)
+    if not scope_fn(alvo, user).exists():  # fail-open enquanto flag OFF
+        raise serializers.ValidationError(msg_fora_do_escopo)
+    if (editaveis_fn is not None
+            and not editaveis_fn(user).filter(pk=valor.pk).exists()):  # fail-open enquanto flag OFF
+        raise serializers.ValidationError(msg_somente_leitura)
+    return valor
+
+
+def _checar_pessoa_do_setor(serializer, valor, campo_id, msg_fora_do_escopo):
+    """Gate de setor de um campo GRAVÁVEL que aponta para uma PESSOA.
+
+    Irmão de `_checar_destino_do_setor` (leia aquele primeiro): mesma disciplina,
+    outro eixo. Lá o alvo é CONTEÚDO — tem `setor` dono e pode ser emprestado com
+    nível ('leitura'/'edicao'), então cabem duas perguntas ("enxergo?" e "posso
+    escrever dentro?"), cada uma presa à sua flag. Aqui o alvo é gente, e gente
+    não tem setor dono nem compartilhamento: o vínculo é o M2M `UserSetor`, e é
+    por ele que `scope_users` cruza ("compartilhamos algum setor?"). Passar um
+    usuário para o outro helper obrigaria a distorcer `scope_fn`/`editaveis_fn`
+    para um modelo que não tem `setor_id` — daí a função separada.
+
+    POR QUE SÓ O GATE DE VISIBILIDADE: não existe "usuário editável". Apontar um
+    card para alguém não escreve nada DENTRO dessa pessoa — o que está sendo
+    escrito é o CARD, e quem responde pelo direito de escrita ali já é o gate do
+    próprio card (`validate_projeto`, `SetorPermiteEscrita`, `checar_escrita_no_pai`).
+    Exigir aqui algo como "poder editar a pessoa" responderia a uma pergunta que
+    o domínio não faz e recusaria atribuições legítimas. Também NÃO se checa se a
+    pessoa é do mesmo setor do card: o modelo prevê justamente o contrário —
+    alguém emprestado a um card compartilhado (ver a docstring de
+    `scope_weekly_priorities`, que trata o alvo de outro setor como caso normal).
+    A pergunta certa, e a única, é se o OPERADOR enxerga aquela pessoa.
+
+    O furo que isto fecha: os serializers ANINHAM dados da pessoa na resposta
+    (`responsavel_name`, `responsavel_role`, `responsavel_profile_picture_url`,
+    `usuario_name`, `usuario_role`, ...). Como o campo é gravável e o queryset
+    implícito do `ModelSerializer` é `User.objects.all()`, um `PATCH` repetido
+    com ids em sequência devolvia nome, cargo e foto de qualquer funcionário —
+    enumeração do quadro inteiro da empresa, um id por vez, sem passar por
+    listagem nenhuma (que é onde `scope_users` já atuava). E ainda pendurava
+    trabalho no nome de alguém que o operador não deveria nem enxergar.
+
+    Consequência aceita quando `SETOR_SCOPING_ENABLED` subir: só é atribuível
+    quem COMPARTILHA algum setor com o operador. Conta sem nenhum vínculo
+    `UserSetor` é invisível para todo mundo (menos para ela mesma) e passa a ser
+    recusada aqui — o conserto é dar setor à conta, não afrouxar o gate.
+
+    Fail-open com a flag desligada, porque `scope_users` é fail-open: hoje esta
+    função não recusa absolutamente nada.
+    """
+    request = serializer.context.get('request')
+    user = getattr(request, 'user', None)
+    # Idem `_checar_destino_do_setor`: sem request não há de quem escopar, e o
+    # serializer também roda fora da API (task, shell, script de dados) — onde
+    # explodir seria pior que o furo.
+    if valor is None or user is None:
+        return valor
+    # Update que NÃO troca a pessoa não passa pelo gate. O registro pode ter sido
+    # criado por outro setor, ou a pessoa pode ter mudado de setor depois de ser
+    # atribuída; barrar o payload que apenas repete o valor atual impediria de
+    # salvar QUALQUER outro campo do mesmo objeto.
+    if (serializer.instance is not None
+            and getattr(serializer.instance, campo_id, None) == valor.pk):
+        return valor
+    # `_default_manager` (o `UserManager` padrão, sem filtro) em vez do model
+    # literal: evita importar o User aqui e segue o mesmo molde do irmão.
+    alvo = type(valor)._default_manager.filter(pk=valor.pk)
+    if not scope_users(alvo, user).exists():  # fail-open enquanto flag OFF
+        raise serializers.ValidationError(msg_fora_do_escopo)
+    return valor
+
+
 class SprintSerializer(serializers.ModelSerializer):
     supervisor_name = serializers.SerializerMethodField()
     # Sem input_formats restritivos: usa o padrão DRF (ISO 8601 / parse_datetime),
@@ -85,6 +204,17 @@ class SprintSerializer(serializers.ModelSerializer):
 
     def get_supervisor_name(self, obj):
         return format_user_name(obj.supervisor)
+
+    def validate_supervisor(self, supervisor):
+        """Só aceita como supervisor alguém que quem edita já enxerga.
+
+        `supervisor` é gravável e a resposta devolve `supervisor_name`, então um
+        PATCH varrendo ids transformava a sprint num diretório de funcionários da
+        empresa inteira. Além disso a sprint é a raiz da árvore de conteúdo do
+        setor: pendurar nela o nome de alguém de fora não é só ruído de tela.
+        """
+        return _checar_pessoa_do_setor(
+            self, supervisor, 'supervisor_id', 'Supervisor não encontrado.')
 
     def _check_setor_perm(self, attrs):
         request = self.context.get('request')
@@ -129,35 +259,59 @@ class SprintSerializer(serializers.ModelSerializer):
                     {'fechamento_em': 'A data/hora de fechamento não pode ser anterior ao início da sprint.'}
                 )
 
-        # Uma sprint em andamento por vez (janela ativa alinhada ao frontend).
+        # Quantas sprints PLANEJADAS o setor quiser; uma EM ANDAMENTO por vez.
+        # A checagem é de sobreposição de janelas, não de "está em andamento
+        # agora" — ver `sprint_conflitante_na_janela` para o porquê. O setor
+        # precisa ser resolvido aqui, e não só no create(): a validação roda
+        # antes, e sem ele a regra voltaria a valer para a empresa inteira.
         inst = self.instance
-        probe = Sprint(
-            data_inicio=di if di is not None else (inst.data_inicio if inst else None),
-            fechamento_em=fe if fe is not None else (inst.fechamento_em if inst else None),
-            finalizada=attrs.get('finalizada', inst.finalizada if inst else False),
-        )
-        if sprint_esta_em_andamento_janela(probe):
-            other = outra_sprint_em_andamento(exclude_pk=inst.pk if inst else None)
-            if other is not None:
-                raise serializers.ValidationError(
-                    f'Já existe uma sprint em andamento («{other.nome}»). '
-                    'Finalize-a antes de abrir outra na mesma janela.'
-                )
+        finalizada = attrs.get('finalizada', inst.finalizada if inst else False)
+        if not finalizada and di and fe:
+            setor = self._resolver_setor_efetivo(attrs)
+            if setor is not None:
+                other = sprint_conflitante_na_janela(
+                    setor_id=setor.pk, data_inicio=di, fechamento_em=fe,
+                    exclude_pk=inst.pk if inst else None)
+                if other is not None:
+                    inicio = timezone.localtime(other.data_inicio).strftime('%d/%m/%Y')
+                    fim = timezone.localtime(other.fechamento_em).strftime('%d/%m/%Y')
+                    raise serializers.ValidationError(
+                        f'O setor {setor.nome} já tem a sprint «{other.nome}» '
+                        f'ocupando o período de {inicio} a {fim}. Uma sprint só '
+                        'pode começar depois que a anterior fechar — agende esta '
+                        'para depois de ' + fim + ' ou finalize a atual.'
+                    )
         return attrs
+
+    def _resolver_setor_efetivo(self, attrs):
+        """Setor ao qual a sprint pertence(rá): o informado, o que ela já tem,
+        ou o setor primário de quem está operando. `None` quando não há de onde
+        herdar — o `create()` transforma isso em erro de validação."""
+        setor = attrs.get('setor')
+        if setor is not None:
+            return setor
+        if self.instance is not None:
+            return self.instance.setor
+        from apps.accounts.scoping import setor_primario_do_usuario
+        request = self.context.get('request')
+        return setor_primario_do_usuario(request.user) if request else None
 
     def create(self, validated_data):
         validated_data['duracao_dias'] = self._duracao_dias(
             validated_data['data_inicio'], validated_data['fechamento_em']
         )
-        # Setor obrigatório: default = setor primário do supervisor logado
-        # (M2M UserSetor com fallback no CharField), ou Tecnologia como
-        # fallback final (garante que nenhuma sprint nasça órfã).
+        # Toda sprint pertence a um setor. Quando não vem no payload, assume o
+        # setor primário de quem está criando; se essa pessoa não tiver setor,
+        # a criação é RECUSADA em vez de cair no setor padrão — uma sprint que
+        # nasce em "Sem Setor" some do time que deveria enxergá-la e contamina
+        # o depósito de conteúdo não classificado.
         if not validated_data.get('setor'):
-            from apps.accounts.scoping import setor_primario_do_usuario
-            request = self.context.get('request')
-            setor = setor_primario_do_usuario(request.user) if request else None
+            setor = self._resolver_setor_efetivo(validated_data)
             if setor is None:
-                setor = SetorCatalogo.objects.filter(codename='tecnologia').first()
+                raise serializers.ValidationError({
+                    'setor': ['Informe o setor da sprint. Sua conta não tem setor '
+                              'definido, então não há de qual herdar.'],
+                })
             validated_data['setor'] = setor
         return super().create(validated_data)
 
@@ -217,6 +371,49 @@ class ProjectSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError(
                     'Você não tem permissão para alterar o setor ou o compartilhamento.')
         return attrs
+
+    def validate_gerente_atribuido(self, gerente):
+        """Gerente do projeto só entre as pessoas que quem edita enxerga.
+
+        A resposta traz `gerente_name`: sem o gate, `PATCH {"gerente_atribuido":
+        <id>}` devolvia o nome de qualquer funcionário — um id por vez, sem
+        passar por listagem nenhuma. E o vínculo grava: o projeto passa a
+        aparecer como responsabilidade de alguém de outro setor, que nem enxerga
+        o projeto para se livrar dele.
+        """
+        return _checar_pessoa_do_setor(
+            self, gerente, 'gerente_atribuido_id', 'Gerente não encontrado.')
+
+    def validate_desenvolvedor(self, desenvolvedor):
+        """Desenvolvedor do projeto só entre as pessoas que quem edita enxerga.
+
+        Mesmo furo do `gerente_atribuido` — campo gravável, `desenvolvedor_name`
+        na resposta. Os dois estão em `filterset_fields` do ProjectViewSet, então
+        o par (gravar id, filtrar por id) também confirma quem existe. E o
+        vínculo sobrevive à virada da sprint: `finalizar_sprint_replicacao` copia
+        `gerente_atribuido` e `desenvolvedor` para o projeto recriado na sprint
+        seguinte, então uma atribuição errada se propaga sozinha.
+        """
+        return _checar_pessoa_do_setor(
+            self, desenvolvedor, 'desenvolvedor_id', 'Desenvolvedor não encontrado.')
+
+    def validate_sprint(self, sprint):
+        """Recusa pendurar o projeto numa sprint de outro setor.
+
+        O `checar_escrita_no_pai` só roda no `perform_create` do viewset; no
+        PATCH, o `SetorPermiteEscrita` valida apenas o objeto ANTIGO (o projeto,
+        que é do setor de quem edita) e ninguém olhava o DESTINO. Com isso,
+        `PATCH /api/projects/<meu>/ {"sprint": <sprint do setor B>}` devolvia o
+        `sprint_detail` completo da sprint alheia — nome, datas, supervisor,
+        `projects_count`, setores — e ainda movia o projeto para dentro dela,
+        inflando os agregados que o setor B vê sem que ele pudesse tirar o
+        intruso de lá (o projeto não aparece na listagem escopada dele).
+        """
+        return _checar_destino_do_setor(
+            self, sprint, 'sprint_id', scope_sprints, sprints_editaveis,
+            'Sprint não encontrada.',
+            'Esta sprint pertence a outro setor e foi compartilhada apenas para '
+            'visualização — não é possível mover o projeto para dentro dela.')
 
     def validate_nome(self, value):
         """
@@ -370,7 +567,20 @@ class CardPinSerializer(serializers.ModelSerializer):
         return CardSerializer(obj.card, context=self.context).data
 
     def validate_card(self, card):
-        """Aceita apenas cards da sprint atual e ainda não concluídos."""
+        """Aceita apenas cards do escopo do usuário, da sprint atual e ainda
+        não concluídos."""
+        # O setor vem ANTES dos gates de estado: card de outro setor tem que
+        # parecer inexistente, não "finalizado". Sem isto, um POST com o id de
+        # qualquer card ativo devolvia o `card_detail` inteiro na resposta 201
+        # (e continuava devolvendo em todo GET /card-pins/, que é o queryset do
+        # próprio usuário) — um oráculo de leitura de card alheio, um id por vez.
+        #
+        # Só o gate de VISIBILIDADE (`editaveis_fn=None`): fixar é um marcador
+        # PESSOAL, não escreve nada dentro do card. Um card emprestado ao setor
+        # apenas para leitura continua fixável por quem já o enxerga — negar
+        # seria restringir mais do que o compartilhamento pediu.
+        _checar_destino_do_setor(
+            self, card, 'card_id', scope_cards, None, 'Card não encontrado.')
         if card.status in (CardStatus.FINALIZADO, CardStatus.INVIABILIZADO):
             raise serializers.ValidationError(
                 'Não é possível fixar um card finalizado ou inviabilizado.'
@@ -398,6 +608,12 @@ class CardPinSerializer(serializers.ModelSerializer):
 
 class CardSerializer(DevTimeFormattedMixin, serializers.ModelSerializer):
     projeto_detail = ProjectSerializer(source='projeto', read_only=True)
+    # `setor` é espelho do projeto e `setores_compartilhados` só muda pelo
+    # endpoint `cards/<id>/compartilhar/` (que exige manage_setor_sharing) —
+    # por isso ambos são read-only aqui, e não repetimos o gate de permissão.
+    setor = serializers.SlugRelatedField(slug_field='codename', read_only=True)
+    setores_compartilhados = serializers.SlugRelatedField(
+        many=True, slug_field='codename', read_only=True)
     responsavel_name = serializers.SerializerMethodField()
     responsavel_role = serializers.SerializerMethodField()
     responsavel_profile_picture_url = serializers.SerializerMethodField()
@@ -789,6 +1005,41 @@ class CardSerializer(DevTimeFormattedMixin, serializers.ModelSerializer):
             instance._request_user = self.context['request'].user
         return super().update(instance, validated_data)
 
+    def validate_responsavel(self, responsavel):
+        """Recusa atribuir o card a quem quem edita não enxerga.
+
+        É o campo mais exposto desta família: a resposta devolve
+        `responsavel_name`, `responsavel_role` E `responsavel_profile_picture_url`
+        — nome, cargo e foto. Como `responsavel` é gravável sobre
+        `User.objects.all()`, repetir o PATCH trocando o id enumerava o quadro
+        inteiro da empresa sem tocar em nenhuma listagem escopada.
+
+        O outro lado é operacional: o card passa a contar na carga de trabalho da
+        pessoa, dispara notificação e aparece nos relatórios dela — trabalho
+        pendurado no nome de alguém de outro setor, que não tem como se livrar
+        dele (o card não aparece na listagem escopada de quem foi atribuído).
+        """
+        return _checar_pessoa_do_setor(
+            self, responsavel, 'responsavel_id', 'Responsável não encontrado.')
+
+    def validate_projeto(self, projeto):
+        """Recusa mover o card para um projeto de outro setor.
+
+        O gate de pai (`checar_escrita_no_pai`) só roda no `perform_create` do
+        CardViewSet; no PATCH, o `SetorPermiteEscrita` valida apenas o card
+        ANTIGO (do setor de quem edita) e o DESTINO passava livre. O furo tinha
+        dois lados: (1) leitura — a resposta traz `projeto_detail` e, dentro
+        dele, `sprint_detail`, então repetir o PATCH com ids diferentes enumerava
+        projeto e sprint de toda a empresa; (2) escrita — `Card.save()` espelha o
+        `setor_id` do projeto, então o card passava a PERTENCER ao setor B e
+        aparecia no kanban, nas sprints e nas métricas dele sem que B aceitasse.
+        """
+        return _checar_destino_do_setor(
+            self, projeto, 'projeto_id', scope_projects, projetos_editaveis,
+            'Projeto não encontrado.',
+            'Este projeto pertence a outro setor e foi compartilhado apenas para '
+            'visualização — não é possível mover o card para dentro dele.')
+
     def validate_nome(self, value):
         """
         Nome é apenas exibição; o identificador único do card é o id.
@@ -808,7 +1059,8 @@ class CardSerializer(DevTimeFormattedMixin, serializers.ModelSerializer):
                  'dias_uteis_desenvolvimento',
                  'minutos_uteis_desenvolvimento', 'horas_uteis_desenvolvimento',
                  'complexidade_selected_items', 'complexidade_selected_development', 'complexidade_custom_items',
-                 'card_comment', 'links', 'events_count', 'score_final', 'created_at', 'updated_at']
+                 'card_comment', 'links', 'events_count', 'score_final',
+                 'setor', 'setores_compartilhados', 'created_at', 'updated_at']
         read_only_fields = [
             'created_at', 'updated_at', 'criado_por', 'finalizado_em',
             'segundos_corridos_desenvolvimento', 'dias_corridos_desenvolvimento',
@@ -944,6 +1196,33 @@ class EventSerializer(serializers.ModelSerializer):
         return format_user_name(obj.usuario)
     tipo_display = serializers.CharField(source='get_tipo_display', read_only=True)
 
+    def validate_card(self, card):
+        """Evento (pendência/prioridade/tag/comentário) só em card do escopo.
+
+        Escrever um evento é escrever DENTRO do card: a pendência aparece na
+        tela do setor dono. E a resposta do POST já devolve o `card_detail`
+        inteiro, então aceitar um card de outro setor vazava o card na própria
+        resposta da criação — sem depender da listagem, que é escopada à parte.
+        """
+        return _checar_destino_do_setor(
+            self, card, 'card_id', scope_cards, cards_editaveis,
+            'Card não encontrado.',
+            'Este card pertence a outro setor e foi compartilhado apenas para '
+            'visualização — não é possível registrar eventos nele.')
+
+    def validate_usuario(self, usuario):
+        """Autoria do evento só entre as pessoas que quem escreve enxerga.
+
+        O `perform_create` do viewset preenche `usuario` com o autor da requisição
+        APENAS quando o campo vem vazio — mandar um id qualquer no payload
+        sobrepõe isso. Sem o gate, dava para (1) ler `usuario_name` de qualquer
+        funcionário na própria resposta do POST e (2) assinar a pendência/o
+        comentário com o nome de alguém de outro setor, que apareceria na tela do
+        time dono do card como se tivesse escrito aquilo.
+        """
+        return _checar_pessoa_do_setor(
+            self, usuario, 'usuario_id', 'Usuário não encontrado.')
+
     class Meta:
         model = Event
         fields = ['id', 'card', 'card_detail', 'tipo', 'tipo_display', 'descricao', 
@@ -965,6 +1244,44 @@ class CardLogSerializer(serializers.ModelSerializer):
     
     def get_usuario_role_display(self, obj):
         return obj.usuario.get_role_display() if obj.usuario else None
+
+    def validate_card(self, card):
+        """Linha de timeline só em card do escopo de quem escreve.
+
+        Último satélite do card que faltava fechar: `Event`, `CardAnexo`,
+        `WeeklyPriority` e `CardDueDateChangeRequest` já validam o destino aqui,
+        e o `CardLog` era o único que dependia só do `checar_escrita_no_pai` do
+        `perform_create`. A diferença importa no meio da migração: aquele gate
+        obedece à flag de ESCRITA, então com apenas `SETOR_SCOPING_ENABLED`
+        ligada um `POST /api/card-logs/ {"card": <id do setor B>}` ainda gravava
+        uma linha na timeline alheia — e o 201 confirmava a existência do id
+        (card inexistente responde "pk inválida", card de outro setor respondia
+        criado), que é o mesmo oráculo que os irmãos fecham.
+
+        Gate de escrita também, e não só de visibilidade: o log é conteúdo do
+        time dono e aparece na tela dele, então card emprestado apenas para
+        LEITURA não recebe linha nova — mesma regra de `checar_escrita_no_pai`,
+        só que aplicada antes, para virar 400 no campo em vez de 403 genérico.
+        """
+        return _checar_destino_do_setor(
+            self, card, 'card_id', scope_cards, cards_editaveis,
+            'Card não encontrado.',
+            'Este card pertence a outro setor e foi compartilhado apenas para '
+            'visualização — não é possível registrar histórico nele.')
+
+    def validate_usuario(self, usuario):
+        """Autoria do log só entre as pessoas que quem escreve enxerga.
+
+        Igual ao EventSerializer — o `perform_create` só preenche `usuario` quando
+        o payload o omite —, com dois agravantes. Na leitura, este serializer
+        devolve `usuario_name`, `usuario_role` E `usuario_role_display`: o POST
+        vira um oráculo de nome + cargo de qualquer funcionário. Na escrita, o log
+        é a TIMELINE do card, criada por append e sem PATCH/DELETE justamente para
+        servir de prova do que aconteceu — assinar uma linha com o nome de alguém
+        de outro setor corrompe exatamente aquilo que o histórico deveria garantir.
+        """
+        return _checar_pessoa_do_setor(
+            self, usuario, 'usuario_id', 'Usuário não encontrado.')
 
     class Meta:
         model = CardLog
@@ -1020,7 +1337,60 @@ class WeeklyPrioritySerializer(serializers.ModelSerializer):
     
     def get_definido_por_name(self, obj):
         return format_user_name(obj.definido_por)
-    
+
+    def validate_usuario(self, usuario):
+        """Prioridade da semana só para pessoa que quem define enxerga.
+
+        `usuario` é o ALVO da prioridade e vem inteiro do cliente (o modal manda
+        `{usuario, card, semana_*}`). A resposta devolve `usuario_name`, então o
+        POST já vazava o nome; e a prioridade fica pendurada na agenda da pessoa,
+        que a vê na tela dela sem poder removê-la. `manage_weekly_priorities`
+        (a única checagem que existia, no `perform_create`) não fecha isso: é
+        permissão de cargo, vale em todo lugar e não implica `view_cross_setor` —
+        um supervisor de um setor podia definir a semana de gente de outro.
+        """
+        return _checar_pessoa_do_setor(
+            self, usuario, 'usuario_id', 'Usuário não encontrado.')
+
+    def validate_definido_por(self, definido_por):
+        """Autor da prioridade só entre as pessoas que quem define enxerga.
+
+        Hoje é cinto e suspensório: `perform_create`/`perform_update` sempre
+        passam `definido_por=request.user` para o `save()`, e o kwarg vence o que
+        veio no payload — o valor do cliente é descartado antes de gravar. O gate
+        fica porque o campo É gravável no serializer (está em `fields`, fora de
+        `read_only_fields`) e a garantia vive hoje só no viewset: se um caminho
+        novo salvar este serializer sem o override, o campo volta a aceitar
+        qualquer id de usuário. Rejeição legítima nunca acontece — o único valor
+        que o produto grava é o próprio operador, e `scope_users` sempre inclui
+        quem pergunta.
+        """
+        return _checar_pessoa_do_setor(
+            self, definido_por, 'definido_por_id', 'Usuário não encontrado.')
+
+    def validate_card(self, card):
+        """Prioridade da semana só sobre card do escopo de quem define.
+
+        Mesma família dos outros satélites do card (evento, anexo, pedido de
+        prazo): `card` é gravável e o serializer devolve `card_detail` completo,
+        então o 201 do POST já entregava o card de outro setor — com
+        `projeto_detail` e `sprint_detail` aninhados — mesmo com o
+        `get_queryset` do viewset escopado por `scope_weekly_priorities` (a
+        resposta da própria escrita não passa por listagem nenhuma). Só
+        `manage_weekly_priorities` não fecha isto: é permissão de cargo e não
+        implica `view_cross_setor`.
+
+        Gate de escrita também, e não só de visibilidade: a prioridade fica
+        pendurada NO card e aparece para o setor dono, ou seja, é conteúdo do
+        time — diferente do pin, que é marcador pessoal. Card emprestado apenas
+        para LEITURA não recebe conteúdo novo, como em `checar_escrita_no_pai`.
+        """
+        return _checar_destino_do_setor(
+            self, card, 'card_id', scope_cards, cards_editaveis,
+            'Card não encontrado.',
+            'Este card pertence a outro setor e foi compartilhado apenas para '
+            'visualização — não é possível defini-lo como prioridade da semana.')
+
     class Meta:
         model = WeeklyPriority
         fields = ['id', 'usuario', 'usuario_name', 'card', 'card_detail', 
@@ -1040,6 +1410,21 @@ class CardDueDateChangeRequestSerializer(serializers.ModelSerializer):
 
     def get_reviewed_by_name(self, obj):
         return format_user_name(obj.reviewed_by) if obj.reviewed_by else None
+
+    def validate_card(self, card):
+        """Pedido de prazo só para card do escopo de quem pede.
+
+        A resposta do POST devolve o `card_detail` completo (mais
+        `projeto_detail` e `sprint_detail`), então criar o pedido sobre um card
+        alheio já vazava o card. E o registro entra na FILA de aprovação do setor
+        dono: aprovado, ele muda o `data_fim` de um card que o solicitante nem
+        deveria enxergar.
+        """
+        return _checar_destino_do_setor(
+            self, card, 'card_id', scope_cards, cards_editaveis,
+            'Card não encontrado.',
+            'Este card pertence a outro setor e foi compartilhado apenas para '
+            'visualização — não é possível solicitar alteração de prazo nele.')
 
     class Meta:
         model = CardDueDateChangeRequest
@@ -1165,6 +1550,12 @@ class CardScoreValueSerializer(serializers.ModelSerializer):
 
 
 class ScoreHistorySerializer(serializers.ModelSerializer):
+    # `usuario` está em `fields` sem `read_only`, mas este serializer só é usado
+    # ANINHADO em `CardScoreSerializer.historico` com `read_only=True`: não há
+    # endpoint que o alimente, e serializer read-only nunca roda `validate_*`.
+    # Por isso ele não carrega o `_checar_pessoa_do_setor` dos campos de usuário
+    # graváveis. Se um dia virar entrada (viewset próprio ou nested gravável),
+    # `usuario` precisa do gate, como em EventSerializer/CardLogSerializer.
     usuario_nome = serializers.SerializerMethodField()
     acao_display = serializers.CharField(source='get_acao_display', read_only=True)
 
@@ -1178,7 +1569,18 @@ class ScoreHistorySerializer(serializers.ModelSerializer):
 
 
 class CardScoreSerializer(serializers.ModelSerializer):
-    """Serializer de leitura para a tabela de Score (7.4)."""
+    """Serializer de leitura para a tabela de Score (7.4).
+
+    `card` aparece em `fields` sem `read_only`, mas NENHUM dado do cliente passa
+    por aqui: o `CardScoreViewSet` sobrescreve `create`, `update`,
+    `partial_update` e `destroy` inteiros, lê o id direto de `request.data` e
+    resolve o card com `scope_cards(...)` antes de gravar — o serializer só é
+    instanciado sobre uma instância já persistida, para montar a resposta. Por
+    isso ele não carrega o `_checar_destino_do_setor` dos irmãos. Se algum dia
+    esses métodos voltarem ao padrão do DRF (`is_valid()` + `save()`), `card`
+    precisa do gate: a resposta traz `card_nome`, `card_status`,
+    `responsavel_name`, `responsavel_role`, `sprint_nome` e o `historico` inteiro.
+    """
     valores = CardScoreValueSerializer(many=True, read_only=True)
     card_nome = serializers.CharField(source='card.nome', read_only=True)
     card_status = serializers.CharField(source='card.status', read_only=True)
@@ -1243,6 +1645,13 @@ class CardPickerSerializer(serializers.ModelSerializer):
     Sem ``projeto_detail`` aninhado, fotos de perfil, métricas ou events_count —
     apenas o necessário para o preview do kanban e os filtros. Servido sem
     paginação (uma única request), com ``select_related`` no queryset.
+
+    Serializer de SAÍDA: é instanciado só na action ``pickable-cards``, para
+    serializar um queryset já escopado. `responsavel` e `projeto` aparecem em
+    `fields` sem `read_only`, mas nenhum dado do cliente passa por aqui — daí a
+    ausência dos `validate_*` de setor que CardSerializer carrega. Se um dia esta
+    classe virar `serializer_class` de algum viewset, os dois campos precisam dos
+    gates (`_checar_pessoa_do_setor` e `_checar_destino_do_setor`).
     """
     area_display = serializers.CharField(source='get_area_display', read_only=True)
     tipo_display = serializers.CharField(source='get_tipo_display', read_only=True)
@@ -1335,6 +1744,22 @@ class CardAnexoSerializer(serializers.ModelSerializer):
 
     def get_enviado_por_nome(self, obj):
         return format_user_name(obj.enviado_por) if obj.enviado_por_id else None
+
+    def validate_card(self, card):
+        """Anexo só em card do escopo de quem envia.
+
+        O `create` do viewset resolve o card direto em `Card.objects` e a única
+        checagem que existia (`_pode_mutar`) pergunta se o card está TRAVADO,
+        nunca de que setor ele é — este é o ponto onde o setor entra no fluxo de
+        upload. Sem isto, um POST multipart com o id de um card do setor B
+        gravava um arquivo de até 25 MB dentro dele, e a resposta 201 devolvia a
+        `arquivo_url` absoluta (que `/media/` serve a qualquer autenticado).
+        """
+        return _checar_destino_do_setor(
+            self, card, 'card_id', scope_cards, cards_editaveis,
+            'Card não encontrado.',
+            'Este card pertence a outro setor e foi compartilhado apenas para '
+            'visualização — não é possível anexar arquivos nele.')
 
     def validate_arquivo(self, value):
         ext = os.path.splitext(value.name)[1].lower().lstrip('.')

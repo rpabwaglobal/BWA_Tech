@@ -20,11 +20,11 @@ class Team(models.Model):
         default=TeamType.PORTAL,
         verbose_name='Tipo'
     )
+    # Qualquer usuário pode responder pela equipe: quem pode designá-lo é decidido por permissão, não pelo cargo
     supervisor = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
         related_name='teams_supervised',
-        limit_choices_to={'role': 'supervisor'},
         verbose_name='Supervisor'
     )
     # Campos para sticky note
@@ -88,18 +88,18 @@ class TeamMember(models.Model):
 
 class Hierarchy(models.Model):
     """Representa a hierarquia Supervisor → Gerente → Desenvolvedor"""
+    # A posição na hierarquia é montada livremente pelo admin; quem pode montá-la é
+    # decidido por permissão, não pelo cargo de cada usuário
     supervisor = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
         related_name='supervised_hierarchies',
-        limit_choices_to={'role': 'supervisor'},
         verbose_name='Supervisor'
     )
     gerente = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
         related_name='managed_hierarchies',
-        limit_choices_to={'role': 'gerente'},
         verbose_name='Gerente',
         null=True,
         blank=True
@@ -108,7 +108,6 @@ class Hierarchy(models.Model):
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
         related_name='developer_hierarchies',
-        limit_choices_to={'role__in': ['desenvolvedor', 'dados']},
         verbose_name='Desenvolvedor',
         null=True,
         blank=True

@@ -26,6 +26,8 @@ import {
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { userService } from '@/services/userService';
@@ -88,12 +90,14 @@ import {
   CheckSquare,
   FolderInput,
   Trophy,
+  Share2,
 } from 'lucide-react';
 import { formatDate, formatDateTime, isCardAtrasado, calcularDiasTotais, calcularDiasUteis } from '@/lib/dateUtils';
 import { ATRASADO_STATUS_BADGE } from '@/lib/dueDateBadgeClasses';
 import { sprintFimDiaParaCalendario, sprintInicioDiaParaCalendario } from '@/lib/sprintFechamento';
 import { CardLogsModal, CARD_TIMELINE_LAYOUT_RESERVE_PX } from '@/components/CardLogsModal';
 import { PendenciaModal } from '@/components/PendenciaModal';
+import { CompartilharSetoresDialog } from '@/components/CompartilharSetoresDialog';
 import { ConclusaoModal } from '@/components/ConclusaoModal';
 import { cardLogService } from '@/services/cardLogService';
 import {
@@ -774,6 +778,9 @@ export default function ProjectDetails() {
   const [project, setProject] = useState<Project | null>(null);
   const [sprint, setSprint] = useState<Sprint | null>(null);
   const [cards, setCards] = useState<CardType[]>([]);
+
+  const canCompartilhar = hasPermission(user, 'manage_setor_sharing');
+  const [compartilharOpen, setCompartilharOpen] = useState(false);
 
   // Real-time: assina o Kanban da sprint do projeto. Eventos de OUTROS
   // projetos da mesma sprint passam batido (o card_id não está no estado local).
@@ -2527,7 +2534,7 @@ export default function ProjectDetails() {
                       type="button"
                       variant="outline"
                       className="h-[40px] gap-[8px] border-[var(--color-border)] px-[14px] shadow-sm hover:bg-[var(--color-accent)]"
-                      title="Opções do Kanban"
+                      title="Opções do projeto"
                     >
                       <SlidersHorizontal className="h-[18px] w-[18px] shrink-0 text-[var(--color-muted-foreground)]" />
                       <span className="hidden text-sm font-medium sm:inline">Opções</span>
@@ -2535,6 +2542,24 @@ export default function ProjectDetails() {
                     </Button>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="end" className="w-[min(100vw-24px,300px)] p-1.5">
+                    {canCompartilhar && (
+                      <>
+                        <p className="mb-1 px-2 pt-1 text-[10px] font-semibold uppercase tracking-wider text-[var(--color-muted-foreground)]">
+                          Acesso
+                        </p>
+                        <DropdownMenuItem
+                          className="gap-2 rounded-md py-2.5"
+                          onClick={() => setCompartilharOpen(true)}
+                        >
+                          <Share2 className="h-4 w-4 shrink-0 text-[var(--color-primary)]" />
+                          <span className="flex-1 text-left">Compartilhar entre setores</span>
+                        </DropdownMenuItem>
+                        <DropdownMenuSeparator className="my-2" />
+                        <p className="mb-1 px-2 text-[10px] font-semibold uppercase tracking-wider text-[var(--color-muted-foreground)]">
+                          Kanban
+                        </p>
+                      </>
+                    )}
                     <label className="flex cursor-pointer items-center gap-2.5 rounded-md px-2 py-2.5 text-sm text-[var(--color-foreground)] transition-colors hover:bg-[var(--color-accent)]">
                       <input
                         type="checkbox"
@@ -3924,6 +3949,16 @@ export default function ProjectDetails() {
         }
         cardName={conclusaoCardName || undefined}
       />
+
+      {compartilharOpen && project && (
+        <CompartilharSetoresDialog
+          recurso="projects"
+          itemId={project.id}
+          itemNome={project.nome}
+          open={compartilharOpen}
+          onOpenChange={setCompartilharOpen}
+        />
+      )}
     </div>
   );
 }

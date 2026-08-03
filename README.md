@@ -167,6 +167,32 @@ docker compose up -d
 Acesse **http://localhost:8000**. Depois crie um usuário admin: `docker compose exec backend python manage.py createsuperuser`.  
 Detalhes em **[DOCKER.md](DOCKER.md)**.
 
+## Backup do banco (produção)
+
+Na VPS (`/opt/bwa_tech`) o backup é diário e automático — `scripts/backup-diario.sh`, agendado no cron:
+
+```cron
+MAILTO=rpa@bwa.global
+0 3 * * * /opt/bwa_tech/scripts/backup-diario.sh
+```
+
+O script faz `pg_dump -Fc` do container do Postgres, grava em `backups/bwa_tech_diario_AAAAMMDD_HHMMSS.dump.gz`,
+mantém os últimos 14 dias (`BACKUP_RETENCAO_DIAS`) e **falha com código != 0** se o dump sair vazio ou
+muito menor que o do dia anterior — o cron avisa por e-mail só quando algo dá errado. Histórico em
+`backups/backup-diario.log`.
+
+Para voltar atrás a partir de um backup (na raiz do projeto, na VPS):
+
+```bash
+ls -lh backups/
+./scripts/restore-prod-docker.sh backups/bwa_tech_diario_AAAAMMDD_HHMMSS.dump.gz
+```
+
+**Antes de qualquer deploy com migrations** vale gerar um dump avulso na hora com
+`./scripts/dump-prod-postgres.sh` — o diário das 3h pode estar a quase 24 horas de distância.
+Para trazer um dump de produção para o PC de dev: `.\scripts\fetch-prod-dump.ps1 -VpsHost <IP>` e
+depois `.\scripts\restore-local-docker.ps1`.
+
 ## Deploy em rede local (sem Docker)
 
 Para rodar em um servidor local e acessar por **localhost** ou pelo **IP da máquina** na rede (sem domínio por enquanto), siga o guia **[DEPLOY_REDE_LOCAL.md](DEPLOY_REDE_LOCAL.md)**. Resumo: build do frontend (`npm run build`), configurar `.env` do backend e subir com `daphne -b 0.0.0.0 -p 8000 config.asgi:application`. Acesso em **http://localhost:8000** ou **http://IP:8000**.

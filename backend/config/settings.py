@@ -217,11 +217,35 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 # Custom User Model
 AUTH_USER_MODEL = 'accounts.User'
 
+# Autorização: os gates da plataforma são todos por `has_perm`, para que
+# qualquer cargo criado pelo admin possa receber capacidades administrativas.
+#
+# A lista abaixo é o mecanismo de SOMA das permissões: `has_perm` do Django
+# devolve True se QUALQUER backend disser True, e a ordem é irrelevante.
+#   - ModelBackend            -> permissões personalizadas (user_permissions);
+#   - CargoPermissionBackend  -> permissões do cargo (Cargo.permissoes_padrao);
+#   - AdminRolePermissionBackend -> catálogo inteiro para role='admin', para que
+#     a plataforma nunca fique sem administrador.
+# Ver apps/accounts/auth_backends.py para o porquê de o cargo ser resolvido aqui
+# em vez de copiado para user_permissions.
+AUTHENTICATION_BACKENDS = [
+    'django.contrib.auth.backends.ModelBackend',
+    'apps.accounts.auth_backends.CargoPermissionBackend',
+    'apps.accounts.auth_backends.AdminRolePermissionBackend',
+]
+
 # Segmentação por setor: quando False (padrão durante a migração/backfill),
 # os helpers de escopo (apps/accounts/scoping.py) são fail-open — nada é
 # filtrado, sistema idêntico ao atual. Ligar para True SÓ após verificar que
 # 100% dos dados (sprints/projetos/cards) têm setor (zero órfãos).
 SETOR_SCOPING_ENABLED = os.getenv('SETOR_SCOPING_ENABLED', 'false').strip().lower() in ('true', '1', 'yes')
+
+# Recusar ESCRITA em item compartilhado só para leitura. Separada da flag
+# acima de propósito: primeiro se liga a visibilidade e se observa que ninguém
+# perdeu tela; só depois se passa a recusar escrita. Ligar as duas juntas
+# transformaria qualquer erro de classificação de setor em "não consigo mais
+# trabalhar", e no meio do expediente.
+SETOR_WRITE_ENFORCEMENT_ENABLED = os.getenv('SETOR_WRITE_ENFORCEMENT_ENABLED', 'false').strip().lower() in ('true', '1', 'yes')
 
 # REST Framework configuration
 REST_FRAMEWORK = {
@@ -412,6 +436,11 @@ CELERY_TASK_EAGER_PROPAGATES = CELERY_TASK_ALWAYS_EAGER
 # Beat schedule (só funciona com Celery Beat rodando)
 from celery.schedules import crontab
 
+# Dias que um arquivo de relatório sobrevive depois de gerado. A LINHA do
+# ReportJob fica para sempre (é auditoria de quem gerou o quê); o que expira é o
+# arquivo, que é o consolidado de vários setores e o que de fato pesa no disco.
+REPORT_RETENTION_DAYS = int(os.getenv('REPORT_RETENTION_DAYS', '7'))
+
 CELERY_BEAT_SCHEDULE = {
     'check-card-deadlines': {
         'task': 'apps.projects.tasks.check_card_deadlines',
@@ -420,6 +449,13 @@ CELERY_BEAT_SCHEDULE = {
     'verificar-fechamento-automatico-semana': {
         'task': 'apps.projects.tasks.verificar_fechamento_automatico_semana',
         'schedule': 60.0,  # A cada 60 segundos
+    },
+    'limpar-relatorios-expirados': {
+        'task': 'reports.limpar_relatorios_expirados',
+        # Uma vez por dia, de madrugada. Arquivo de relatório não some sozinho:
+        # a remoção só acontecia ao fim de um /download/ bem-sucedido, então
+        # quem usou /preview/ ou cancelou deixava o arquivo no disco para sempre.
+        'schedule': crontab(hour=3, minute=30),
     },
     'finalizar-sprints-por-data': {
         'task': 'apps.projects.tasks.finalizar_sprints_por_data',

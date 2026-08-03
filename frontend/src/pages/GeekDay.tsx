@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useMemo, useState, useRef } from 'react';
 import confetti from 'canvas-confetti';
 import { useAuth } from '@/context/AuthContext';
 import { hasPermission } from '@/lib/permissions';
@@ -6,8 +6,21 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Avatar, AvatarImage, AvatarFallback } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { geekdayService, type GeekDayUserStatus, type GeekDayDraw } from '@/services/geekdayService';
-import { Loader2, Check, RotateCcw, Trophy } from 'lucide-react';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { FilterSelect } from '@/components/ui/filter-select';
+import { chipStyle } from '@/lib/catalog-style';
+import { userService, type CatalogItem } from '@/services/userService';
+import {
+  geekdayService,
+  geekdayGrupoService,
+  type GeekDayUserStatus,
+  type GeekDayDraw,
+  type GeekDayGrupo,
+} from '@/services/geekdayService';
+import {
+  AlertTriangle, Check, Loader2, Plus, RotateCcw, Settings2, Trash2, Trophy, Users,
+} from 'lucide-react';
 import { formatDate } from '@/lib/dateUtils';
 import { cn } from '@/lib/utils';
 import { DatePicker } from '@/components/ui/date-picker';
@@ -39,6 +52,417 @@ import {
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 
+/** Cor de fallback dos chips de setor — mesma dos diálogos de setores. */
+const COR_SETOR_PADRAO = '#94a3b8';
+
+/** Mensagem de erro vinda da API. O backend do Geek Day já responde em
+ * português (`detail` ou erro de campo); o fallback só entra quando a falha é
+ * de rede e não há corpo nenhum para mostrar. */
+function extractApiError(err: unknown, fallback: string): string {
+  const data = (err as { response?: { data?: Record<string, unknown> } })?.response?.data;
+  if (data) {
+    const k = Object.keys(data)[0];
+    const v = k ? data[k] : undefined;
+    if (Array.isArray(v) && typeof v[0] === 'string') return v[0];
+    if (typeof v === 'string') return v;
+  }
+  return fallback;
+}
+
+function SetorChip({ nome, cor }: { nome: string; cor?: string | null }) {
+  return (
+    <span
+      className="inline-flex items-center rounded-full border px-[10px] py-[2px] text-xs font-medium"
+      style={chipStyle(cor || COR_SETOR_PADRAO)}
+    >
+      {nome}
+    </span>
+  );
+}
+
+function Caixa({ checked }: { checked: boolean }) {
+  return (
+    <span
+      aria-hidden
+      className={cn(
+        'flex h-[16px] w-[16px] shrink-0 items-center justify-center rounded-[3px] border transition-colors',
+        checked
+          ? 'border-[var(--color-primary)] bg-[var(--color-primary)] text-white'
+          : 'border-[var(--color-border)] bg-[var(--color-background)]',
+      )}
+    >
+      {checked && <Check className="h-[12px] w-[12px]" strokeWidth={3} />}
+    </span>
+  );
+}
+
+type GerenciarGruposDialogProps = {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  /** Propaga a lista atualizada para a tela (seletor e cabeçalho) a cada
+   * alteração, para o gestor ver o efeito sem fechar o diálogo. */
+  onChanged: (grupos: GeekDayGrupo[]) => void;
+};
+
+/**
+ * Administração dos grupos de Geek Day: criar, renomear, juntar/separar
+ * setores e excluir grupo sem histórico.
+ *
+ * Vive num diálogo, e não na própria tela, porque a tela do sorteio ocupa a
+ * altura toda com a roleta e as duas listas — encaixar um CRUD ali empurraria
+ * a roleta para fora da dobra. Quem abre precisa de `manage_geekday`; o
+ * endpoint também exige.
+ */
+function GerenciarGruposDialog({ open, onOpenChange, onChanged }: GerenciarGruposDialogProps) {
+  const [grupos, setGrupos] = useState<GeekDayGrupo[]>([]);
+  const [setores, setSetores] = useState<CatalogItem[]>([]);
+  const [selecionadoId, setSelecionadoId] = useState<number | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [salvando, setSalvando] = useState(false);
+  const [erro, setErro] = useState('');
+  const [novoNome, setNovoNome] = useState('');
+  const [nomeEditado, setNomeEditado] = useState('');
+  const [confirmandoExclusao, setConfirmandoExclusao] = useState(false);
+
+  useEffect(() => {
+    if (!open) return;
+    let cancelado = false;
+    setLoading(true);
+    setErro('');
+    setNovoNome('');
+    setConfirmandoExclusao(false);
+    void (async () => {
+      try {
+        const [lista, catalogo] = await Promise.all([
+          geekdayGrupoService.listar(),
+          userService.getSetores(),
+        ]);
+        if (cancelado) return;
+        setGrupos(lista);
+        setSetores(catalogo);
+        setSelecionadoId((prev) => (prev != null && lista.some((g) => g.id === prev) ? prev : lista[0]?.id ?? null));
+      } catch (err) {
+        if (!cancelado) setErro(extractApiError(err, 'Não foi possível carregar os grupos do Geek Day.'));
+      } finally {
+        if (!cancelado) setLoading(false);
+      }
+    })();
+    return () => {
+      cancelado = true;
+    };
+  }, [open]);
+
+  const selecionado = grupos.find((g) => g.id === selecionadoId) ?? null;
+
+  // O nome do campo acompanha o grupo escolhido; sem isto, trocar de grupo
+  // deixaria no input o nome do anterior e um "Renomear" enganoso.
+  useEffect(() => {
+    setNomeEditado(grupos.find((g) => g.id === selecionadoId)?.nome ?? '');
+    setConfirmandoExclusao(false);
+  }, [selecionadoId, grupos]);
+
+  /** Setor -> id do grupo dono. Um setor pertence a no máximo um grupo (é
+   * UNIQUE no banco), então marcar o dono aqui já explica por que a linha de
+   * um setor ocupado aparece bloqueada. */
+  const donoDoSetor = useMemo(() => {
+    const mapa = new Map<string, number>();
+    for (const g of grupos) for (const s of g.setores_detalhe) mapa.set(String(s.id), g.id);
+    return mapa;
+  }, [grupos]);
+
+  const nomeDoGrupo = (id: number) => grupos.find((g) => g.id === id)?.nome ?? 'outro grupo';
+
+  /** Toda mutação recarrega a lista inteira: remover um setor daqui muda o
+   * mundo lá fora (ele volta a ter grupo próprio), e recompor isso na mão
+   * deixaria a tela mentindo. */
+  const executar = async (
+    acao: () => Promise<void>,
+    fallback: string,
+    depois?: (lista: GeekDayGrupo[]) => void,
+  ) => {
+    setSalvando(true);
+    setErro('');
+    try {
+      await acao();
+      const lista = await geekdayGrupoService.listar();
+      setGrupos(lista);
+      onChanged(lista);
+      depois?.(lista);
+    } catch (err) {
+      setErro(extractApiError(err, fallback));
+    } finally {
+      setSalvando(false);
+    }
+  };
+
+  const criar = () => {
+    const nome = novoNome.trim();
+    if (!nome) return;
+    let criadoId: number | null = null;
+    void executar(
+      async () => {
+        criadoId = (await geekdayGrupoService.criar(nome)).id;
+        setNovoNome('');
+      },
+      'Não foi possível criar o grupo.',
+      (lista) => {
+        if (criadoId != null && lista.some((g) => g.id === criadoId)) setSelecionadoId(criadoId);
+      },
+    );
+  };
+
+  const renomear = () => {
+    if (!selecionado) return;
+    const nome = nomeEditado.trim();
+    if (!nome || nome === selecionado.nome) return;
+    void executar(
+      () => geekdayGrupoService.renomear(selecionado.id, nome).then(() => undefined),
+      'Não foi possível renomear o grupo.',
+    );
+  };
+
+  const alternarSetor = (setorId: number, jaEstaNoGrupo: boolean) => {
+    if (!selecionado) return;
+    void executar(
+      () => (jaEstaNoGrupo
+        ? geekdayGrupoService.removerSetor(selecionado.id, setorId)
+        : geekdayGrupoService.adicionarSetor(selecionado.id, setorId)
+      ).then(() => undefined),
+      jaEstaNoGrupo
+        ? 'Não foi possível remover o setor do grupo.'
+        : 'Não foi possível adicionar o setor ao grupo.',
+    );
+  };
+
+  const excluir = () => {
+    if (!selecionado) return;
+    void executar(
+      () => geekdayGrupoService.excluir(selecionado.id),
+      'Não foi possível excluir o grupo.',
+      (lista) => {
+        setConfirmandoExclusao(false);
+        setSelecionadoId(lista[0]?.id ?? null);
+      },
+    );
+  };
+
+  const fechar = () => {
+    if (!salvando) onOpenChange(false);
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={(v) => !v && fechar()} containerClassName="max-w-3xl">
+      <DialogContent onClose={salvando ? undefined : fechar}>
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Users className="h-5 w-5 text-[var(--color-primary)]" />
+            Grupos do Geek Day
+          </DialogTitle>
+          <DialogDescription>
+            Um grupo é o conjunto de setores que sorteia junto e compartilha a mesma fila. Por
+            padrão cada setor é o próprio grupo — junte setores aqui quando eles apresentarem
+            no mesmo Geek Day.
+          </DialogDescription>
+        </DialogHeader>
+
+        {loading ? (
+          <div className="flex items-center justify-center py-10">
+            <Loader2 className="h-6 w-6 animate-spin text-[var(--color-primary)]" />
+          </div>
+        ) : (
+          <div className="mt-4 grid gap-4 md:grid-cols-[240px_1fr]">
+            {/* Coluna esquerda: os grupos existentes e a criação de um novo */}
+            <div className="space-y-2">
+              <Label>Grupos ({grupos.length})</Label>
+              <div className="max-h-[280px] overflow-y-auto rounded-md border border-[var(--color-border)]">
+                {grupos.length === 0 ? (
+                  <p className="p-4 text-center text-sm text-[var(--color-muted-foreground)]">
+                    Nenhum grupo ainda.
+                  </p>
+                ) : (
+                  grupos.map((g) => (
+                    <button
+                      key={g.id}
+                      type="button"
+                      onClick={() => setSelecionadoId(g.id)}
+                      className={cn(
+                        'block w-full px-3 py-2 text-left transition-colors hover:bg-[var(--color-accent)]',
+                        g.id === selecionadoId ? 'bg-[var(--color-accent)]' : '',
+                      )}
+                    >
+                      <span className="block truncate text-sm font-medium">{g.nome}</span>
+                      <span className="block truncate text-xs text-[var(--color-muted-foreground)]">
+                        {g.setores_detalhe.length === 0
+                          ? 'Sem setores'
+                          : g.setores_detalhe.map((s) => s.nome).join(', ')}
+                      </span>
+                    </button>
+                  ))
+                )}
+              </div>
+              <div className="flex gap-2">
+                <Input
+                  placeholder="Nome do novo grupo"
+                  value={novoNome}
+                  onChange={(e) => setNovoNome(e.target.value)}
+                  disabled={salvando}
+                />
+                <Button
+                  type="button"
+                  className="shrink-0 gap-1.5"
+                  disabled={salvando || !novoNome.trim()}
+                  onClick={criar}
+                >
+                  <Plus className="h-4 w-4" />
+                  Criar
+                </Button>
+              </div>
+            </div>
+
+            {/* Coluna direita: o grupo escolhido */}
+            {selecionado ? (
+              <div className="space-y-4">
+                <div className="space-y-1.5">
+                  <Label>Nome do grupo</Label>
+                  <div className="flex gap-2">
+                    <Input
+                      value={nomeEditado}
+                      onChange={(e) => setNomeEditado(e.target.value)}
+                      disabled={salvando}
+                    />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="shrink-0"
+                      disabled={salvando || !nomeEditado.trim() || nomeEditado.trim() === selecionado.nome}
+                      onClick={renomear}
+                    >
+                      Renomear
+                    </Button>
+                  </div>
+                  <p className="text-xs text-[var(--color-muted-foreground)]">
+                    Ciclo atual: {selecionado.current_cycle} — resetar o sorteio deste grupo não
+                    mexe na fila dos outros.
+                  </p>
+                </div>
+
+                <div className="space-y-1.5">
+                  <Label>Setores que sorteiam juntos</Label>
+                  <div className="max-h-[240px] overflow-y-auto rounded-md border border-[var(--color-border)]">
+                    {setores.length === 0 ? (
+                      <p className="p-4 text-center text-sm text-[var(--color-muted-foreground)]">
+                        Nenhum setor cadastrado.
+                      </p>
+                    ) : (
+                      setores.map((s) => {
+                        const dono = donoDoSetor.get(String(s.id));
+                        const neste = dono === selecionado.id;
+                        const ocupado = dono != null && !neste;
+                        return (
+                          <button
+                            key={s.id}
+                            type="button"
+                            disabled={salvando || ocupado}
+                            onClick={() => alternarSetor(Number(s.id), neste)}
+                            className={cn(
+                              'flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm transition-colors',
+                              ocupado
+                                ? 'cursor-not-allowed opacity-60'
+                                : 'hover:bg-[var(--color-accent)]',
+                              neste ? 'bg-[var(--color-accent)]/60' : '',
+                            )}
+                          >
+                            <Caixa checked={neste} />
+                            <span
+                              aria-hidden
+                              className="h-[10px] w-[10px] shrink-0 rounded-full"
+                              style={{ backgroundColor: s.cor || COR_SETOR_PADRAO }}
+                            />
+                            <span className="min-w-0 flex-1 truncate">{s.nome}</span>
+                            {ocupado && (
+                              <span className="shrink-0 text-[11px] text-[var(--color-muted-foreground)]">
+                                no grupo «{nomeDoGrupo(dono)}»
+                              </span>
+                            )}
+                          </button>
+                        );
+                      })
+                    )}
+                  </div>
+                  <p className="text-xs text-[var(--color-muted-foreground)]">
+                    Cada setor pertence a um grupo só — para movê-lo, tire-o do grupo atual
+                    primeiro. Setor que sai daqui volta a ter o Geek Day dele.
+                  </p>
+                </div>
+
+                {confirmandoExclusao ? (
+                  <div className="rounded-md border border-[var(--color-destructive)]/40 bg-[var(--color-destructive)]/10 px-3 py-2.5">
+                    <p className="flex items-center gap-1.5 text-sm font-semibold text-[var(--color-destructive)]">
+                      <AlertTriangle className="h-4 w-4" />
+                      Excluir «{selecionado.nome}»?
+                    </p>
+                    <p className="mt-1.5 text-sm leading-snug text-[var(--color-foreground)]">
+                      Só dá para excluir um grupo que ainda não tem sorteio registrado — o
+                      histórico de quem já apresentou não é apagado. Os setores dele voltam a
+                      ter o Geek Day próprio.
+                    </p>
+                    <div className="mt-2.5 flex gap-2">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        disabled={salvando}
+                        onClick={() => setConfirmandoExclusao(false)}
+                      >
+                        Cancelar
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="destructive"
+                        size="sm"
+                        disabled={salvando}
+                        onClick={excluir}
+                      >
+                        {salvando
+                          ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Excluindo...</>
+                          : 'Excluir grupo'}
+                      </Button>
+                    </div>
+                  </div>
+                ) : (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="gap-1.5 text-[var(--color-destructive)]"
+                    disabled={salvando}
+                    onClick={() => setConfirmandoExclusao(true)}
+                  >
+                    <Trash2 className="h-4 w-4" />
+                    Excluir grupo
+                  </Button>
+                )}
+              </div>
+            ) : (
+              <p className="flex items-center justify-center rounded-md border border-dashed border-[var(--color-border)] p-6 text-center text-sm text-[var(--color-muted-foreground)]">
+                Crie um grupo para começar.
+              </p>
+            )}
+          </div>
+        )}
+
+        {erro && <p className="mt-3 text-sm text-[var(--color-destructive)]">{erro}</p>}
+
+        <DialogFooter className="mt-6 gap-2 sm:gap-2">
+          <Button type="button" variant="outline" onClick={fechar} disabled={salvando}>
+            Fechar
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 export default function GeekDay() {
   const { user } = useAuth();
   const [activeTab, setActiveTab] = useState<'sorteio' | 'historico'>('sorteio');
@@ -54,6 +478,12 @@ export default function GeekDay() {
   const [winnerPresentationDate, setWinnerPresentationDate] = useState<string>('');
   const [activeId, setActiveId] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
+  /** Grupo do próprio usuário — o Geek Day dele, resolvido pelo setor primário. */
+  const [meuGrupo, setMeuGrupo] = useState<GeekDayGrupo | null>(null);
+  /** Todos os grupos, só para quem pode olhar além do próprio. */
+  const [grupos, setGrupos] = useState<GeekDayGrupo[]>([]);
+  const [grupoSelecionadoId, setGrupoSelecionadoId] = useState<number | null>(null);
+  const [showGruposDialog, setShowGruposDialog] = useState(false);
   const wheelRef = useRef<PrizeWheelRef>(null);
   const confettiFiredRef = useRef(false);
   const winnerAvatarRef = useRef<HTMLDivElement>(null);
@@ -68,6 +498,11 @@ export default function GeekDay() {
   const isGestor = hasPermission(user, 'manage_geekday');
   const canReset = hasPermission(user, 'manage_geekday');
 
+  // Trocar de grupo é o mesmo gate do `?grupo=` no backend: administrar o
+  // ritual OU já enxergar todos os setores. Quem não tem nenhuma das duas vê
+  // apenas o próprio grupo — sem seletor, sem escolha.
+  const podeTrocarGrupo = isGestor || hasPermission(user, 'view_cross_setor');
+
   const sensors = useSensors(
     useSensor(PointerSensor),
     useSensor(KeyboardSensor, {
@@ -75,9 +510,52 @@ export default function GeekDay() {
     })
   );
 
+  /** Grupo que a tela está mostrando: o escolhido no seletor, ou o do usuário. */
+  const grupoExibido = useMemo(
+    () => grupos.find((g) => g.id === grupoSelecionadoId) ?? meuGrupo,
+    [grupos, grupoSelecionadoId, meuGrupo],
+  );
+
+  /** Opções do seletor. Se a listagem falhar (ou vier vazia), ao menos o
+   * próprio grupo aparece — a tela nunca fica sem identificar onde está. */
+  const opcoesGrupo = useMemo(() => {
+    const base = grupos.length > 0 ? grupos : meuGrupo ? [meuGrupo] : [];
+    return base.map((g) => ({ value: String(g.id), label: g.nome }));
+  }, [grupos, meuGrupo]);
+
+  /** Id enviado como `?grupo=` nas chamadas de sorteio. Fica `undefined`
+   * enquanto a tela está no grupo do próprio usuário: sem o parâmetro o
+   * backend resolve exatamente o mesmo grupo e não exige permissão extra de
+   * quem só abre o próprio Geek Day. */
+  const grupoParam = meuGrupo && grupoSelecionadoId != null && grupoSelecionadoId !== meuGrupo.id
+    ? grupoSelecionadoId
+    : undefined;
+
+  /** `meu` cria o grupo do setor do usuário se ainda não existir — é por isso
+   * que a tela sempre tem um grupo para mostrar, mesmo em base nova. */
+  const recarregarGrupos = async () => {
+    try {
+      const [meu, lista] = await Promise.all([
+        geekdayGrupoService.meu(),
+        podeTrocarGrupo ? geekdayGrupoService.listar() : Promise.resolve<GeekDayGrupo[]>([]),
+      ]);
+      setMeuGrupo(meu);
+      setGrupos(lista);
+      // Mantém o grupo que o gestor estava olhando, a menos que ele tenha
+      // deixado de existir (excluído na administração de grupos).
+      setGrupoSelecionadoId((prev) => (prev != null && lista.some((g) => g.id === prev) ? prev : meu.id));
+    } catch (error: any) {
+      console.error('Erro ao carregar o grupo do Geek Day:', error);
+    }
+  };
+
+  useEffect(() => {
+    void recarregarGrupos();
+  }, [podeTrocarGrupo]);
+
   useEffect(() => {
     loadData();
-  }, [activeTab]);
+  }, [activeTab, grupoParam]);
 
   // Confetti em tela cheia: dispara sempre que o modal do ganhador abre (com foto ou só iniciais)
   useEffect(() => {
@@ -149,7 +627,9 @@ export default function GeekDay() {
     }, 10000); // Aumentado para 10 segundos para reduzir requisições
 
     return () => clearInterval(interval);
-  }, [activeTab, dragging]);
+    // `grupoParam` entra nas dependências para o polling não continuar batendo
+    // no grupo anterior depois que o gestor troca de grupo no seletor.
+  }, [activeTab, dragging, grupoParam]);
 
   const loadData = async (showLoading = true) => {
     try {
@@ -157,10 +637,10 @@ export default function GeekDay() {
         setLoading(true);
       }
       if (activeTab === 'sorteio') {
-        const usersData = await geekdayService.getUsersStatus();
+        const usersData = await geekdayService.getUsersStatus(grupoParam);
         setUsers(usersData);
       } else {
-        const historicoData = await geekdayService.getHistorico();
+        const historicoData = await geekdayService.getHistorico(grupoParam);
         setHistorico(historicoData);
       }
     } catch (error: any) {
@@ -266,7 +746,8 @@ export default function GeekDay() {
       const resultado = await geekdayService.marcarComoSorteado(
         String(winner.id),
         'Sorteado pela roleta',
-        winnerPresentationDate || null
+        winnerPresentationDate || null,
+        grupoParam
       );
       console.log('Sorteio confirmado no backend:', resultado);
       
@@ -283,7 +764,7 @@ export default function GeekDay() {
       await loadData();
       
       // Verificar se o usuário foi atualizado corretamente
-      const updatedUsers = await geekdayService.getUsersStatus();
+      const updatedUsers = await geekdayService.getUsersStatus(grupoParam);
       const updatedUser = updatedUsers.find(u => String(u.id) === String(winnerId));
       console.log('Usuário após recarregar:', updatedUser ? { id: updatedUser.id, ja_sorteado: updatedUser.ja_sorteado } : 'não encontrado');
       
@@ -307,9 +788,12 @@ export default function GeekDay() {
 
     setResetting(true);
     try {
-      await geekdayService.resetarSorteios();
+      await geekdayService.resetarSorteios(grupoParam);
       setShowResetDialog(false);
       setWinner(null);
+      // O ciclo é do grupo e a tela mostra esse número: recarregar os grupos
+      // evita exibir o ciclo anterior até o próximo refresh.
+      await recarregarGrupos();
       loadData();
     } catch (error: any) {
       console.error('Erro ao resetar sorteios:', error);
@@ -399,10 +883,12 @@ export default function GeekDay() {
     try {
       if (isTargetSorted) {
         // Marcar como sorteado
-        await geekdayService.marcarComoSorteado(String(draggedUser.id), 'Movido manualmente pelo supervisor');
+        await geekdayService.marcarComoSorteado(
+          String(draggedUser.id), 'Movido manualmente pelo supervisor', null, grupoParam,
+        );
       } else if (isTargetAvailable) {
         // Desmarcar como sorteado
-        await geekdayService.desmarcarComoSorteado(String(draggedUser.id));
+        await geekdayService.desmarcarComoSorteado(String(draggedUser.id), grupoParam);
       }
       
       // Atualizar estado local imediatamente para feedback visual
@@ -476,7 +962,7 @@ export default function GeekDay() {
                 <Check className="h-4 w-4 text-green-500 shrink-0" strokeWidth={3} />
               </div>
               <p className="text-xs text-green-500 truncate">
-                {getRoleDisplayName(user.role || 'desenvolvedor')}
+                {rotuloCargo(user)}
               </p>
             </div>
           </CardContent>
@@ -509,7 +995,7 @@ export default function GeekDay() {
               {getUserDisplayName(user)}
             </p>
             <p className="text-xs text-[var(--color-muted-foreground)] truncate">
-              {getRoleDisplayName(user.role || 'desenvolvedor')}
+              {rotuloCargo(user)}
             </p>
           </div>
         </CardContent>
@@ -577,6 +1063,13 @@ export default function GeekDay() {
     return user.username;
   };
 
+  /** Rótulo do cargo para exibir. Prefere o `role_display` que o backend já
+   * manda pronto (vem do catálogo, então cobre cargos criados pelo admin); o
+   * mapa fixo abaixo é só retaguarda. O CODENAME (`role`) continua sendo o que
+   * decide cor e ordem na roleta. */
+  const rotuloCargo = (u: GeekDayUserStatus): string =>
+    u.role_display || getRoleDisplayName(u.role || 'desenvolvedor');
+
   const getRoleDisplayName = (role: string): string => {
     switch (role) {
       case 'supervisor':
@@ -611,6 +1104,12 @@ export default function GeekDay() {
   const sortedUsers = users.filter(u => u.ja_sorteado);
   const sectors = getSectors();
 
+  // A biblioteca da roleta exige de 2 a 24 fatias. Com o Geek Day por grupo de
+  // setores isso passou a acontecer bem mais (grupo pequeno, ou fila quase no
+  // fim), então só a ROLETA some — as listas continuam na tela para o gestor
+  // marcar quem falta arrastando.
+  const roletaIndisponivel = sectors.length < 2;
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -621,11 +1120,72 @@ export default function GeekDay() {
 
   return (
     <div className="flex flex-col h-[calc(100vh-128px)] space-y-[24px]">
-      <div>
-        <h1 className="text-2xl font-bold text-[var(--color-foreground)]">Geek Day</h1>
-        <p className="text-sm text-[var(--color-muted-foreground)] mt-1">
-          Sistema de sorteio para o Geek Day
-        </p>
+      <div className="shrink-0">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h1 className="text-2xl font-bold text-[var(--color-foreground)]">Geek Day</h1>
+            <p className="text-sm text-[var(--color-muted-foreground)] mt-1">
+              {grupoExibido ? (
+                <>
+                  Sorteio do grupo{' '}
+                  <strong className="text-[var(--color-foreground)]">{grupoExibido.nome}</strong>
+                  {' '}— cada grupo tem a própria fila e o próprio ciclo (atual: {grupoExibido.current_cycle}).
+                </>
+              ) : (
+                'Sistema de sorteio para o Geek Day'
+              )}
+            </p>
+          </div>
+
+          {/* Seletor e administração só para quem pode sair do próprio grupo
+              (`podeTrocarGrupo` já engloba quem tem `manage_geekday`). */}
+          {podeTrocarGrupo && (
+            <div className="flex flex-wrap items-center gap-2">
+              {podeTrocarGrupo && opcoesGrupo.length > 0 && (
+                <FilterSelect
+                  options={opcoesGrupo}
+                  value={grupoSelecionadoId != null ? String(grupoSelecionadoId) : ''}
+                  onChange={(v) => v && setGrupoSelecionadoId(Number(v))}
+                  clearable={false}
+                  className="min-w-[220px]"
+                  placeholder="Grupo do Geek Day"
+                  searchPlaceholder="Buscar grupo..."
+                />
+              )}
+              {isGestor && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="gap-2"
+                  onClick={() => setShowGruposDialog(true)}
+                >
+                  <Settings2 className="h-4 w-4" />
+                  Gerenciar grupos
+                </Button>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Quais setores sorteiam juntos neste grupo */}
+        {grupoExibido && (
+          <div className="mt-2 flex flex-wrap items-center gap-1.5">
+            {grupoExibido.setores_detalhe.length === 0 ? (
+              <span className="text-xs text-[var(--color-muted-foreground)]">
+                Nenhum setor vinculado a este grupo.
+              </span>
+            ) : (
+              grupoExibido.setores_detalhe.map((s) => (
+                <SetorChip key={s.id} nome={s.nome} cor={s.cor} />
+              ))
+            )}
+            {grupoParam != null && (
+              <Badge variant="outline" className="text-[11px]">
+                Você está vendo o Geek Day de outro grupo
+              </Badge>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Tabs */}
@@ -675,38 +1235,69 @@ export default function GeekDay() {
           {/* Área de sorteio */}
           <Card className="flex-1 min-h-0 flex flex-col">
             <CardContent className="flex-1 min-h-0 overflow-hidden p-6">
-              {sectors.length >= 2 ? (
+              {users.length > 0 ? (
                 <div className="grid grid-cols-1 lg:grid-cols-5 gap-6 h-full">
                   {/* Coluna esquerda: Roleta */}
                   <div className="lg:col-span-2 flex flex-col items-center justify-center space-y-3 h-full min-h-0">
                     <div className="w-full flex-1 flex items-center justify-center min-h-0 relative">
-                      <div className="w-full max-w-lg h-full max-h-[500px] aspect-square relative rounded-2xl overflow-hidden roulette-wrapper">
-                        <PrizeWheel
-                          ref={wheelRef}
-                          sectors={sectors}
-                          onSpinStart={handleSpinStart}
-                          onSpinEnd={handleSpinEnd}
-                          duration={4}
-                          minSpins={5}
-                          maxSpins={8}
-                          wheelColors={getWheelColors()}
-                          textColor="#ffffff"
-                          textFontSize={16}
-                        />
+                      <div className={cn(
+                        "w-full max-w-lg h-full max-h-[500px] aspect-square relative rounded-2xl overflow-hidden roulette-wrapper",
+                        roletaIndisponivel && "bg-[var(--color-muted)]",
+                      )}>
+                        {!roletaIndisponivel && (
+                          <PrizeWheel
+                            ref={wheelRef}
+                            sectors={sectors}
+                            onSpinStart={handleSpinStart}
+                            onSpinEnd={handleSpinEnd}
+                            duration={4}
+                            minSpins={5}
+                            maxSpins={8}
+                            wheelColors={getWheelColors()}
+                            textColor="#ffffff"
+                            textFontSize={16}
+                          />
+                        )}
                         {/* Overlay escuro quando não está sorteando */}
                         {!isSpinning && (
                           <div className="absolute inset-0 bg-black/60 rounded-2xl flex items-center justify-center z-10 backdrop-blur-sm">
-                            {/* Botão de sorteio sobreposto */}
-                            {isGestor && (
-                              <Button
-                                onClick={handleSpin}
-                                disabled={isSpinning || availableUsers.length < 2}
-                                size="lg"
-                                className="gap-2 shadow-lg"
-                              >
-                                <Trophy className="h-5 w-5" />
-                                Girar Roleta
-                              </Button>
+                            {roletaIndisponivel ? (
+                              <div className="text-center p-6">
+                                <p className="text-white font-semibold text-lg mb-2">
+                                  {availableUsers.length === 0
+                                    ? 'Todos já foram sorteados neste grupo!'
+                                    : 'Falta só 1 participante na fila.'}
+                                </p>
+                                <p className="text-white/80 text-sm mb-4">
+                                  {availableUsers.length === 0
+                                    ? 'Use "Resetar Sorteios" para abrir um novo ciclo — o histórico é preservado.'
+                                    : 'A roleta precisa de pelo menos 2 na fila. Marque quem falta arrastando o card para "Já Sorteados".'}
+                                </p>
+                                {canReset && availableUsers.length === 0 && (
+                                  <Button
+                                    variant="default"
+                                    size="lg"
+                                    onClick={() => setShowResetDialog(true)}
+                                    className="gap-2 shadow-lg"
+                                  >
+                                    <RotateCcw className="h-5 w-5" />
+                                    Resetar Sorteios
+                                  </Button>
+                                )}
+                              </div>
+                            ) : (
+                              /* Botão de sorteio sobreposto */
+                              isGestor && (
+                                <Button
+                                  onClick={handleSpin}
+                                  disabled={isSpinning || availableUsers.length < 2}
+                                  size="lg"
+                                  className="gap-2 shadow-lg"
+                                >
+                                  <Trophy className="h-5 w-5" />
+                                  Girar Roleta
+                                </Button>
+                              )
                             )}
                           </div>
                         )}
@@ -788,26 +1379,33 @@ export default function GeekDay() {
                   </div>
                 </div>
                   ) : (
+                    /* Grupo sem ninguém: o roster é montado pelo setor PRIMÁRIO
+                       de cada pessoa, então grupo sem setor (ou com setores
+                       vazios) não tem quem sortear. */
                     <div className="flex flex-col items-center justify-center h-full min-h-0">
                       <div className="w-full max-w-lg h-full max-h-[500px] aspect-square relative rounded-2xl overflow-hidden roulette-wrapper bg-[var(--color-muted)] flex items-center justify-center">
                         {/* Overlay escuro com mensagem */}
                         <div className="absolute inset-0 bg-black/60 rounded-2xl flex items-center justify-center z-10 backdrop-blur-sm">
                           <div className="text-center p-6">
                             <p className="text-white font-semibold text-lg mb-2">
-                              Todos os usuários já foram sorteados!
+                              {grupoExibido
+                                ? `O grupo ${grupoExibido.nome} ainda não tem participantes.`
+                                : 'Este grupo ainda não tem participantes.'}
                             </p>
                             <p className="text-white/80 text-sm mb-4">
-                              Use o botão "Resetar Sorteios" para permitir novos sorteios.
+                              Participa do sorteio quem tem um dos setores do grupo como setor
+                              principal.
+                              {isGestor && ' Use "Gerenciar grupos" para incluir setores aqui.'}
                             </p>
-                            {canReset && (
+                            {isGestor && (
                               <Button
                                 variant="default"
                                 size="lg"
-                                onClick={() => setShowResetDialog(true)}
+                                onClick={() => setShowGruposDialog(true)}
                                 className="gap-2 shadow-lg"
                               >
-                                <RotateCcw className="h-5 w-5" />
-                                Resetar Sorteios
+                                <Settings2 className="h-5 w-5" />
+                                Gerenciar grupos
                               </Button>
                             )}
                           </div>
@@ -910,7 +1508,7 @@ export default function GeekDay() {
               {winner && getUserDisplayName(winner)}
             </h3>
             <p className="text-sm text-[var(--color-muted-foreground)] text-center">
-              {winner && getRoleDisplayName(winner.role || 'desenvolvedor')}
+              {winner && rotuloCargo(winner)}
             </p>
           </div>
           <div className="space-y-2">
@@ -952,7 +1550,9 @@ export default function GeekDay() {
           <DialogHeader>
             <DialogTitle>Resetar Sorteios</DialogTitle>
             <DialogDescription>
-              Tem certeza que deseja resetar todos os sorteios? Isso permitirá que todos os usuários sejam sorteados novamente.
+              Abre um novo ciclo{grupoExibido ? <> no grupo <strong className="text-[var(--color-foreground)]">{grupoExibido.nome}</strong></> : null}:
+              todos os participantes dele voltam a poder ser sorteados. A fila dos outros grupos
+              não é tocada e o histórico é preservado.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
@@ -980,6 +1580,31 @@ export default function GeekDay() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Administração dos grupos — só para quem tem manage_geekday */}
+      {isGestor && (
+        <GerenciarGruposDialog
+          open={showGruposDialog}
+          onOpenChange={(aberto) => {
+            setShowGruposDialog(aberto);
+            // Ao fechar, o grupo exibido pode ter mudado de setores (ou ter
+            // sido excluído): revalida a seleção e recarrega o roster, que é
+            // montado a partir dos setores do grupo.
+            if (!aberto) {
+              void recarregarGrupos();
+              void loadData(false);
+            }
+          }}
+          onChanged={(lista) => {
+            setGrupos(lista);
+            setGrupoSelecionadoId((prev) => (
+              prev != null && lista.some((g) => g.id === prev)
+                ? prev
+                : meuGrupo?.id ?? lista[0]?.id ?? null
+            ));
+          }}
+        />
+      )}
     </div>
   );
 }

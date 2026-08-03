@@ -135,7 +135,7 @@ export default function Projects() {
   // Regra diferente para "demandas" vs "solicitações de reajuste de data".
   // Demandas: somente supervisor/admin.
   // Solicitação de data: somente supervisor/admin.
-  const canEvaluateDemands = user?.role === 'supervisor' || user?.role === 'admin';
+  const canEvaluateDemands = hasPermission(user, 'manage_projects');
   const canEvaluateDateRequests = hasPermission(user, 'approve_due_date_requests');
 
   // As duas tabs (Demandas e Solicitações de data) devem aparecer para todos.
@@ -272,7 +272,7 @@ export default function Projects() {
     });
     setProjectFormError('');
 
-    if (user?.role === 'supervisor' || user?.role === 'admin') {
+    if (hasPermission(user, 'manage_projects')) {
       setProjectStageSelectionLoading(true);
       try {
         const global = await kanbanStageService.getAll();
@@ -321,7 +321,7 @@ export default function Projects() {
         const created = await projectService.create(projectFormData);
 
         // Se for supervisor/admin e escolheu etapas iniciais, aplicamos a configuração
-        if ((user?.role === 'supervisor' || user?.role === 'admin') && selectedStageKeys?.length && created?.id) {
+        if (hasPermission(user, 'manage_projects') && selectedStageKeys?.length && created?.id) {
           try {
             const selectedSet = new Set(selectedStageKeys);
             const defaultKeys = DEFAULT_STAGE_KEYS_ORDER;
@@ -2226,7 +2226,7 @@ export default function Projects() {
             </div>
 
             {/* Etapas iniciais (supervisor ou admin) */}
-            {(user?.role === 'supervisor' || user?.role === 'admin') && !editingProject && (
+            {(hasPermission(user, 'manage_projects')) && !editingProject && (
               <div className="space-y-[8px]">
                 <Label>Etapas iniciais do Kanban</Label>
                 {projectStageSelectionLoading ? (

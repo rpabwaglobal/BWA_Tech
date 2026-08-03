@@ -7,8 +7,14 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { FilterSelect } from '@/components/ui/filter-select';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
-import { Loader2, Search, Users as UsersIcon, Tag, Building2, ShieldCheck, X } from 'lucide-react';
+import { Checkbox } from '@/components/ui/checkbox';
+import {
+  Loader2, Search, Users as UsersIcon, Tag, Building2, ShieldCheck, X,
+  ChevronLeft, ChevronRight,
+} from 'lucide-react';
 import { UserPermissionsDialog } from './UserPermissionsDialog';
+import { SetoresDoUsuario } from '@/components/SetoresDoUsuario';
+import { listarSetoresDoUsuario } from '@/lib/catalog-style';
 
 function iniciais(nome: string): string {
   const partes = nome.trim().split(/\s+/).filter(Boolean);
@@ -20,6 +26,19 @@ function iniciais(nome: string): string {
 function displayName(user: User): string {
   const nome = `${user.first_name ?? ''} ${user.last_name ?? ''}`.trim();
   return nome || user.username;
+}
+
+/** Máximo de linhas por página nas listagens de gestão. */
+const PAGE_SIZE = 50;
+
+/** O usuário tem exatamente as permissões do template do cargo dele, ou foi
+ * ajustado individualmente? Compara como conjunto — ordem não importa. */
+function usaPermissoesPadrao(user: User, cargos: CatalogItem[]): boolean {
+  const template = cargos.find((c) => c.codename === user.role)?.permissoes_padrao ?? [];
+  const atuais = user.permissions ?? [];
+  if (template.length !== atuais.length) return false;
+  const doTemplate = new Set(template);
+  return atuais.every((codename) => doTemplate.has(codename));
 }
 
 const STATUS_OPTIONS = [
@@ -46,6 +65,9 @@ export function GerenciamentoUsuarios() {
 
   // Multi-seleção
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+
+  // Paginação (client-side: a listagem de gestão vem completa numa chamada só)
+  const [page, setPage] = useState(1);
 
   // Bulk
   const [bulkMode, setBulkMode] = useState<BulkMode>(null);
@@ -97,7 +119,12 @@ export function GerenciamentoUsuarios() {
           if (!blob.includes(q)) return false;
         }
         if (cargoFilter && u.role !== cargoFilter) return false;
-        if (setorFilter && (u.setor ?? '') !== setorFilter) return false;
+        // Filtra por QUALQUER setor da pessoa, não só pelo primário: quem está
+        // em Tecnologia como segundo setor tem que aparecer ao filtrar por
+        // Tecnologia — senão o filtro esconde exatamente quem ele deveria achar.
+        if (setorFilter && !listarSetoresDoUsuario(u).some((s) => s.codename === setorFilter)) {
+          return false;
+        }
         if (statusFilter === 'ativo' && !u.is_active) return false;
         if (statusFilter === 'inativo' && u.is_active) return false;
         return true;
@@ -105,8 +132,25 @@ export function GerenciamentoUsuarios() {
       .sort((a, b) => displayName(a).localeCompare(displayName(b), 'pt-BR'));
   }, [users, search, cargoFilter, setorFilter, statusFilter]);
 
-  const filteredIds = useMemo(() => filtered.map((u) => String(u.id)), [filtered]);
-  const allFilteredSelected = filteredIds.length > 0 && filteredIds.every((id) => selectedIds.has(id));
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const pageAtual = Math.min(page, totalPages);
+  const visiveis = useMemo(
+    () => filtered.slice((pageAtual - 1) * PAGE_SIZE, pageAtual * PAGE_SIZE),
+    [filtered, pageAtual],
+  );
+
+  // Filtrar muda o conjunto: voltar para a primeira página evita cair numa
+  // página que não existe mais.
+  useEffect(() => {
+    setPage(1);
+  }, [search, cargoFilter, setorFilter, statusFilter]);
+
+  // "Selecionar todos" age sobre a PÁGINA visível, não sobre todos os
+  // filtrados: com ação em massa, marcar em silêncio o que está fora da tela
+  // é como um bulk sai errado.
+  const idsVisiveis = useMemo(() => visiveis.map((u) => String(u.id)), [visiveis]);
+  const allFilteredSelected = idsVisiveis.length > 0 && idsVisiveis.every((id) => selectedIds.has(id));
+  const algunsSelecionados = !allFilteredSelected && idsVisiveis.some((id) => selectedIds.has(id));
 
   const toggleOne = (id: string) =>
     setSelectedIds((prev) => {
@@ -118,8 +162,8 @@ export function GerenciamentoUsuarios() {
   const toggleAllFiltered = () =>
     setSelectedIds((prev) => {
       const next = new Set(prev);
-      if (allFilteredSelected) filteredIds.forEach((id) => next.delete(id));
-      else filteredIds.forEach((id) => next.add(id));
+      if (allFilteredSelected) idsVisiveis.forEach((id) => next.delete(id));
+      else idsVisiveis.forEach((id) => next.add(id));
       return next;
     });
   const clearSelection = () => setSelectedIds(new Set());
@@ -203,13 +247,24 @@ export function GerenciamentoUsuarios() {
         </>
       )}
       {bulkMode === 'setor' && (
-        <FilterSelect
-          options={setorOptions}
-          value={bulkSetor}
-          onChange={setBulkSetor}
-          placeholder="Sem setor (limpar)"
-          searchPlaceholder="Buscar setor..."
-        />
+        <>
+          <FilterSelect
+            options={setorOptions}
+            value={bulkSetor}
+            onChange={setBulkSetor}
+            placeholder="Limpar o setor primário"
+            searchPlaceholder="Buscar setor..."
+          />
+          {/* A ação em massa define o PRIMÁRIO e soma vínculos; ela não tira
+              ninguém de um setor. Sem dizer isso aqui, escolher "Sem Setor"
+              para quem já tem setor real parece ter falhado — o backend trata
+              como no-op de propósito. */}
+          <p className="text-xs text-[var(--color-muted-foreground)]">
+            Define o setor primário e soma ao que a pessoa já tem — quem ganha um setor real
+            sai de “Sem Setor” automaticamente. Escolher “Sem Setor” não tira ninguém de um
+            setor real, e limpar zera só o primário: para remover um vínculo, abra o usuário.
+          </p>
+        </>
       )}
       {bulkMode === 'permissions' && (
         <>
@@ -309,32 +364,43 @@ export function GerenciamentoUsuarios() {
               <thead>
                 <tr className="bg-[var(--color-muted)]/50">
                   <th className="w-0 border-b border-[var(--color-border)] p-3">
-                    <input type="checkbox" className="h-4 w-4" checked={allFilteredSelected} onChange={toggleAllFiltered} aria-label="Selecionar todos" />
+                    <Checkbox
+                      checked={allFilteredSelected}
+                      indeterminate={algunsSelecionados}
+                      onCheckedChange={toggleAllFiltered}
+                      aria-label="Selecionar todos desta página"
+                    />
                   </th>
                   <th className="border-b border-[var(--color-border)] p-3 text-left font-medium">Usuário</th>
                   <th className="border-b border-[var(--color-border)] p-3 text-left font-medium">Cargo</th>
-                  <th className="border-b border-[var(--color-border)] p-3 text-left font-medium">Setor</th>
+                  <th className="border-b border-[var(--color-border)] p-3 text-left font-medium">Setores</th>
+                  <th className="border-b border-[var(--color-border)] p-3 text-left font-medium">Permissões</th>
                   <th className="border-b border-[var(--color-border)] p-3 text-left font-medium">Status</th>
                 </tr>
               </thead>
               <tbody>
-                {filtered.length === 0 ? (
+                {visiveis.length === 0 ? (
                   <tr>
-                    <td colSpan={5} className="p-8 text-center text-sm text-[var(--color-muted-foreground)]">
+                    <td colSpan={6} className="p-8 text-center text-sm text-[var(--color-muted-foreground)]">
                       Nenhum usuário encontrado.
                     </td>
                   </tr>
                 ) : (
-                  filtered.map((u) => {
+                  visiveis.map((u) => {
                     const id = String(u.id);
                     const checked = selectedIds.has(id);
+                    const padrao = usaPermissoesPadrao(u, cargos);
                     return (
                       <tr
                         key={u.id}
                         className={`border-b border-[var(--color-border)] transition-colors last:border-b-0 hover:bg-[var(--color-accent)] ${checked ? 'bg-[var(--color-primary)]/5' : ''}`}
                       >
                         <td className="p-3" onClick={(e) => e.stopPropagation()}>
-                          <input type="checkbox" className="h-4 w-4" checked={checked} onChange={() => toggleOne(id)} aria-label={`Selecionar ${displayName(u)}`} />
+                          <Checkbox
+                            checked={checked}
+                            onCheckedChange={() => toggleOne(id)}
+                            aria-label={`Selecionar ${displayName(u)}`}
+                          />
                         </td>
                         <td className="cursor-pointer p-3" onClick={() => setSelectedUser(u)}>
                           <div className="flex items-center gap-3">
@@ -351,9 +417,29 @@ export function GerenciamentoUsuarios() {
                           </div>
                         </td>
                         <td className="cursor-pointer p-3 text-[var(--color-foreground)]" onClick={() => setSelectedUser(u)}>{u.role_display}</td>
-                        <td className="cursor-pointer p-3 text-[var(--color-muted-foreground)]" onClick={() => setSelectedUser(u)}>{u.setor_display || '—'}</td>
+                        {/* Todos os setores da pessoa. A célula é estreita, então
+                            só duas tags cabem — o resto vira "+N", com os nomes
+                            no `title`. */}
                         <td className="cursor-pointer p-3" onClick={() => setSelectedUser(u)}>
-                          <Badge variant={u.is_active ? 'success' : 'secondary'}>{u.is_active ? 'Ativo' : 'Inativo'}</Badge>
+                          <SetoresDoUsuario usuario={u} max={2} vazio="—" />
+                        </td>
+                        <td className="cursor-pointer p-3" onClick={() => setSelectedUser(u)}>
+                          <Badge
+                            variant={padrao ? 'secondary' : 'default'}
+                            className="w-[112px] justify-center"
+                            title={
+                              padrao
+                                ? 'Tem exatamente as permissões do template do cargo.'
+                                : 'As permissões foram ajustadas individualmente e não batem com o template do cargo.'
+                            }
+                          >
+                            {padrao ? 'Padrão' : 'Personalizado'}
+                          </Badge>
+                        </td>
+                        <td className="cursor-pointer p-3" onClick={() => setSelectedUser(u)}>
+                          <Badge variant={u.is_active ? 'success' : 'secondary'} className="w-[112px] justify-center">
+                            {u.is_active ? 'Ativo' : 'Inativo'}
+                          </Badge>
                         </td>
                       </tr>
                     );
@@ -361,6 +447,42 @@ export function GerenciamentoUsuarios() {
                 )}
               </tbody>
             </table>
+          </div>
+        )}
+
+        {!loading && filtered.length > 0 && (
+          <div className="flex flex-wrap items-center justify-between gap-3 pt-1 text-sm text-[var(--color-muted-foreground)]">
+            <span>
+              {(pageAtual - 1) * PAGE_SIZE + 1}–{Math.min(pageAtual * PAGE_SIZE, filtered.length)} de{' '}
+              {filtered.length} usuário(s)
+            </span>
+            {totalPages > 1 && (
+              <div className="flex items-center gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={pageAtual <= 1}
+                  onClick={() => setPage((p) => Math.max(1, p - 1))}
+                  className="gap-1"
+                >
+                  <ChevronLeft className="h-4 w-4" /> Anterior
+                </Button>
+                <span className="tabular-nums">
+                  Página {pageAtual} de {totalPages}
+                </span>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={pageAtual >= totalPages}
+                  onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                  className="gap-1"
+                >
+                  Próxima <ChevronRight className="h-4 w-4" />
+                </Button>
+              </div>
+            )}
           </div>
         )}
       </CardContent>

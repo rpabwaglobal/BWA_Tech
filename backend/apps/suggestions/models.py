@@ -13,10 +13,14 @@ class SuggestionStatus(models.TextChoices):
 class ProjectSuggestion(models.Model):
     titulo = models.CharField(max_length=200, verbose_name='Título')
     descricao = models.TextField(verbose_name='Descrição')
+    # A sugestão entra no backlog e é avaliada: continua valendo mesmo depois
+    # que quem a pediu sai da empresa. Fica anônima em vez de sumir.
     solicitante = models.ForeignKey(
         settings.AUTH_USER_MODEL,
-        on_delete=models.CASCADE,
+        on_delete=models.SET_NULL,
         related_name='suggestions_created',
+        null=True,
+        blank=True,
         verbose_name='Solicitante'
     )
     status = models.CharField(
@@ -25,13 +29,14 @@ class ProjectSuggestion(models.Model):
         default=SuggestionStatus.BACKLOG,
         verbose_name='Status'
     )
+    # Qualquer usuário pode constar como avaliador: quem tem direito de avaliar
+    # é decidido por permissão, não pelo cargo.
     avaliado_por = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.SET_NULL,
         related_name='suggestions_evaluated',
         null=True,
         blank=True,
-        limit_choices_to={'role': 'supervisor'},
         verbose_name='Avaliado Por'
     )
     data_avaliacao = models.DateTimeField(null=True, blank=True, verbose_name='Data de Avaliação')

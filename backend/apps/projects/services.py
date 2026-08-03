@@ -3,10 +3,11 @@ Serviços de negócio para o app projects.
 """
 from collections import defaultdict
 
-from django.db import transaction
+from django.db import models, transaction
 from django.utils import timezone
 
-from .models import Sprint, Project, Card, CardStatus, ProjectStatus, ProjectKanbanStageConfig, CardLog, CardLogEventType
+from .models import (Sprint, Project, ProjectCompartilhamento, Card, CardStatus, ProjectStatus,
+                     ProjectKanbanStageConfig, CardLog, CardLogEventType)
 
 
 def _norm_nome_projeto(nome: str) -> str:
@@ -181,9 +182,74 @@ def get_sprint_ids_atribuiveis() -> set:
     return ids
 
 
-def outra_sprint_em_andamento(exclude_pk=None):
-    """Retorna outra sprint na janela ativa, ou None."""
-    qs = Sprint.objects.filter(finalizada=False)
+def _aware(dt):
+    """Normaliza para timezone-aware; datetimes ingênuos vêm do payload da API."""
+    if dt is not None and timezone.is_naive(dt):
+        return timezone.make_aware(dt, timezone.get_current_timezone())
+    return dt
+
+
+def sprint_conflitante_na_janela(setor_id, data_inicio, fechamento_em, exclude_pk=None):
+    """Outra sprint não finalizada do MESMO SETOR cuja janela cruza [início, fim].
+
+    A regra é "uma sprint EM ANDAMENTO por setor" — não "uma sprint por setor".
+    O setor pode deixar quantas sprints planejadas quiser na fila, desde que
+    cada uma comece depois que a anterior fechar.
+
+    Por isso a comparação é entre JANELAS, e não entre "está em andamento
+    agora". Uma sprint cadastrada para começar dia 5, enquanto a atual só fecha
+    dia 20, não conflita hoje — mas no dia 5 o setor amanheceria com duas
+    sprints abertas, sem que ninguém tivesse feito nada. Comparar janelas
+    recusa isso no cadastro, que é o único instante em que dá para corrigir.
+
+    Sprints finalizadas não entram: já saíram da fila.
+    """
+    di, fe = _aware(data_inicio), _aware(fechamento_em)
+    if di is None or fe is None:
+        return None
+    # Dois intervalos se cruzam quando cada um começa antes do outro terminar.
+    qs = Sprint.objects.filter(
+        finalizada=False,
+        setor_id=setor_id,
+        data_inicio__lte=fe,
+        fechamento_em__gte=di,
+    )
+    if exclude_pk is not None:
+        qs = qs.exclude(pk=exclude_pk)
+    return qs.order_by('data_inicio').first()
+
+
+def conflitos_ao_mover_sprints(sprint_ids, setor_destino_id):
+    """Pares de sprints que passariam a se sobrepor se `sprint_ids` fossem para
+    `setor_destino_id`. Lista vazia = a mudança é segura.
+
+    Mover conteúdo é a porta dos fundos da regra "uma sprint em andamento por
+    setor": a validação do serializer olha o cadastro, e uma sprint que muda de
+    dono não passa por lá. Sem esta checagem, arrastar uma sprint ativa para um
+    setor que já tem a dele produziria, por outro caminho, exatamente o estado
+    que o cadastro recusa.
+    """
+    candidatas = list(
+        Sprint.objects.filter(finalizada=False)
+        .filter(models.Q(pk__in=sprint_ids) | models.Q(setor_id=setor_destino_id))
+        .only('id', 'nome', 'data_inicio', 'fechamento_em')
+    )
+    conflitos = []
+    for i, a in enumerate(candidatas):
+        for b in candidatas[i + 1:]:
+            if a.data_inicio <= b.fechamento_em and b.data_inicio <= a.fechamento_em:
+                conflitos.append((a, b))
+    return conflitos
+
+
+def outra_sprint_em_andamento(setor_id, exclude_pk=None):
+    """Retorna outra sprint na janela ativa DO MESMO SETOR, ou None.
+
+    "Uma sprint por vez" é regra de cada setor, não da empresa: com a
+    plataforma segmentada, o ciclo de Tecnologia não tem por que impedir
+    Comercial de abrir o dele.
+    """
+    qs = Sprint.objects.filter(finalizada=False, setor_id=setor_id)
     if exclude_pk is not None:
         qs = qs.exclude(pk=exclude_pk)
     for other in qs.order_by('-data_inicio'):
@@ -276,11 +342,19 @@ def finalizar_sprint_replicacao(sprint, criado_por_user=None):
                 )
                 projetos_destino_por_nome[nome_norm] = novo_projeto
                 projetos_criados += 1
-            # O compartilhamento entre setores acompanha o trabalho pendente
-            # (união, no caso de projeto reutilizado na sprint destino).
-            compartilhados = list(project.setores_compartilhados.all())
-            if compartilhados:
-                novo_projeto.setores_compartilhados.add(*compartilhados)
+            # O compartilhamento entre setores acompanha o trabalho pendente,
+            # COM O NÍVEL: quem tinha o projeto só para leitura não pode ganhar
+            # edição de brinde na virada da sprint. No projeto reutilizado é
+            # união — um vínculo que já existe no destino não é rebaixado.
+            ja_no_destino = set(
+                novo_projeto.compartilhamentos.values_list('setor_id', flat=True))
+            ProjectCompartilhamento.objects.bulk_create([
+                ProjectCompartilhamento(
+                    project=novo_projeto, setor_id=c.setor_id, nivel=c.nivel,
+                    compartilhado_por=c.compartilhado_por)
+                for c in project.compartilhamentos.all()
+                if c.setor_id not in ja_no_destino
+            ])
 
             for card in cards_pendentes:
                 _replicar_card_para_sprint(

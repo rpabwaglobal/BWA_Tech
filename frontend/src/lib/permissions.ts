@@ -1,12 +1,12 @@
-/** Checagem de permissão granular (Fase 3 do sistema de gerenciamento de
- * usuários) — verifica se o usuário tem o codename atribuído.
+/** Checagem de permissão granular — verifica se o usuário tem o codename
+ * atribuído.
  *
- * `isAdminUser`/`isSupervisorOrAdmin` (lib/roles.ts) continuam existindo
- * separadamente para checagens ESTRUTURAIS (rotas /administracao e /score,
- * organograma em People.tsx, badges de cargo) — não são substituídas por
- * permissão. Esta função é só para GATES DE AÇÃO (criar sprint, gerenciar
- * Geek Day, etc.), que agora são editáveis por usuário na tela de
- * Gerenciamento de Usuários. */
+ * É a forma padrão de decidir autorização no frontend. Gates por nome de cargo
+ * (`user.role === 'supervisor'`) foram eliminados: impediam que um cargo criado
+ * pelo admin — CEO, Gerente, o que for — recebesse a mesma capacidade.
+ *
+ * É a ÚNICA forma de autorização no frontend: não há checagem por cargo em
+ * lugar nenhum. */
 export function hasPermission(
   user: { permissions?: string[] } | null | undefined,
   codename: string,

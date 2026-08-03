@@ -7,40 +7,207 @@ from django.core.cache import cache
 from django.utils.text import slugify
 from rest_framework import serializers
 from .models import (
-    User, Role, Cargo, SetorCatalogo,
+    User, Role, Cargo, SetorCatalogo, UserSetor,
     CARGO_CHOICES_CACHE_KEY, SETOR_CHOICES_CACHE_KEY,
 )
 from .permission_catalog import PERMISSION_CATALOG
 from .profile_picture_utils import get_profile_picture_url
 from .image_processing import process_profile_picture
+from .scoping import SETOR_PADRAO_CODENAME, setor_padrao_do_sistema
+
+
+def _setor_padrao_estrito():
+    """O balde de NÃO CLASSIFICADOS ("Sem Setor"), resolvido SÓ pelo codename
+    semeado em accounts/0016.
+
+    Não reusa `setor_padrao_do_sistema()` de propósito: aquela função cai em "o
+    primeiro setor do catálogo" quando o padrão não existe, fallback correto
+    para não deixar conteúdo órfão sem dono e perigoso aqui, porque esta regra
+    APAGA e CRIA vínculo de usuário. Com o fallback, um banco sem "Sem Setor"
+    faria a regra expulsar gente do primeiro setor da lista — ou empurrar
+    alguém para dentro dele, entregando de brinde o conteúdo daquele setor.
+    Sem o balde de verdade, a regra simplesmente não roda.
+    """
+    return SetorCatalogo.objects.filter(codename=SETOR_PADRAO_CODENAME).first()
+
+
+def _espelhar_setor_primario_no_charfield(user):
+    """Reescreve `User.setor` a partir do vínculo primário atual.
+
+    Só é chamado depois que a regra do setor padrão MEXEU nos vínculos. Fora
+    disso o CharField pode estar vazio de propósito (o operador acabou de
+    limpar o setor primário) e reescrevê-lo desfaria a decisão dele.
+    """
+    primario = (UserSetor.objects.filter(user=user, is_primary=True)
+                .select_related('setor').first())
+    codename = primario.setor.codename if primario else ''
+    if (user.setor or '') != codename:
+        user.setor = codename
+        user.save(update_fields=['setor', 'updated_at'])
+
+
+def aplicar_regra_do_setor_padrao(user, operador=None):
+    """Mantém o invariante do balde de não classificados. Duas metades da mesma
+    regra, porque as duas descrevem o mesmo estado proibido:
+
+    1. quem passa a ter QUALQUER setor de verdade SAI do padrão. Estar nos dois
+       é contraditório por definição — "Sem Setor" é onde mora o que ainda não
+       foi classificado — e, com `SETOR_SCOPING_ENABLED` ligado, o vínculo
+       residual entregaria a essa pessoa todo o conteúdo não classificado da
+       empresa (ver scoping.setores_ids_do_usuario: os setores do usuário são
+       somados, nunca interseccionados).
+    2. ninguém fica com ZERO setores. O escopo é fail-closed (`qs.none()` quando
+       não há setor), então um usuário sem vínculo nenhum abre a plataforma
+       vazia — estado que quem opera lê como defeito do sistema, não como
+       decisão de quem removeu o último setor. Sem setor real, o lugar dele é o
+       balde, que é reversível e visível na tela.
+
+    Ponto ÚNICO de aplicação: chamada no fim de `sincronizar_setor_primario`
+    (por onde passam o PATCH do usuário, o `bulk-assign-setor` e o cadastro) e
+    na remoção de setor (`UserViewSet.remover_setor`). Idempotente e barata —
+    pode ser chamada depois de qualquer escrita em `UserSetor` sem checagem
+    prévia do chamador.
+
+    Devolve True se mexeu em algum vínculo (usado só internamente, para decidir
+    se o espelho do CharField precisa ser reescrito).
+    """
+    padrao = _setor_padrao_estrito()
+    if padrao is None:
+        return False
+    if not getattr(operador, 'is_authenticated', False):
+        operador = None  # `added_by` é FK: anônimo/None não tem quem registrar
+
+    vinculos = list(UserSetor.objects.filter(user=user))
+    reais = [v for v in vinculos if v.setor_id != padrao.pk]
+    no_padrao = [v for v in vinculos if v.setor_id == padrao.pk]
+    mexeu = False
+
+    if reais and no_padrao:
+        # (1) Ganhou setor de verdade → sai do balde.
+        perdeu_primario = any(v.is_primary for v in no_padrao)
+        UserSetor.objects.filter(user=user, setor=padrao).delete()
+        mexeu = True
+        # Se o vínculo apagado era o primário, alguém precisa assumir; senão o
+        # usuário ficaria com setores e nenhum principal, e o CharField (que é
+        # o que a tela mostra) esvaziaria sem motivo. O mais antigo assume, o
+        # mesmo critério que `remover_setor` já usa.
+        if perdeu_primario and not any(v.is_primary for v in reais):
+            proximo = UserSetor.objects.filter(user=user).order_by('added_at').first()
+            if proximo is not None:
+                proximo.is_primary = True
+                proximo.save(update_fields=['is_primary'])
+    elif not vinculos:
+        # (2) Ficou sem setor nenhum → volta para o balde. NÃO existe branch
+        # para "só tem o padrão": aí ele CONTINUA no padrão, que é justamente o
+        # estado correto de quem não tem setor de verdade.
+        UserSetor.objects.create(
+            user=user, setor=padrao, is_primary=True, added_by=operador)
+        mexeu = True
+
+    if mexeu:
+        _espelhar_setor_primario_no_charfield(user)
+    return mexeu
+
+
+def sincronizar_setor_primario(user, setor_obj, operador=None):
+    """Marca `setor_obj` como vínculo primário do usuário no M2M `UserSetor` —
+    a autoridade do escopo, que o CharField `User.setor` apenas espelha.
+
+    `setor_obj=None` REMOVE o usuário de todos os setores. Antes só zerava a
+    marca de primário e preservava os vínculos, e o resultado era um estado que
+    ninguém conseguia ler: a tela mostrava "sem setor definido" (ela lê o
+    CharField) enquanto `UserSetor` — a autoridade do escopo — continuava
+    dizendo que a pessoa era de Tecnologia. Quem limpa o campo está dizendo
+    "esta pessoa não é de setor nenhum"; obedecer pela metade é pior que
+    recusar. A regra do balde, logo abaixo, devolve a pessoa para "Sem Setor",
+    que é reversível e visível na tela — ninguém fica com zero vínculos.
+
+    Nos dois caminhos termina em `aplicar_regra_do_setor_padrao`: é aqui que
+    passam TODAS as portas de atribuição de setor (PATCH do usuário, criação
+    pela gestão, `bulk-assign-setor` e cadastro público), então é aqui que a
+    regra do balde de não classificados vale para todas elas de uma vez."""
+    if not getattr(operador, 'is_authenticated', False):
+        operador = None  # `added_by` é FK: anônimo/None não tem quem registrar
+    if setor_obj is None:
+        UserSetor.objects.filter(user=user).delete()
+    else:
+        vinculo, created = UserSetor.objects.get_or_create(
+            user=user, setor=setor_obj,
+            defaults={'is_primary': True, 'added_by': operador})
+        if not created and not vinculo.is_primary:
+            vinculo.is_primary = True
+            vinculo.save(update_fields=['is_primary'])
+        UserSetor.objects.filter(user=user, is_primary=True).exclude(setor=setor_obj).update(is_primary=False)
+    aplicar_regra_do_setor_padrao(user, operador=operador)
 
 
 class UserSerializer(serializers.ModelSerializer):
     role_display = serializers.CharField(source='get_role_display', read_only=True)
     setor_display = serializers.CharField(source='get_setor_display', read_only=True)
+    setores = serializers.SerializerMethodField(read_only=True)
     profile_picture_url = serializers.SerializerMethodField(read_only=True)
     permissions = serializers.SerializerMethodField(read_only=True)
 
     def get_profile_picture_url(self, obj):
         return get_profile_picture_url(obj, request=self.context.get('request'))
 
+    def get_setores(self, obj):
+        """TODOS os setores do usuário, não só o primário.
+
+        `setor`/`setor_display` contam UM setor; quem está em Tecnologia e
+        Comercial aparecia como sendo só de um deles. Este campo SOMA aos dois
+        (não os substitui — são consumidos em várias telas) e carrega o que a
+        tag precisa desenhar, no mesmo formato de `SetorBasico`
+        (frontend/src/services/setorSharingService.ts), para a tela reaproveitar
+        o chip que já existe em vez de inventar outro.
+
+        Lê `setor_links` (a tabela de vínculo) em vez de `setores` (o M2M) para
+        trazer `is_primary` junto, sem uma segunda consulta por usuário.
+
+        `.all()` sem `filter`/`order_by` é deliberado: qualquer cláusula aqui
+        descarta o `prefetch_related('setor_links__setor')` dos viewsets e a
+        listagem (50 por página) volta a fazer uma consulta por usuário. A
+        ordenação — primário na frente, depois alfabética — é feita em Python,
+        sobre a lista que o prefetch já trouxe.
+        """
+        vinculos = sorted(
+            obj.setor_links.all(),
+            key=lambda v: (not v.is_primary, (v.setor.nome or '').lower()),
+        )
+        return [
+            {
+                'codename': v.setor.codename,
+                'nome': v.setor.nome,
+                'cor': v.setor.cor,
+                'label_curto': v.setor.label_curto,
+                'is_primary': v.is_primary,
+            }
+            for v in vinculos
+        ]
+
     def get_permissions(self, obj):
-        """Permissões só são visíveis para admin/supervisor (que as gerenciam)
-        e para o PRÓPRIO usuário (o frontend monta Sidebar/rotas com elas).
-        Para os demais, lista vazia — usuário comum não enxerga as permissões
-        dos colegas."""
+        """Permissões só são visíveis para quem as gerencia e para o PRÓPRIO
+        usuário (o frontend monta Sidebar/rotas com elas). Para os demais,
+        lista vazia — usuário comum não enxerga as permissões dos colegas.
+
+        Resolve por `has_perm`, não pela tabela `user_permissions`: um usuário
+        com cargo Admin recebe o catálogo inteiro pelo backend de autenticação
+        (accounts/auth_backends.py) sem ter linha nenhuma em user_permissions.
+        Ler direto da tabela devolveria `[]` e esconderia a interface toda de
+        um administrador legítimo."""
         request = self.context.get('request')
         viewer = getattr(request, 'user', None)
         pode_ver = viewer is not None and (
             getattr(viewer, 'is_superuser', False)
-            or getattr(viewer, 'role', '') in (Role.ADMIN, Role.SUPERVISOR)
+            or viewer.has_perm('accounts.manage_user_permissions')
+            or viewer.has_perm('accounts.manage_users')
             or viewer.pk == obj.pk
         )
         if not pode_ver:
             return []
-        return list(
-            obj.user_permissions.filter(content_type__app_label='accounts')
-            .values_list('codename', flat=True)
+        return sorted(
+            codename for codename, _label, _area in PERMISSION_CATALOG
+            if obj.has_perm(f'accounts.{codename}')
         )
 
     def validate_setor(self, value):
@@ -51,22 +218,39 @@ class UserSerializer(serializers.ModelSerializer):
         request = self.context.get('request')
         if not request:
             return value
-        if request.user.role not in ('admin', 'supervisor'):
+        if not request.user.has_perm('accounts.manage_users'):
             raise serializers.ValidationError(
-                'Apenas administradores e supervisores podem alterar o setor.'
+                'Você não tem permissão para alterar o setor de um usuário.'
             )
         if self.instance and self.instance.pk == request.user.pk:
             raise serializers.ValidationError('Você não pode alterar o próprio setor.')
         if value and not SetorCatalogo.objects.filter(codename=value).exists():
             raise serializers.ValidationError('Setor inválido.')
+        # Mover para o balde de não classificados alguém que JÁ tem setor real é
+        # um pedido que `aplicar_regra_do_setor_padrao` desfaz logo em seguida
+        # (a regra "quem tem setor de verdade sai do padrão" é o invariante).
+        # Sem esta recusa, a API respondia 200 e o vínculo voltava ao que era:
+        # quem opera clicava, via sucesso, e nada acontecia. Recusar com o
+        # motivo é o mínimo — um write silenciosamente ignorado é pior que um
+        # erro, porque só aparece quando alguém confere.
+        if value == SETOR_PADRAO_CODENAME and self.instance is not None:
+            reais = self.instance.setores.exclude(codename=SETOR_PADRAO_CODENAME)
+            if reais.exists():
+                nomes = ', '.join(reais.values_list('nome', flat=True))
+                raise serializers.ValidationError(
+                    f'Este usuário já pertence a {nomes}. "Sem Setor" é onde fica quem '
+                    'ainda não foi classificado — remova os setores atuais para que ele '
+                    'volte para lá.'
+                )
         return value
 
     def validate_role(self, value):
-        """
-        Validação: Apenas Admin pode definir Supervisor.
-        Admin e Supervisor podem definir qualquer outro cargo do catálogo
-        (de sistema ou criado por eles), desde que exista em `Cargo`.
-        """
+        """O cargo precisa existir no catálogo, e só quem gerencia usuários
+        pode atribuí-lo.
+
+        Mexer num usuário que é Admin fica restrito a outro Admin: caso
+        contrário, quem tivesse `manage_users` poderia rebaixar todos os
+        administradores e travar a plataforma."""
         request = self.context.get('request')
         if not request:
             return value
@@ -77,34 +261,55 @@ class UserSerializer(serializers.ModelSerializer):
         if not Cargo.objects.filter(codename=value).exists():
             raise serializers.ValidationError('Cargo inválido.')
 
-        # Se está tentando definir como supervisor
-        if value == Role.SUPERVISOR:
-            if user.role != Role.ADMIN:
-                raise serializers.ValidationError(
-                    'Apenas administradores podem definir usuários como supervisores.'
-                )
+        if not user.has_perm('accounts.manage_users'):
+            raise serializers.ValidationError(
+                'Você não tem permissão para alterar o cargo de um usuário.'
+            )
 
-        # Se está tentando alterar de supervisor para outro cargo
-        if current_role == Role.SUPERVISOR and value != Role.SUPERVISOR:
-            if user.role != Role.ADMIN:
-                raise serializers.ValidationError(
-                    'Apenas administradores podem alterar o cargo de supervisores.'
-                )
-
-        # Qualquer outro cargo (de sistema ou customizado) — admin/supervisor podem definir
-        if value != Role.SUPERVISOR:
-            if user.role not in (Role.ADMIN, Role.SUPERVISOR):
-                raise serializers.ValidationError(
-                    'Apenas administradores e supervisores podem alterar cargos.'
-                )
+        mexe_com_admin = Role.ADMIN in (value, current_role)
+        if mexe_com_admin and user.role != Role.ADMIN:
+            raise serializers.ValidationError(
+                'Apenas administradores podem promover ou rebaixar um administrador.'
+            )
 
         return value
+
+    def create(self, validated_data):
+        """Criar usuário pela gestão (`POST /users/`) também precisa gravar o
+        vínculo M2M, não só o CharField.
+
+        A autoridade do escopo é `UserSetor`: um usuário criado com `setor`
+        preenchido mas SEM vínculo abriria a plataforma vazia com a segmentação
+        ligada — e ainda mostraria a tag do setor certo na tela, escondendo a
+        causa. Sem `setor` no corpo, `sincronizar_setor_primario` cai na regra do
+        balde de não classificados e o novo usuário entra em "Sem Setor", o
+        mesmo destino do cadastro público (ver RegisterSerializer.create)."""
+        user = super().create(validated_data)
+        codename = validated_data.get('setor') or ''
+        setor_obj = SetorCatalogo.objects.filter(codename=codename).first() if codename else None
+        request = self.context.get('request')
+        sincronizar_setor_primario(user, setor_obj, operador=getattr(request, 'user', None))
+        return user
+
+    def update(self, instance, validated_data):
+        """Troca de setor mexe nos dois lados: o CharField (exibição) e o
+        vínculo primário em `UserSetor`. Sem o M2M, o usuário continuaria
+        enxergando exatamente o que enxergava antes (ver scoping.py) — só o
+        rótulo na tela mudaria."""
+        setor_alterado = 'setor' in validated_data
+        user = super().update(instance, validated_data)
+        if setor_alterado:
+            codename = validated_data.get('setor') or ''
+            setor_obj = SetorCatalogo.objects.filter(codename=codename).first() if codename else None
+            request = self.context.get('request')
+            sincronizar_setor_primario(user, setor_obj, operador=getattr(request, 'user', None))
+        return user
 
     class Meta:
         model = User
         fields = [
             'id', 'username', 'email', 'first_name', 'last_name',
-            'role', 'role_display', 'setor', 'setor_display',
+            'role', 'role_display', 'setor', 'setor_display', 'setores',
             'is_active', 'permissions', 'profile_picture_url', 'date_joined',
         ]
         # is_active só é editável via o endpoint dedicado /set-active/ (que
@@ -248,6 +453,9 @@ def _generate_recovery_code() -> str:
     )
 
 
+SENHA_CARACTERES_ESPECIAIS = '!@#$%^&*()_+-=[]{}|;:,.<>?'
+
+
 def _validate_password_strength(value):
     """Mínimo 8 caracteres, letra maiúscula, minúscula e pelo menos um caractere especial."""
     if len(value) < 8:
@@ -256,8 +464,29 @@ def _validate_password_strength(value):
         raise serializers.ValidationError('A senha deve conter pelo menos uma letra maiúscula.')
     if not any(c.islower() for c in value):
         raise serializers.ValidationError('A senha deve conter pelo menos uma letra minúscula.')
-    if not any(c in '!@#$%^&*()_+-=[]{}|;:,.<>?' for c in value):
+    if not any(c in SENHA_CARACTERES_ESPECIAIS for c in value):
         raise serializers.ValidationError('A senha deve conter pelo menos um caractere especial.')
+
+
+def _generate_strong_password(length: int = 16) -> str:
+    """Senha aleatória que já nasce aprovada por `_validate_password_strength`.
+
+    Sorteia um caractere de cada classe exigida e só então completa o resto,
+    embaralhando no fim — assim a geração não depende de sorte nem de laço de
+    tentativa-e-erro. Reusa `SENHA_CARACTERES_ESPECIAIS`, o mesmo conjunto que
+    o validador cobra, para que os dois nunca divirjam.
+    """
+    obrigatorios = [
+        secrets.choice(string.ascii_uppercase),
+        secrets.choice(string.ascii_lowercase),
+        secrets.choice(string.digits),
+        secrets.choice(SENHA_CARACTERES_ESPECIAIS),
+    ]
+    alfabeto = string.ascii_letters + string.digits + SENHA_CARACTERES_ESPECIAIS
+    tamanho = max(length, 12)
+    senha = obrigatorios + [secrets.choice(alfabeto) for _ in range(tamanho - len(obrigatorios))]
+    secrets.SystemRandom().shuffle(senha)
+    return ''.join(senha)
 
 
 class RegisterSerializer(serializers.Serializer):
@@ -299,14 +528,20 @@ class RegisterSerializer(serializers.Serializer):
     def create(self, validated_data):
         profile_picture = validated_data.pop('profile_picture', None)
         recovery_code = _generate_recovery_code()
+        # Conta nova entra no setor padrão do sistema: sem vínculo de setor o
+        # escopo é fail-closed e o recém-cadastrado veria a plataforma vazia
+        # até alguém reparar e atribuir um setor na mão.
+        setor_padrao = setor_padrao_do_sistema()
         user = User.objects.create_user(
             username=validated_data['username'],
             email=validated_data['email'],
             password=validated_data['password'],
             first_name=validated_data.get('first_name', '').strip() or '',
             role=Role.VISITANTE,
+            setor=setor_padrao.codename if setor_padrao else '',
             recovery_code=recovery_code,
         )
+        sincronizar_setor_primario(user, setor_padrao)
         if profile_picture:
             processed = process_profile_picture(profile_picture)
             if processed is not None:

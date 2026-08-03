@@ -32,11 +32,10 @@ import { FilterSelect } from '@/components/ui/filter-select';
 import { FilterMultiSelect } from '@/components/ui/filter-multi-select';
 import { KanbanCardPreview } from '@/components/KanbanCardPreview';
 import type { KanbanCardPreviewData } from '@/components/KanbanCardPreview';
-import {
-  scoreService, SETORES_SOLICITANTES,
-} from '@/services/scoreService';
+import { scoreService } from '@/services/scoreService';
 import type {
   ScoreCriterion, ScoreCriterionInput, CardScore, ScoreHistoryEntry, PickableCard,
+  SetorSolicitanteOption,
 } from '@/services/scoreService';
 
 // ---------------------------------------------------------------------------
@@ -63,8 +62,13 @@ const fmtScore = (n: number | string | null | undefined): string => {
   return v.toFixed(1);
 };
 
-const setorLabel = (value: string | null): string =>
-  SETORES_SOLICITANTES.find((s) => s.value === value)?.label ?? '—';
+// Um score guarda o codename do setor de quando foi criado. Se esse setor já
+// saiu do catálogo, o codename cru diz mais sobre a origem da demanda do que um
+// traço — só quando não há setor algum é que vira "—".
+const setorLabel = (value: string | null, setores: SetorSolicitanteOption[]): string => {
+  if (!value) return '—';
+  return setores.find((s) => s.value === value)?.label ?? value;
+};
 
 // Cabeçalho curto das colunas de critério na tabela (fallback: nome completo).
 const COLUNA_CRITERIO: Record<string, string> = {
@@ -81,6 +85,7 @@ export default function Score() {
   const [criterios, setCriterios] = useState<ScoreCriterion[]>([]);
   const [scores, setScores] = useState<CardScore[]>([]);
   const [cards, setCards] = useState<PickableCard[]>([]);
+  const [setores, setSetores] = useState<SetorSolicitanteOption[]>([]);
   const [loading, setLoading] = useState(true);
   const [cardsLoading, setCardsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -190,12 +195,14 @@ export default function Score() {
     try {
       setLoading(true);
       setError(null);
-      const [crit, scr] = await Promise.all([
+      const [crit, scr, set] = await Promise.all([
         scoreService.getCriterios(),
         scoreService.getScores(),
+        scoreService.getSetoresSolicitantes(),
       ]);
       setCriterios(crit);
       setScores(scr);
+      setSetores(set);
     } catch (e) {
       console.error('Erro ao carregar Score:', e);
       setError('Não foi possível carregar os dados do Score.');
@@ -434,7 +441,7 @@ export default function Score() {
                         </div>
                       </td>
                       <td className="px-4 py-3">
-                        {score.setor_solicitante_display ?? setorLabel(score.setor_solicitante)}
+                        {setorLabel(score.setor_solicitante, setores)}
                       </td>
                       {criteriosAtivos.map((c) => (
                         <td key={c.id} className="px-3 py-3 text-center">
@@ -473,7 +480,7 @@ export default function Score() {
                       <tr className="border-b border-[var(--color-border)] last:border-0">
                         <td colSpan={criteriosAtivos.length + 5} className="p-0">
                           <div className="bg-[var(--color-muted)]/50 pl-12 pr-4 py-3">
-                            <ScoreHistoryPanel score={score} />
+                            <ScoreHistoryPanel score={score} setores={setores} />
                           </div>
                         </td>
                       </tr>
@@ -501,6 +508,7 @@ export default function Score() {
           cards={cards}
           cardsLoading={cardsLoading}
           scores={scores}
+          setores={setores}
           existing={editing}
           onSaved={applySavedScore}
         />
@@ -561,7 +569,7 @@ export default function Score() {
 // Dialog: Atribuir / Editar Score
 // ===========================================================================
 function ScoreFormDialog({
-  open, onClose, criterios, cards, cardsLoading, scores, existing, onSaved,
+  open, onClose, criterios, cards, cardsLoading, scores, setores, existing, onSaved,
 }: {
   open: boolean;
   onClose: () => void;
@@ -569,6 +577,7 @@ function ScoreFormDialog({
   cards: PickableCard[];
   cardsLoading: boolean;
   scores: CardScore[];
+  setores: SetorSolicitanteOption[];
   existing: CardScore | null;
   onSaved: (saved: CardScore) => void;
 }) {
@@ -608,6 +617,13 @@ function ScoreFormDialog({
     () => cards.find((c) => String(c.id) === String(cardId)) ?? null,
     [cards, cardId],
   );
+
+  // O setor gravado pode ter saído do catálogo desde então; mantê-lo na lista
+  // evita que reabrir o score apague em silêncio quem pediu a demanda.
+  const setorOptions = useMemo(() => {
+    if (!setor || setores.some((s) => s.value === setor)) return setores;
+    return [...setores, { value: setor, label: setor }];
+  }, [setores, setor]);
 
   const responsavelOptions = useMemo(() => {
     const map = new Map<string, { label: string; role: string }>();
@@ -799,7 +815,7 @@ function ScoreFormDialog({
               <div className="w-[260px] max-w-full">
                 <Label className="mb-1.5 block">Setor solicitante</Label>
                 <FilterSelect
-                  options={SETORES_SOLICITANTES}
+                  options={setorOptions}
                   value={setor}
                   onChange={setSetor}
                   placeholder="Selecione o setor"
@@ -1314,7 +1330,12 @@ function CriterionEditor({
 // ===========================================================================
 // Dialog: Histórico do Score
 // ===========================================================================
-function ScoreHistoryPanel({ score }: { score: CardScore }) {
+function ScoreHistoryPanel({
+  score, setores,
+}: {
+  score: CardScore;
+  setores: SetorSolicitanteOption[];
+}) {
   const historico: ScoreHistoryEntry[] = score.historico ?? [];
 
   const fmtDate = (iso: string) => {
@@ -1345,11 +1366,13 @@ function ScoreHistoryPanel({ score }: { score: CardScore }) {
     // Setor
     const oldSetor = older?.setor_solicitante ?? null;
     if (!older) {
-      if (entry.setor_solicitante) changes.push(`Setor: ${setorLabel(entry.setor_solicitante)}`);
+      if (entry.setor_solicitante) {
+        changes.push(`Setor: ${setorLabel(entry.setor_solicitante, setores)}`);
+      }
     } else if (oldSetor !== entry.setor_solicitante) {
       changes.push(
-        `Setor: ${oldSetor ? setorLabel(oldSetor) : '—'} → ` +
-          `${entry.setor_solicitante ? setorLabel(entry.setor_solicitante) : '—'}`,
+        `Setor: ${setorLabel(oldSetor, setores)} → ` +
+          `${setorLabel(entry.setor_solicitante, setores)}`,
       );
     }
 

@@ -25,7 +25,7 @@ class Command(BaseCommand):
 
     def handle(self, *args, **options):
         User = get_user_model()
-        hoje = timezone.now().date()
+        hoje = timezone.localdate()  # data LOCAL: `now().date()` é UTC e, das 21h à meia-noite, já é o dia seguinte
         tz = timezone.get_current_timezone()
 
         if options.get('clean'):
@@ -33,7 +33,7 @@ class Command(BaseCommand):
             return
 
         # 1) Usuário supervisor para as sprints
-        user = User.objects.filter(role__in=['supervisor', 'admin']).first()
+        user = User.objects.filter(is_superuser=True).first() or User.objects.first()
         if not user:
             user = User.objects.first()
         if not user:

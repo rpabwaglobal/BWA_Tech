@@ -1,42 +1,21 @@
+"""Placeholder histórico: o catálogo inicial NÃO é semeado aqui.
+
+Esta migration semeava 6 cargos (admin, supervisor, gerente, desenvolvedor,
+dados, processos) e 8 setores (fiscal, contábil, marketing, legalização,
+pessoal, diretoria, novos negócios, RH). A decisão passou a ser outra: o
+sistema nasce com catálogo mínimo e o resto é criado manualmente pelo admin.
+
+- Cargos iniciais (admin + visitante): `0013_reconcile_system_cargos_and_seed`.
+- Setor inicial ("Sem Setor"): `0016_seed_setor_padrao`.
+
+Mantida como no-op (em vez de removida) porque outras migrations dependem
+dela pelo nome — apagá-la quebraria o grafo em qualquer banco já migrado.
+"""
 from django.db import migrations
 
-SYSTEM_CARGOS = [
-    ('admin', 'Admin'),
-    ('supervisor', 'Supervisor'),
-    ('gerente', 'Gerente de Projetos'),
-    ('desenvolvedor', 'Desenvolvedor'),
-    ('dados', 'Dados'),
-    ('processos', 'Processos'),
-]
 
-SYSTEM_SETORES = [
-    ('fiscal', 'Fiscal'),
-    ('contabil', 'Contábil'),
-    ('marketing', 'Marketing'),
-    ('legalizacao', 'Legalização'),
-    ('pessoal', 'Pessoal'),
-    ('diretoria', 'Diretoria'),
-    ('novos_negocios', 'Novos Negócios'),
-    ('rh', 'RH'),
-]
-
-
-def seed_catalog(apps, schema_editor):
-    Cargo = apps.get_model('accounts', 'Cargo')
-    SetorCatalogo = apps.get_model('accounts', 'SetorCatalogo')
-
-    for codename, nome in SYSTEM_CARGOS:
-        Cargo.objects.get_or_create(codename=codename, defaults={'nome': nome, 'is_system': True})
-
-    for codename, nome in SYSTEM_SETORES:
-        SetorCatalogo.objects.get_or_create(codename=codename, defaults={'nome': nome, 'is_system': True})
-
-
-def unseed_catalog(apps, schema_editor):
-    Cargo = apps.get_model('accounts', 'Cargo')
-    SetorCatalogo = apps.get_model('accounts', 'SetorCatalogo')
-    Cargo.objects.filter(codename__in=[c for c, _ in SYSTEM_CARGOS], is_system=True).delete()
-    SetorCatalogo.objects.filter(codename__in=[c for c, _ in SYSTEM_SETORES], is_system=True).delete()
+def noop(apps, schema_editor):
+    pass
 
 
 class Migration(migrations.Migration):
@@ -46,5 +25,5 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
-        migrations.RunPython(seed_catalog, unseed_catalog),
+        migrations.RunPython(noop, noop),
     ]

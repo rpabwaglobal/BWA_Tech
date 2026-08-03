@@ -16,6 +16,9 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { ImageCrop } from '@/components/ui/image-crop';
+import { Badge } from '@/components/ui/badge';
+import { getCargoColor, getCargoLabel, chipStyle } from '@/lib/catalog-style';
+import { SetoresDoUsuario } from '@/components/SetoresDoUsuario';
 import { Loader2, Camera, RefreshCw, KeyRound } from 'lucide-react';
 
 export function PerfilTab() {
@@ -180,18 +183,20 @@ export function PerfilTab() {
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       <Card>
         <CardHeader>
           <CardTitle>Perfil</CardTitle>
-          <CardDescription>Altere seu nome e e-mail.</CardDescription>
+          <CardDescription>Altere sua foto, seu nome e seu e-mail.</CardDescription>
         </CardHeader>
-        <CardContent className="space-y-6">
-          <div className="flex items-center gap-6">
+        {/* Duas colunas: identidade (foto, cargo, setor) à esquerda; campos
+            editáveis à direita. Empilha em telas estreitas. */}
+        <CardContent className="grid gap-6 md:grid-cols-[minmax(0,180px)_minmax(0,1fr)]">
+          <div className="flex flex-col items-center gap-3 text-center">
             <div className="relative">
-              <Avatar className="h-20 w-20">
+              <Avatar className="h-32 w-32">
                 {profilePictureUrl && <AvatarImage src={profilePictureUrl} alt="" />}
-                <AvatarFallback className="text-xl">{getInitials()}</AvatarFallback>
+                <AvatarFallback className="text-3xl">{getInitials()}</AvatarFallback>
               </Avatar>
               <input
                 ref={fileInputRef}
@@ -204,34 +209,50 @@ export function PerfilTab() {
                 type="button"
                 variant="secondary"
                 size="icon"
-                className="absolute -bottom-1 -right-1 h-8 w-8 rounded-full"
+                className="absolute bottom-1 right-1 h-9 w-9 rounded-full shadow-sm"
                 onClick={handlePhotoClick}
                 title="Alterar foto"
               >
                 <Camera className="h-4 w-4" />
               </Button>
             </div>
-            <div>
-              <p className="text-sm font-medium text-[var(--color-foreground)]">Foto de perfil</p>
-              <p className="text-xs text-[var(--color-muted-foreground)]">
-                Clique no ícone para escolher uma imagem e recortar. A foto será salva e exibida para todos no sistema.
-              </p>
-              {photoLoading && (
-                <p className="text-xs text-[var(--color-muted-foreground)] mt-1 flex items-center gap-1">
-                  <Loader2 className="h-3 w-3 animate-spin" /> Salvando...
-                </p>
-              )}
-              {photoError && (
-                <p className="text-xs text-[var(--color-destructive)] mt-1">{photoError}</p>
-              )}
-              {photoSuccess && (
-                <p className="text-xs text-green-600 dark:text-green-400 mt-1">{photoSuccess}</p>
-              )}
+
+            <p className="max-w-full truncate text-xs text-[var(--color-muted-foreground)]">
+              {user?.username}
+            </p>
+
+            {/* Cargo e setores não são editáveis aqui: quem define é quem
+                administra usuários. Por isso ficam como identidade, junto da
+                foto, e não como campo desabilitado no formulário ao lado.
+                O rótulo do cargo vem do backend (`role_display`), que já resolve
+                pelo catálogo; o helper local é reserva, porque antes de o
+                catálogo carregar ele devolveria o codename cru.
+                Os setores são TODOS os da pessoa, não só o primário — quem está
+                em dois setores precisa ver os dois no próprio perfil. */}
+            <div className="flex flex-col items-center gap-2">
+              <Badge className="border whitespace-nowrap" style={chipStyle(getCargoColor(user?.role))}>
+                {user?.role_display || getCargoLabel(user?.role) || '—'}
+              </Badge>
+              <SetoresDoUsuario usuario={user} className="justify-center" vazio="Sem setor" />
             </div>
+
+            <p className="text-xs text-[var(--color-muted-foreground)]">
+              Cargo e setores são definidos por quem administra usuários.
+            </p>
+
+            {photoLoading && (
+              <p className="flex items-center gap-1 text-xs text-[var(--color-muted-foreground)]">
+                <Loader2 className="h-3 w-3 animate-spin" /> Salvando...
+              </p>
+            )}
+            {photoError && <p className="text-xs text-[var(--color-destructive)]">{photoError}</p>}
+            {photoSuccess && (
+              <p className="text-xs text-green-600 dark:text-green-400">{photoSuccess}</p>
+            )}
           </div>
 
-          <form onSubmit={handleProfileSubmit} className="space-y-4">
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <form onSubmit={handleProfileSubmit} className="space-y-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div className="space-y-1.5">
                 <Label htmlFor="firstName">Nome</Label>
                 <Input
@@ -240,11 +261,8 @@ export function PerfilTab() {
                   onChange={(e) => setFirstName(e.target.value)}
                   placeholder="Nome"
                 />
-                <p className="text-xs text-[var(--color-muted-foreground)]">
-                  O nome será exibido no seu perfil no sistema, mas não altera o login (usuário).
-                </p>
               </div>
-              <div className="space-y-2">
+              <div className="space-y-1.5">
                 <Label htmlFor="lastName">Sobrenome</Label>
                 <Input
                   id="lastName"
@@ -254,7 +272,7 @@ export function PerfilTab() {
                 />
               </div>
             </div>
-            <div className="space-y-2">
+            <div className="space-y-1.5">
               <Label htmlFor="email">E-mail</Label>
               <Input
                 id="email"
@@ -264,34 +282,43 @@ export function PerfilTab() {
                 placeholder="email@exemplo.com"
               />
             </div>
+            <p className="text-xs text-[var(--color-muted-foreground)]">
+              Nome e sobrenome aparecem no seu perfil, mas não alteram o login ({user?.username}).
+            </p>
             {profileError && (
               <p className="text-sm text-[var(--color-destructive)]">{profileError}</p>
             )}
             {profileSuccess && (
               <p className="text-sm text-green-600 dark:text-green-400">{profileSuccess}</p>
             )}
-            <Button type="submit" disabled={profileLoading}>
-              {profileLoading ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Salvando...
-                </>
-              ) : (
-                'Salvar perfil'
-              )}
-            </Button>
+            <div className="flex justify-end">
+              <Button type="submit" disabled={profileLoading}>
+                {profileLoading ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Salvando...
+                  </>
+                ) : (
+                  'Salvar perfil'
+                )}
+              </Button>
+            </div>
           </form>
         </CardContent>
       </Card>
 
+      {/* Senha e código de recuperação no mesmo card: são as duas formas de
+          entrar na conta — uma para trocar o acesso, outra para recuperá-lo. */}
       <Card>
         <CardHeader>
-          <CardTitle>Senha</CardTitle>
-          <CardDescription>Altere sua senha de acesso.</CardDescription>
+          <CardTitle>Acesso à conta</CardTitle>
+          <CardDescription>
+            Altere sua senha e mantenha à mão o código que recupera a conta se você esquecê-la.
+          </CardDescription>
         </CardHeader>
-        <CardContent>
-          <form onSubmit={handlePasswordSubmit} className="space-y-4">
-            <div className="space-y-2">
+        <CardContent className="grid gap-6 md:grid-cols-2">
+          <form onSubmit={handlePasswordSubmit} className="space-y-3">
+            <div className="space-y-1.5">
               <Label htmlFor="currentPassword">Senha atual</Label>
               <Input
                 id="currentPassword"
@@ -302,7 +329,7 @@ export function PerfilTab() {
                 required
               />
             </div>
-            <div className="space-y-2">
+            <div className="space-y-1.5">
               <Label htmlFor="newPassword">Nova senha</Label>
               <Input
                 id="newPassword"
@@ -313,7 +340,7 @@ export function PerfilTab() {
                 minLength={8}
               />
             </div>
-            <div className="space-y-2">
+            <div className="space-y-1.5">
               <Label htmlFor="confirmPassword">Confirmar nova senha</Label>
               <Input
                 id="confirmPassword"
@@ -329,68 +356,70 @@ export function PerfilTab() {
             {passwordSuccess && (
               <p className="text-sm text-green-600 dark:text-green-400">{passwordSuccess}</p>
             )}
-            <Button type="submit" disabled={passwordLoading}>
-              {passwordLoading ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Alterando...
-                </>
-              ) : (
-                'Alterar senha'
-              )}
-            </Button>
-          </form>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <KeyRound className="h-5 w-5" />
-            Código de recuperação
-          </CardTitle>
-          <CardDescription>
-            Use este código para recuperar sua conta caso esqueça a senha. Guarde-o em
-            local seguro. Não compartilhe com ninguém.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          {recoveryLoading ? (
-            <div className="flex items-center gap-2 text-sm text-[var(--color-muted-foreground)]">
-              <Loader2 className="h-4 w-4 animate-spin" />
-              Carregando...
+            <div className="flex justify-end">
+              <Button type="submit" disabled={passwordLoading}>
+                {passwordLoading ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Alterando...
+                  </>
+                ) : (
+                  'Alterar senha'
+                )}
+              </Button>
             </div>
-          ) : (
-            <>
-              <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-muted)]/50 px-4 py-4">
-                <span className="block font-mono text-2xl font-bold tracking-widest text-[var(--color-foreground)] text-center select-all">
-                  {recoveryCode ?? '—'}
-                </span>
-              </div>
+          </form>
 
-              <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-[var(--color-muted-foreground)]">
-                <span>
+          <div className="space-y-3 md:border-l md:border-[var(--color-border)] md:pl-6">
+            <div className="space-y-1">
+              <p className="flex items-center gap-2 text-sm font-medium text-[var(--color-foreground)]">
+                <KeyRound className="h-4 w-4" />
+                Código de recuperação
+              </p>
+              <p className="text-xs text-[var(--color-muted-foreground)]">
+                Guarde em local seguro e não compartilhe: quem tiver este código consegue
+                redefinir sua senha.
+              </p>
+            </div>
+
+            {recoveryLoading ? (
+              <div className="flex items-center gap-2 text-sm text-[var(--color-muted-foreground)]">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Carregando...
+              </div>
+            ) : (
+              <>
+                <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-muted)]/50 px-4 py-4">
+                  <span className="block select-all text-center font-mono text-2xl font-bold tracking-widest text-[var(--color-foreground)]">
+                    {recoveryCode ?? '—'}
+                  </span>
+                </div>
+
+                <p className="text-xs text-[var(--color-muted-foreground)]">
                   {recoveryCode
                     ? 'Este código não expira. Ao gerar um novo, o atual é invalidado.'
                     : 'Você ainda não tem um código. Gere um agora para conseguir recuperar a conta.'}
-                </span>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setRegenOpen(true)}
-                  className="gap-1.5"
-                >
-                  <RefreshCw className="h-3.5 w-3.5" />
-                  {recoveryCode ? 'Gerar novo código' : 'Gerar código'}
-                </Button>
-              </div>
+                </p>
 
-              {recoveryError && (
-                <p className="text-sm text-[var(--color-destructive)]">{recoveryError}</p>
-              )}
-            </>
-          )}
+                {recoveryError && (
+                  <p className="text-sm text-[var(--color-destructive)]">{recoveryError}</p>
+                )}
+
+                <div className="flex justify-end">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setRegenOpen(true)}
+                    className="gap-1.5"
+                  >
+                    <RefreshCw className="h-3.5 w-3.5" />
+                    {recoveryCode ? 'Gerar novo código' : 'Gerar código'}
+                  </Button>
+                </div>
+              </>
+            )}
+          </div>
         </CardContent>
       </Card>
 

@@ -40,8 +40,16 @@ from .models import (
 )
 from .services import finalizar_sprint_replicacao, get_sprint_ids_atribuiveis
 from apps.accounts.profile_picture_utils import get_profile_picture_url
-from apps.accounts.permissions import IsAdminOrSupervisor, HasPerm, NaoVisitanteEscreve
-from apps.accounts.scoping import scope_sprints, scope_projects, scope_cards, scope_card_scores
+from apps.accounts.models import Role
+from apps.accounts.permissions import PodeVerConteudo, HasPerm, NaoVisitanteEscreve
+from apps.accounts.scoping import checar_escrita_no_pai, scope_card_logs
+from apps.accounts.sharing import CompartilhamentoSetorMixin
+from apps.accounts.scoping import (scope_sprints, scope_projects, scope_cards,
+                                   scope_card_scores, scope_users,
+                                   scope_weekly_priorities, scope_events,
+                                   scope_card_anexos, scope_card_pins,
+                                   scope_card_date_change_requests,
+                                   projetos_editaveis)
 from .serializers import (
     SprintSerializer, ProjectSerializer, CardSerializer, CardKanbanSerializer,
     CardMetricsSerializer,
@@ -96,10 +104,34 @@ def _card_edicao_restrita(card):
     return _sprint_efetivamente_fechada(sprint)
 
 
-class SprintViewSet(viewsets.ModelViewSet):
+def _ids_supervisao_prioridades():
+    """IDs de quem supervisiona as prioridades em vez de executá-las.
+
+    A página de Prioridades é uma lista de quem toca o trabalho: quem define e
+    cobra as prioridades entra ali como leitor, não como linha da lista. Esse
+    papel é justamente o de `manage_weekly_priorities` — direto no usuário,
+    herdado pelo cargo Admin (accounts/auth_backends.py) ou implícito no
+    superusuário, os três caminhos que `has_perm` reconhece.
+
+    Retorna queryset de ids (subconsulta) para ser usado com `__in` sem trazer
+    a lista para a memória.
+    """
+    from django.contrib.auth import get_user_model
+
+    return get_user_model().objects.filter(
+        Q(
+            user_permissions__codename='manage_weekly_priorities',
+            user_permissions__content_type__app_label='accounts',
+        )
+        | Q(role=Role.ADMIN)
+        | Q(is_superuser=True)
+    ).values_list('id', flat=True)
+
+
+class SprintViewSet(CompartilhamentoSetorMixin, viewsets.ModelViewSet):
     queryset = Sprint.objects.all()
     serializer_class = SprintSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, PodeVerConteudo]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_fields = ['supervisor']
     search_fields = ['nome']
@@ -111,7 +143,7 @@ class SprintViewSet(viewsets.ModelViewSet):
         # Restrições extras de sprint finalizada (manage_closed_sprints) ficam
         # em update/destroy.
         if self.action in ('create', 'update', 'partial_update', 'destroy'):
-            return [HasPerm('manage_sprints')()]
+            return [PodeVerConteudo(), HasPerm('manage_sprints')()]
         return super().get_permissions()
 
     def update(self, request, *args, **kwargs):
@@ -209,7 +241,20 @@ class SprintViewSet(viewsets.ModelViewSet):
         sprint = self.get_object()
         # Projetos não-arquivados da sprint, com contagens já anotadas
         # (espelham as do ProjectViewSet).
-        projects = (
+        #
+        # O escopo é reaplicado AQUI e não herdado do `get_object()`: aquele
+        # escopou a SPRINT (`scope_sprints`), e o conteúdo dela nem sempre vem
+        # junto por cascata. Com a sprint COMPARTILHADA a cascata cobre tudo
+        # (`scope_projects` aceita `sprint_id__in=<sprints compartilhadas>`) e
+        # bundle e `/api/projects/` concordam. Mas numa sprint do PRÓPRIO setor
+        # o projeto só entra pelo `setor_id` dele ou por compartilhamento
+        # explícito — e um projeto pode ter sido movido isoladamente
+        # (`POST /api/setores/<X>/atribuir-dados/ {"project_ids": [...]}` troca o
+        # setor do projeto sem tocar na sprint). Sem o escopo, esse projeto some
+        # da listagem e continua visível aqui, com todos os cards. Bundle é o
+        # endpoint que a tela de sprint carrega, então é exatamente onde a
+        # divergência apareceria para todo mundo.
+        projects = scope_projects(  # fail-open enquanto flag OFF
             Project.objects.filter(sprint=sprint, arquivado=False)
             .select_related('sprint')
             .annotate(
@@ -221,22 +266,45 @@ class SprintViewSet(viewsets.ModelViewSet):
                     'cards', filter=Q(cards__status='em_desenvolvimento'),
                 ),
             )
-            .order_by('id')
+            .order_by('id'),
+            request.user,
         )
+        # Derivado DEPOIS do escopo de propósito: `project_ids` alimenta cards e
+        # kanban configs, então restringir aqui já restringe os dois.
         project_ids = list(projects.values_list('id', flat=True))
 
         # Todos os cards dos projetos da sprint — single query com select_related
         # e annotate(events_count) (evita N+1 do SerializerMethodField).
-        cards = (
+        #
+        # `scope_cards` aqui é cinto e suspensório, NÃO o fecho de um furo: todo
+        # card deste queryset está num projeto de `project_ids`, que já passou
+        # por `scope_projects`, e `scope_cards` aceita qualquer card cujo
+        # `projeto_id` esteja entre os projetos visíveis — a mesma expressão.
+        # Hoje ele não remove nenhuma linha, e não existe caminho para card de
+        # setor divergente: `Card.setor` é espelho do projeto (models.py,
+        # `Card.save`) e `atribuir-dados` NÃO aceita `card_ids` — move sempre
+        # projeto e cards juntos (accounts/views.py). Fica porque o Card tem
+        # `setor_id` e compartilhamento próprios: se as duas expressões
+        # divergirem, é aqui que a divergência é barrada.
+        # Os helpers filtram por colunas locais (`setor_id`/`pk`/`projeto_id`),
+        # sem join novo — o `events_count` anotado acima não infla.
+        cards = scope_cards(  # fail-open enquanto flag OFF
             Card.objects.filter(projeto_id__in=project_ids)
             .select_related('projeto', 'projeto__sprint', 'responsavel', 'criado_por', 'score')
             .annotate(events_count=Count('events'))
-            .order_by('projeto_id', 'id')
+            .order_by('projeto_id', 'id'),
+            request.user,
         )
 
         # Kanban configs por projeto. Pré-popula configs default em projetos
         # legados (igual ProjectViewSet.kanban_config). Em uma única query
         # com select_related stage.
+        #
+        # Sem escopo próprio de propósito: `ProjectKanbanStageConfig` não tem
+        # setor — ela É o projeto (a lista de colunas do board). Tanto o laço de
+        # pré-população quanto a consulta abaixo saem de `projects`/`project_ids`
+        # já escopados, então a configuração de projeto invisível não é criada
+        # nem devolvida.
         for project in projects:
             self._ensure_project_default_kanban_config_for_bundle(project)
 
@@ -255,6 +323,11 @@ class SprintViewSet(viewsets.ModelViewSet):
                 'requires_required_data': cfg.stage.requires_required_data,
             })
 
+        # `self.get_queryset()` já passa por `scope_sprints`, então a sprint sai
+        # escopada. As contagens agregadas que ele anota (cards_total, em atraso
+        # etc.) somam os cards da sprint SEM olhar setor — de propósito: é
+        # exatamente o número que `/api/sprints/` devolve na listagem, e mudar
+        # só aqui recriaria a divergência que esta action acabou de fechar.
         payload = {
             'sprint': SprintSerializer(self.get_queryset().get(pk=sprint.pk)).data,
             'projects': ProjectSerializer(projects, many=True).data,
@@ -308,10 +381,10 @@ class SprintViewSet(viewsets.ModelViewSet):
         }, status=status.HTTP_200_OK)
 
 
-class ProjectViewSet(viewsets.ModelViewSet):
+class ProjectViewSet(CompartilhamentoSetorMixin, viewsets.ModelViewSet):
     queryset = Project.objects.all()
     serializer_class = ProjectSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, PodeVerConteudo]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     # `arquivado` NÃO entra em filterset_fields — fazemos handling manual em
     # get_queryset (que aceita 'all' além de true/false). Se entrasse aqui,
@@ -325,7 +398,7 @@ class ProjectViewSet(viewsets.ModelViewSet):
         # Criar/editar projeto exige `manage_projects`. Excluir é coberto por
         # `_ensure_can_manage(delete_projects)` no destroy.
         if self.action in ('create', 'update', 'partial_update'):
-            return [HasPerm('manage_projects')()]
+            return [PodeVerConteudo(), HasPerm('manage_projects')()]
         return super().get_permissions()
 
     def get_queryset(self):
@@ -368,6 +441,7 @@ class ProjectViewSet(viewsets.ModelViewSet):
         Garante que todo projeto novo já nasça com a configuração padrão de etapas,
         mantendo compatibilidade para quem não seleciona etapas no frontend.
         """
+        checar_escrita_no_pai(self.request.user, serializer.validated_data.get('sprint'))
         project = serializer.save()
 
         default_stage_keys_order = [
@@ -525,6 +599,13 @@ class ProjectViewSet(viewsets.ModelViewSet):
         if not cfg:
             return Response({'detail': 'Etapa não está configurada para este projeto.'}, status=status.HTTP_404_NOT_FOUND)
 
+        # Card CRU de propósito (não passa por `scope_cards`): remover a coluna é
+        # uma operação do BOARD DO PROJETO, e o projeto já veio escopado do
+        # `get_object()` — todo card dele é visível para `scope_cards`, então
+        # escopar aqui não mudaria nada. E se um dia mudasse, seria para pior: o
+        # move abaixo deixaria os cards de fora parados num `status` cuja coluna
+        # acabou de ser apagada — órfãos invisíveis no kanban. Quem senta na
+        # coluna tem de sair dela.
         cards_count = Card.objects.filter(projeto=project, status=stage_key).count()
         if cards_count > 0 and (move_to_key is None or not str(move_to_key).strip()):
             return Response(
@@ -588,6 +669,11 @@ class ProjectViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        # Idem `kanban_config_remove`: card CRU de propósito. Esvaziar uma coluna
+        # do board é operação do projeto (já escopado pelo `get_object()`, e todo
+        # card de projeto visível passa por `scope_cards`), e deixar alguém para
+        # trás esvaziaria a coluna só pela metade. A resposta devolve apenas
+        # `moved_count` — nenhum dado de card sai daqui.
         cards_qs = Card.objects.filter(projeto=project, status=from_stage_key).only('id', 'nome')
         cards = list(cards_qs)
         if not cards:
@@ -651,20 +737,57 @@ class ProjectViewSet(viewsets.ModelViewSet):
             )
         return ids, None
 
-    def _safe_ids(self, ids):
-        """Remove IDs de projetos sistêmicos (is_system=True) do conjunto.
-        Retorna (safe_ids, blocked_count).
+    def _safe_ids(self, ids, escrita=False):
+        """Remove IDs de projetos sistêmicos (is_system=True) e IDs fora do
+        escopo de setor do usuário. Retorna (safe_ids, blocked_count).
 
         Defesa server-side: o frontend já omite esses, mas garantimos aqui pra
         clientes API diretos. Usa a flag `is_system` (verdade canônica)
-        em vez de comparar nome — robusto contra renomeações."""
+        em vez de comparar nome — robusto contra renomeações.
+
+        O escopo entra AQUI, e não em cada action, porque este é o único ponto
+        que as quatro ações em massa compartilham: nenhuma delas chama
+        `get_object()`, então nem o `get_queryset()` escopado (que é onde vive o
+        `scope_projects`) nem o gate de objeto do `CompartilhamentoSetorMixin`
+        — que só engata em rota de detalhe — entram em jogo. Sem isto, um
+        `{ids: [1..200]}` alcança projeto de qualquer setor, e `bulk_project_actions`
+        é permissão de CARGO: ela não implica `view_cross_setor`.
+
+        `escrita=True` nas ações que MUTAM (arquivar/desarquivar/excluir):
+        projeto emprestado ao setor apenas para LEITURA aparece na tela, mas não
+        pode ser arquivado nem apagado. `projetos_editaveis` responde por essa
+        distinção e obedece à flag de ESCRITA — separada da de visibilidade de
+        propósito, para que ligar uma não comece a barrar a outra.
+
+        Id fora do escopo simplesmente some do conjunto, e o contador
+        `requested` continua devolvendo o total pedido — a resposta não vira
+        oráculo de "existe mas não é seu".
+
+        Com as flags OFF, os dois helpers devolvem o queryset inteiro e `safe`
+        passa a conter exatamente os ids QUE EXISTEM (antes, id inexistente
+        seguia na lista). Nenhuma resposta muda por causa disso: as quatro
+        actions só usam `safe` em `filter(id__in=...)`, onde id inexistente
+        nunca contribuiu com nada."""
         if not ids:
             return [], 0
         blocked_ids = set(
             Project.objects.filter(id__in=ids, is_system=True)
             .values_list('id', flat=True)
         )
-        safe = [i for i in ids if i not in blocked_ids]
+        # Os dois helpers são consultados já restritos a `ids` (no máximo 200,
+        # por `_resolve_ids`): a resolução dos ids acontece antes do filtro, como
+        # no resto do módulo de escopo, e nenhuma das consultas varre a tabela.
+        permitidos = set(
+            scope_projects(Project.objects.filter(id__in=ids), self.request.user)
+            .values_list('id', flat=True)  # fail-open enquanto flag OFF
+        )
+        if escrita:
+            permitidos &= set(
+                projetos_editaveis(self.request.user)
+                .filter(id__in=ids).values_list('id', flat=True)
+            )
+        # Preserva a ordem pedida pelo cliente (o filtro é por pertencimento).
+        safe = [i for i in ids if i not in blocked_ids and i in permitidos]
         return safe, len(blocked_ids)
 
     def destroy(self, request, *args, **kwargs):
@@ -690,7 +813,7 @@ class ProjectViewSet(viewsets.ModelViewSet):
         ids, err = self._resolve_ids(request)
         if err:
             return err
-        safe_ids, blocked = self._safe_ids(ids)
+        safe_ids, blocked = self._safe_ids(ids, escrita=True)
         now = timezone.now()
         with transaction.atomic():
             projects = (
@@ -712,7 +835,7 @@ class ProjectViewSet(viewsets.ModelViewSet):
         ids, err = self._resolve_ids(request)
         if err:
             return err
-        safe_ids, blocked = self._safe_ids(ids)
+        safe_ids, blocked = self._safe_ids(ids, escrita=True)
         with transaction.atomic():
             projects = (
                 Project.objects.select_for_update()
@@ -743,11 +866,25 @@ class ProjectViewSet(viewsets.ModelViewSet):
         ids, err = self._resolve_ids(request)
         if err:
             return err
-        safe_ids, blocked = self._safe_ids(ids)
+        # `escrita=True` mesmo sendo um GET disfarçado de POST: este preview
+        # existe só para anunciar o que o `bulk_delete` vai apagar. Listar aqui
+        # um projeto que lá seria recusado (emprestado apenas para leitura)
+        # prometeria uma exclusão que não acontece — e ainda entregaria o
+        # backlog dele (nome, sprint e até 100 cards) de brinde.
+        safe_ids, blocked = self._safe_ids(ids, escrita=True)
 
         # Importa local pra evitar ciclo com realtime.
         from .realtime import _sprint_is_active
 
+        # Os projetos já vêm escopados (`_safe_ids`), mas os CARDS do prefetch
+        # vão crus de propósito. Escopar não mudaria nada hoje — card de projeto
+        # visível é card visível para `scope_cards` —, e se um dia mudasse seria
+        # pelo lado errado: o delete é no PROJETO e o banco cascateia, apagando
+        # TODO card da tabela. Um preview escopado anunciaria MENOS do que o
+        # `bulk_delete` destrói, e perder trabalho sem aviso é pior do que ver o
+        # nome de um card que já se ia perder de qualquer jeito. Se um dia o
+        # delete passar a POUPAR o card fora do escopo, este prefetch tem de ser
+        # escopado JUNTO, no mesmo commit.
         projects = (
             Project.objects.filter(id__in=safe_ids)
             .select_related('sprint')
@@ -804,7 +941,7 @@ class ProjectViewSet(viewsets.ModelViewSet):
         ids, err = self._resolve_ids(request)
         if err:
             return err
-        safe_ids, blocked = self._safe_ids(ids)
+        safe_ids, blocked = self._safe_ids(ids, escrita=True)
         with transaction.atomic():
             projects = Project.objects.filter(id__in=safe_ids)
             existing_ids = list(projects.values_list('id', flat=True))
@@ -820,7 +957,7 @@ class ProjectViewSet(viewsets.ModelViewSet):
 class KanbanStageViewSet(viewsets.ModelViewSet):
     queryset = KanbanStage.objects.all().order_by('key')
     serializer_class = KanbanStageSerializer
-    permission_classes = [IsAuthenticated, NaoVisitanteEscreve]
+    permission_classes = [IsAuthenticated, PodeVerConteudo, NaoVisitanteEscreve]
 
     def _is_supervisor_editor(self, request):
         return request.user.has_perm('accounts.manage_global_kanban_stages')
@@ -833,10 +970,10 @@ class KanbanStageViewSet(viewsets.ModelViewSet):
         serializer.save()
 
 
-class CardViewSet(viewsets.ModelViewSet):
+class CardViewSet(CompartilhamentoSetorMixin, viewsets.ModelViewSet):
     queryset = Card.objects.all()
     serializer_class = CardSerializer
-    permission_classes = [IsAuthenticated, NaoVisitanteEscreve]
+    permission_classes = [IsAuthenticated, PodeVerConteudo, NaoVisitanteEscreve]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_fields = ['projeto', 'responsavel', 'status', 'prioridade', 'area', 'tipo']
     search_fields = ['nome', 'descricao']
@@ -865,6 +1002,7 @@ class CardViewSet(viewsets.ModelViewSet):
     
     def perform_create(self, serializer):
         """Define o criado_por automaticamente ao criar um card"""
+        checar_escrita_no_pai(self.request.user, serializer.validated_data.get('projeto'))
         serializer.save(criado_por=self.request.user)
 
     @action(detail=False, methods=['get'], url_path='metrics', permission_classes=[HasPerm('view_metrics')])
@@ -997,24 +1135,28 @@ class CardViewSet(viewsets.ModelViewSet):
         periodo = request.query_params.get('periodo', 'dia')  # 'dia' ou 'semana'
         
         # Definir filtro de data baseado no período
-        hoje = timezone.now().date()
+        hoje = timezone.localdate()  # data LOCAL: `now().date()` é UTC e, das 21h à meia-noite, já é o dia seguinte
         inicio_hoje = timezone.make_aware(datetime.combine(hoje, datetime.min.time()))
         fim_hoje = timezone.make_aware(datetime.combine(hoje, datetime.max.time()))
         
-        # Buscar TODOS os usuários com cargos abaixo de supervisor (gerente, desenvolvedor, dados)
-        usuarios_ativos = User.objects.filter(
-            is_active=True
-        ).exclude(
-            role__in=['supervisor', 'admin']
-        )
-        
+        # Buscar TODOS os usuários que executam trabalho (sem quem supervisiona)
+        supervisao_ids = _ids_supervisao_prioridades()
+        usuarios_ativos = scope_users(
+            User.objects.filter(
+                is_active=True
+            ).exclude(
+                id__in=supervisao_ids
+            ),
+            request.user,
+        )  # fail-open enquanto flag OFF
+
         if periodo == 'dia':
             # Prioridades do dia: considerar apenas cards de sprints em andamento
             # Definição de sprint em andamento:
             # - sprint não finalizada
             # - data_inicio <= hoje <= dia de fechamento (data do fechamento_em)
             # E com status relevantes ou finalizados hoje
-            cards_em_desenvolvimento = Card.objects.filter(
+            cards_em_desenvolvimento = scope_cards(Card.objects.filter(
                 Q(status='em_desenvolvimento') |  # Cards em desenvolvimento
                 Q(status='em_homologacao') |  # Cards em homologação
                 Q(status='parado_pendencias') |  # Cards parados por pendências
@@ -1025,23 +1167,23 @@ class CardViewSet(viewsets.ModelViewSet):
                 projeto__sprint__data_inicio__lte=timezone.now(),
                 projeto__sprint__fechamento_em__date__gte=hoje,
             ).exclude(responsavel__isnull=True).exclude(
-                responsavel__role__in=['supervisor', 'admin']
-            ).select_related('responsavel', 'projeto')
-            
+                responsavel_id__in=supervisao_ids
+            ).select_related('responsavel', 'projeto'), request.user)  # fail-open enquanto flag OFF
+
             # Debug (sem PII em logs; ativável via logger.debug com handler dedicado)
             logger.debug("[Priorities] DIA cards=%d", cards_em_desenvolvimento.count())
 
         else:
             # Prioridades da semana: cards que vencem até o final da semana (7 dias)
             fim_semana = hoje + timedelta(days=7)
-            cards_em_desenvolvimento = Card.objects.filter(
+            cards_em_desenvolvimento = scope_cards(Card.objects.filter(
                 status__in=['a_desenvolver', 'em_desenvolvimento', 'parado_pendencias', 'em_homologacao', 'finalizado']
             ).filter(projeto__arquivado=False).exclude(responsavel__isnull=True).exclude(
-                responsavel__role__in=['supervisor', 'admin']
+                responsavel_id__in=supervisao_ids
             ).filter(
                 Q(data_fim__gte=hoje, data_fim__lte=fim_semana) |
                 Q(status='finalizado', updated_at__date__gte=hoje, updated_at__date__lte=fim_semana)
-            )
+            ), request.user)  # fail-open enquanto flag OFF
         
         # Agrupar cards por responsável
         cards_por_usuario = {}
@@ -1124,13 +1266,13 @@ class CardPinViewSet(viewsets.ModelViewSet):
     seus pins removidos automaticamente via signal (`remove_pins_when_card_finalized`).
     """
     serializer_class = CardPinSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, PodeVerConteudo]
     pagination_class = None
     http_method_names = ['get', 'post', 'delete']
 
     def get_queryset(self):
         now = timezone.now()
-        return (
+        qs = (
             CardPin.objects
             .filter(user=self.request.user)
             .exclude(card__status__in=[CardStatus.FINALIZADO, CardStatus.INVIABILIZADO])
@@ -1150,11 +1292,33 @@ class CardPinViewSet(viewsets.ModelViewSet):
                 'card__criado_por',
             )
         )
+        # `user=self.request.user` responde "é meu pin?" — privacidade, não
+        # segmentação. Sem o escopo, um pin criado sobre card de outro setor
+        # (ou sobre um card que depois saiu do escopo) continuaria renderizando
+        # o `card_detail` completo desse card a cada listagem.
+        return scope_card_pins(qs, self.request.user)  # fail-open enquanto flag OFF
+
+    def perform_create(self, serializer):
+        # SEM gate de escrita aqui, de propósito. Fixar não escreve nada DENTRO
+        # do card: o CardPin é uma linha pessoal (user + card) que só aparece
+        # para quem fixou. O gate que importa é o de VISIBILIDADE, e ele já vive
+        # em `CardPinSerializer.validate_card` (serializers.py), que chama
+        # `scope_cards` com `editaveis_fn=None` justamente para que um card
+        # emprestado ao setor apenas para LEITURA continue fixável por quem já o
+        # enxerga. Repetir aqui um `checar_escrita_no_pai` contradiria essa
+        # decisão e passaria a recusar 403 no botão "Fixar" assim que
+        # SETOR_WRITE_ENFORCEMENT_ENABLED subisse — restringindo mais do que o
+        # compartilhamento pediu.
+        serializer.save()
 
     @action(detail=False, methods=['delete'], url_path='by-card/(?P<card_id>[^/.]+)')
     def delete_by_card(self, request, card_id=None):
         """DELETE /card-pins/by-card/<card_id>/ — atalho para desfixar sem
-        precisar conhecer o id do CardPin."""
+        precisar conhecer o id do CardPin.
+
+        Sem escopo de propósito: apaga só o pin de QUEM PEDE (`user=request.user`)
+        e desfixar precisa continuar possível mesmo depois de o card sair do
+        escopo do usuário — senão o pin residual ficaria preso para sempre."""
         deleted, _ = CardPin.objects.filter(user=request.user, card_id=card_id).delete()
         if deleted == 0:
             return Response(status=status.HTTP_404_NOT_FOUND)
@@ -1163,7 +1327,7 @@ class CardPinViewSet(viewsets.ModelViewSet):
 
 class EventViewSet(viewsets.ModelViewSet):
     serializer_class = EventSerializer
-    permission_classes = [IsAuthenticated, NaoVisitanteEscreve]
+    permission_classes = [IsAuthenticated, PodeVerConteudo, NaoVisitanteEscreve]
     filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
     filterset_fields = ['card', 'tipo', 'usuario']
     ordering_fields = ['data']
@@ -1177,12 +1341,58 @@ class EventViewSet(viewsets.ModelViewSet):
         qs = Event.objects.all()
         if self.action == 'list' and not self.request.query_params.get('card'):
             qs = qs.filter(card__projeto__arquivado=False)
-        return qs
+        # O evento não tem setor próprio: quem responde pela visibilidade é o
+        # CARD dono. Sem isto, `?card=<id>` (o campo está em `filterset_fields`)
+        # entrega as pendências/comentários de qualquer card — e o
+        # `EventSerializer` ainda embute o `card_detail` inteiro em cada linha.
+        return scope_events(qs, self.request.user)  # fail-open enquanto flag OFF
+
+    def perform_create(self, serializer):
+        # Comentar/abrir pendência é escrever DENTRO do card, e o card vem por
+        # id do cliente: mesmo gate de pai do CardLogViewSet. Sobre o card, não
+        # sobre o Event — `nivel_de_acesso` não conhece Event e devolveria None.
+        checar_escrita_no_pai(self.request.user, serializer.validated_data.get('card'))
+        # `usuario` é nulável para que o evento sobreviva à saída do autor, mas
+        # evento CRIADO agora sempre nasce com autoria: sem isto, um POST que
+        # omitisse o campo gravaria uma pendência/um comentário anônimo na tela
+        # do time dono do card. Mesmo preenchimento do CardLogViewSet.
+        if not serializer.validated_data.get('usuario'):
+            serializer.save(usuario=self.request.user)
+        else:
+            serializer.save()
+
+    def perform_update(self, serializer):
+        # Este viewset é ModelViewSet sem `http_method_names`, então PATCH/PUT
+        # e DELETE de detalhe existem. O gate tem de ser expresso sobre o CARD
+        # (o pai), e não sobre o Event: `SetorPermiteEscrita`/`pode_editar`
+        # perguntariam o nível de acesso do próprio evento, que não tem setor
+        # nem compartilhamento — a resposta seria None e NEGARIA TUDO assim que
+        # a flag de escrita subisse.
+        checar_escrita_no_pai(self.request.user, serializer.instance.card)
+        # `card` é gravável: mover o evento é escrever também no card DESTINO.
+        destino = serializer.validated_data.get('card')
+        if destino is not None and destino.pk != serializer.instance.card_id:
+            checar_escrita_no_pai(self.request.user, destino)
+        serializer.save()
+
+    def perform_destroy(self, instance):
+        # Apagar a pendência de um card é escrever nesse card. Idem acima:
+        # o gate pergunta pelo pai.
+        checar_escrita_no_pai(self.request.user, instance.card)
+        instance.delete()
 
 
 class CardLogViewSet(viewsets.ModelViewSet):
+    """Timeline do card: escrita só por append.
+
+    `PATCH` e `DELETE` estão fora de `http_method_names` de propósito. O log é
+    a prova de o que aconteceu com o card — um histórico que pode ser reescrito
+    não serve para auditar nada. Criar continua liberado: é assim que a tela
+    registra comentários e mudanças de etapa.
+    """
     serializer_class = CardLogSerializer
-    permission_classes = [IsAuthenticated, NaoVisitanteEscreve]
+    permission_classes = [IsAuthenticated, PodeVerConteudo, NaoVisitanteEscreve]
+    http_method_names = ['get', 'post', 'head', 'options']
     filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
     filterset_fields = ['card', 'tipo_evento', 'usuario']
     ordering_fields = ['data']
@@ -1194,9 +1404,12 @@ class CardLogViewSet(viewsets.ModelViewSet):
         qs = CardLog.objects.select_related('usuario')
         if self.action == 'list' and not self.request.query_params.get('card'):
             qs = qs.filter(card__projeto__arquivado=False)
-        return qs
+        return scope_card_logs(qs, self.request.user)  # fail-open enquanto flag OFF
 
     def perform_create(self, serializer):
+        # Escrever na timeline é escrever no card: quem recebeu o card só para
+        # leitura não pode deixar registro nele.
+        checar_escrita_no_pai(self.request.user, serializer.validated_data.get('card'))
         # Preencher o usuário automaticamente se não foi fornecido
         if not serializer.validated_data.get('usuario'):
             serializer.save(usuario=self.request.user)
@@ -1289,7 +1502,7 @@ class WeeklyPriorityConfigViewSet(viewsets.ModelViewSet):
     """ViewSet para gerenciar a configuração do horário limite das prioridades semanais"""
     queryset = WeeklyPriorityConfig.objects.all()
     serializer_class = WeeklyPriorityConfigSerializer
-    permission_classes = [IsAuthenticated, NaoVisitanteEscreve]
+    permission_classes = [IsAuthenticated, PodeVerConteudo, NaoVisitanteEscreve]
     
     def get_queryset(self):
         # Retornar apenas a configuração (sempre será apenas uma)
@@ -1335,7 +1548,7 @@ class WeeklyPriorityConfigViewSet(viewsets.ModelViewSet):
             from rest_framework.exceptions import PermissionDenied
             raise PermissionDenied("Apenas supervisores e administradores podem fechar a semana.")
         
-        hoje = timezone.now().date()
+        hoje = timezone.localdate()
         dias_ate_segunda = hoje.weekday()  # 0 = segunda, 6 = domingo
         semana_inicio = hoje - timedelta(days=dias_ate_segunda)
         
@@ -1355,7 +1568,7 @@ class WeeklyPriorityConfigViewSet(viewsets.ModelViewSet):
             from rest_framework.exceptions import PermissionDenied
             raise PermissionDenied("Apenas supervisores e administradores podem limpar prioridades.")
         
-        hoje = timezone.now().date()
+        hoje = timezone.localdate()
         dias_ate_segunda = hoje.weekday()  # 0 = segunda, 6 = domingo
         semana_inicio = hoje - timedelta(days=dias_ate_segunda)
         
@@ -1365,8 +1578,12 @@ class WeeklyPriorityConfigViewSet(viewsets.ModelViewSet):
         if not config.is_semana_fechada(semana_inicio):
             raise ValidationError("A semana deve estar fechada antes de limpar as prioridades.")
         
-        # Deletar todas as prioridades da semana atual
-        priorities = WeeklyPriority.objects.filter(semana_inicio=semana_inicio)
+        # Deletar as prioridades da semana atual que o operador ENXERGA: limpar
+        # a semana não pode apagar o planejamento de um setor que ele nem vê.
+        priorities = scope_weekly_priorities(
+            WeeklyPriority.objects.filter(semana_inicio=semana_inicio),
+            request.user,
+        )  # fail-open enquanto flag OFF
         count = priorities.count()
         priorities.delete()
         
@@ -1383,7 +1600,7 @@ class WeeklyPriorityViewSet(viewsets.ModelViewSet):
     """ViewSet para gerenciar as prioridades semanais"""
     queryset = WeeklyPriority.objects.all()
     serializer_class = WeeklyPrioritySerializer
-    permission_classes = [IsAuthenticated, NaoVisitanteEscreve]
+    permission_classes = [IsAuthenticated, PodeVerConteudo, NaoVisitanteEscreve]
     filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
     filterset_fields = ['usuario', 'semana_inicio', 'semana_fim']
     ordering_fields = ['semana_inicio', 'usuario']
@@ -1404,14 +1621,14 @@ class WeeklyPriorityViewSet(viewsets.ModelViewSet):
                 pass
         else:
             # Por padrão, mostrar a semana atual
-            hoje = timezone.now().date()
+            hoje = timezone.localdate()
             # Calcular segunda-feira da semana atual
             dias_ate_segunda = hoje.weekday()  # 0 = segunda, 6 = domingo
             semana_inicio = hoje - timedelta(days=dias_ate_segunda)
             queryset = queryset.filter(semana_inicio=semana_inicio)
-        
-        return queryset
-    
+
+        return scope_weekly_priorities(queryset, self.request.user)  # fail-open enquanto flag OFF
+
     def perform_create(self, serializer):
         # Verificar se o usuário é supervisor ou admin
         if not self.request.user.has_perm('accounts.manage_weekly_priorities'):
@@ -1472,16 +1689,19 @@ class WeeklyPriorityViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['get'], url_path='current_week')
     def current_week(self, request):
         """Retorna as prioridades da semana atual"""
-        hoje = timezone.now().date()
+        hoje = timezone.localdate()
         # Calcular segunda-feira da semana atual
         dias_ate_segunda = hoje.weekday()  # 0 = segunda, 6 = domingo
         semana_inicio = hoje - timedelta(days=dias_ate_segunda)
         semana_fim = semana_inicio + timedelta(days=4)  # Sexta-feira
         
-        priorities = WeeklyPriority.objects.filter(
-            semana_inicio=semana_inicio
-        ).select_related('usuario', 'card', 'definido_por')
-        
+        priorities = scope_weekly_priorities(
+            WeeklyPriority.objects.filter(
+                semana_inicio=semana_inicio
+            ).select_related('usuario', 'card', 'definido_por'),
+            request.user,
+        )  # fail-open enquanto flag OFF
+
         serializer = self.get_serializer(priorities, many=True)
         return Response(serializer.data)
 
@@ -1499,24 +1719,30 @@ class WeeklyPriorityViewSet(viewsets.ModelViewSet):
         if not usuario_id:
             raise ValidationError({'usuario': 'Parâmetro obrigatório.'})
 
-        hoje = timezone.now().date()
+        hoje = timezone.localdate()
         semana_inicio = hoje - timedelta(days=hoje.weekday())
 
-        cards = (
+        # Escopo aqui também fecha a enumeração: o modal recebe `usuario` da
+        # URL, então sem filtro dava para listar os cards de qualquer pessoa.
+        cards = scope_cards(
             Card.objects.filter(
                 responsavel_id=usuario_id,
                 projeto__arquivado=False,
             )
             .exclude(status__in=[CardStatus.FINALIZADO, CardStatus.INVIABILIZADO])
             .select_related('projeto')
-            .order_by('-created_at')
-        )
+            .order_by('-created_at'),
+            request.user,
+        )  # fail-open enquanto flag OFF
 
         selected_ids = set(
-            WeeklyPriority.objects.filter(
-                usuario_id=usuario_id,
-                semana_inicio=semana_inicio,
-                card__projeto__arquivado=False,
+            scope_weekly_priorities(
+                WeeklyPriority.objects.filter(
+                    usuario_id=usuario_id,
+                    semana_inicio=semana_inicio,
+                    card__projeto__arquivado=False,
+                ),
+                request.user,
             ).values_list('card_id', flat=True)
         )
 
@@ -1547,22 +1773,28 @@ class WeeklyPriorityViewSet(viewsets.ModelViewSet):
         from django.contrib.auth import get_user_model
 
         User = get_user_model()
-        hoje = timezone.now().date()
+        hoje = timezone.localdate()
         dias_ate_segunda = hoje.weekday()
         semana_inicio = hoje - timedelta(days=dias_ate_segunda)
         limite_fechados = timezone.now() - timedelta(days=7)
 
-        usuarios_ativos = User.objects.filter(is_active=True).exclude(
-            role__in=['supervisor', 'admin']
-        )
+        usuarios_ativos = scope_users(
+            User.objects.filter(is_active=True).exclude(
+                id__in=_ids_supervisao_prioridades()
+            ),
+            request.user,
+        )  # fail-open enquanto flag OFF
 
         config = WeeklyPriorityConfig.get_config()
         semana_fechada = config.is_semana_fechada(semana_inicio)
 
-        priorities = WeeklyPriority.objects.filter(
-            semana_inicio=semana_inicio,
-            card__projeto__arquivado=False,
-        ).select_related('usuario', 'card', 'definido_por', 'card__projeto')
+        priorities = scope_weekly_priorities(
+            WeeklyPriority.objects.filter(
+                semana_inicio=semana_inicio,
+                card__projeto__arquivado=False,
+            ).select_related('usuario', 'card', 'definido_por', 'card__projeto'),
+            request.user,
+        )  # fail-open enquanto flag OFF
 
         priorities_por_usuario: dict[int, list] = {}
         priority_by_card_id: dict[int, WeeklyPriority] = {}
@@ -1571,14 +1803,14 @@ class WeeklyPriorityViewSet(viewsets.ModelViewSet):
             priorities_por_usuario.setdefault(user_id, []).append(priority)
             priority_by_card_id[priority.card_id] = priority
 
-        cards_fechados = Card.objects.filter(
+        cards_fechados = scope_cards(Card.objects.filter(
             responsavel__in=usuarios_ativos,
             status=CardStatus.FINALIZADO,
             projeto__arquivado=False,
         ).filter(
             Q(finalizado_em__gte=limite_fechados)
             | Q(finalizado_em__isnull=True, updated_at__gte=limite_fechados)
-        ).select_related('projeto', 'responsavel')
+        ).select_related('projeto', 'responsavel'), request.user)  # fail-open enquanto flag OFF
 
         fechados_por_usuario: dict[int, list] = {}
         for card in cards_fechados:
@@ -1647,7 +1879,7 @@ class CardDueDateChangeRequestViewSet(viewsets.ModelViewSet):
     - Avaliação (aprovar/recusar): apenas supervisor/admin.
     """
     serializer_class = CardDueDateChangeRequestSerializer
-    permission_classes = [IsAuthenticated, NaoVisitanteEscreve]
+    permission_classes = [IsAuthenticated, PodeVerConteudo, NaoVisitanteEscreve]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_fields = ['status', 'requested_by', 'reviewed_by', 'card']
     search_fields = ['reason', 'card__nome', 'requested_by__username']
@@ -1662,7 +1894,17 @@ class CardDueDateChangeRequestViewSet(viewsets.ModelViewSet):
         # quando o cliente acessa via `?card=<id>` (workflow histórico).
         if self.action == 'list' and not self.request.query_params.get('card'):
             qs = qs.filter(card__projeto__arquivado=False)
-        return qs
+        # A fila carrega o card inteiro (`card_detail`) e o `reason` em texto
+        # livre — o motivo do atraso, escrito por gente do setor dono —, então
+        # ela é tão sensível quanto o card e é o card que responde por ela.
+        # Escopar aqui fecha o lado da VISIBILIDADE de uma vez: `approve`,
+        # `reject`, `update` e `destroy` saem todos de `get_object()`, que passa
+        # a dar 404 fora do escopo em vez de alterar o `data_fim` de um card
+        # alheio. NÃO fecha o lado da ESCRITA: card emprestado em nível
+        # 'leitura' continua VISÍVEL, então continua saindo do `get_object()` —
+        # o gate de escrita mora no `approve` (ver lá), que é a única action
+        # daqui que mexe no card.
+        return scope_card_date_change_requests(qs, self.request.user)  # fail-open enquanto flag OFF
 
     def perform_create(self, serializer):
         card = serializer.validated_data.get('card')
@@ -1673,6 +1915,12 @@ class CardDueDateChangeRequestViewSet(viewsets.ModelViewSet):
             raise ValidationError({'card': 'Card é obrigatório.'})
 
         card = Card.objects.select_related('projeto__sprint').get(pk=card.pk)
+
+        # Pedir reajuste de prazo é abrir um registro dentro do card, e o card
+        # vem por id do cliente. A checagem de `responsavel` abaixo já cobre
+        # quase tudo, mas não o caso do responsável emprestado: alguém do setor
+        # A atribuído a um card que o setor B cedeu apenas para LEITURA.
+        checar_escrita_no_pai(self.request.user, card)
 
         if card.responsavel_id != self.request.user.id:
             raise PermissionDenied('Você só pode solicitar mudança de data para cards atribuídos a você.')
@@ -1721,6 +1969,17 @@ class CardDueDateChangeRequestViewSet(viewsets.ModelViewSet):
         req = self.get_object()
         if req.status != 'pending':
             return Response({'detail': 'Esta solicitação não está pendente.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Aprovar é a única action daqui que escreve DENTRO do card: muda o
+        # `data_fim` dele e ainda carimba um CardLog na timeline. O escopo do
+        # `get_queryset()` não cobre este caso — card emprestado em nível
+        # 'leitura' é VISÍVEL, então a solicitação sai normalmente do
+        # `get_object()` e só aqui dá para recusar. Mesmo gate de pai do
+        # `perform_create` logo acima, e pela mesma razão: `approve_due_date_requests`
+        # é permissão de CARGO, ela diz O QUE a pessoa faz, não ONDE.
+        # `reject`/`update`/`destroy` ficam de fora de propósito: mexem só na
+        # linha da solicitação, não no card.
+        checar_escrita_no_pai(request.user, req.card)
 
         with transaction.atomic():
             card = Card.objects.select_for_update().select_related('projeto__sprint').get(pk=req.card_id)
@@ -1828,7 +2087,7 @@ class CardScoreViewSet(viewsets.ModelViewSet):
             )
         )
         # Escopa por setor via o card dono (card__setor).
-        return scope_card_scores(qs, self.request.user)
+        return scope_card_scores(qs, self.request.user)  # fail-open enquanto flag OFF
 
     @action(detail=False, methods=['get'], url_path='pickable-cards')
     def pickable_cards(self, request):
@@ -1837,7 +2096,15 @@ class CardScoreViewSet(viewsets.ModelViewSet):
         Só aparecem cards de sprints EM ANDAMENTO ou PLANEJADAS (não finalizadas e
         com fechamento ainda no futuro). Cards de sprints finalizadas/expiradas, ou
         de projetos sem sprint, não são atribuíveis e ficam de fora. Cards já
-        FINALIZADOS também são excluídos (não faz sentido pontuar algo concluído)."""
+        FINALIZADOS também são excluídos (não faz sentido pontuar algo concluído).
+
+        Action `detail=False`: NÃO passa pelo `get_queryset()` da classe (que é
+        onde vive o `scope_card_scores`) e monta um queryset de Card próprio —
+        por isso o escopo precisa ser reaplicado aqui, à mão. Sem ele, quem tem
+        `manage_score` (permissão de cargo, que não implica `view_cross_setor`)
+        recebia numa única requisição, sem paginação, o backlog vivo da empresa
+        inteira: o `CardPickerSerializer` devolve nome, descrição, script_url e
+        responsável de cada card."""
         sprint_ids = get_sprint_ids_atribuiveis()
         qs = (
             Card.objects
@@ -1847,6 +2114,7 @@ class CardScoreViewSet(viewsets.ModelViewSet):
             .exclude(status=CardStatus.FINALIZADO)
             .order_by('-created_at')
         )
+        qs = scope_cards(qs, request.user)  # fail-open enquanto flag OFF
         serializer = CardPickerSerializer(qs, many=True)
         return Response(serializer.data)
 
@@ -1911,9 +2179,19 @@ class CardScoreViewSet(viewsets.ModelViewSet):
         ok, erro = self._validar_setor(setor)
         if not ok:
             return erro
-        if not Card.objects.filter(pk=card_id).exists():
+        # `create` não tem `get_object()`, então nada aqui passa pelo
+        # `get_queryset()` escopado: o card precisa ser resolvido DENTRO do
+        # escopo, senão esta rota (que também EDITA, via get_or_create abaixo)
+        # sobrescreve o score de um card de outro setor — e a transação commita
+        # antes de a resposta estourar no `get_queryset().get()` do final.
+        # Card fora do escopo responde igual a card inexistente, de propósito:
+        # a resposta não deve distinguir "não existe" de "não é seu".
+        card = scope_cards(Card.objects.filter(pk=card_id), request.user).first()
+        if card is None:
             return Response({'detail': 'Card não encontrado.'},
                             status=status.HTTP_404_NOT_FOUND)
+        # Pontuar é escrever no card: card emprestado só para leitura recusa.
+        checar_escrita_no_pai(request.user, card)
         valores = request.data.get('valores', [])
 
         # OneToOne: um card tem no máximo um score. Se já existe, tratamos como edição.
@@ -1944,6 +2222,12 @@ class CardScoreViewSet(viewsets.ModelViewSet):
 
     def update(self, request, *args, **kwargs):
         card_score = self.get_object()
+        # O `get_object()` já dá 404 fora do escopo (o `get_queryset` usa
+        # `scope_card_scores`); falta a recusa do card emprestado apenas para
+        # LEITURA. Gate sobre o CARD dono, não sobre o CardScore, que não tem
+        # setor próprio e daria None em `nivel_de_acesso`. Sem isto, o POST
+        # ficaria fechado e o PUT/PATCH aberto para o mesmo efeito.
+        checar_escrita_no_pai(request.user, card_score.card)
         valores = request.data.get('valores', None)
         if 'setor_solicitante' in request.data:
             ok, erro = self._validar_setor(request.data.get('setor_solicitante') or None)
@@ -1968,6 +2252,8 @@ class CardScoreViewSet(viewsets.ModelViewSet):
 
     def destroy(self, request, *args, **kwargs):
         card_score = self.get_object()
+        # Idem `update`: apagar a pontuação é escrever no card dono.
+        checar_escrita_no_pai(request.user, card_score.card)
         snapshot = self._snapshot(card_score)
         # Registra o histórico de exclusão antes de apagar o score (o card permanece).
         ScoreHistory.objects.create(
@@ -1996,9 +2282,21 @@ class CardAnexoViewSet(viewsets.GenericViewSet):
         'card', 'card__projeto', 'card__projeto__sprint', 'enviado_por'
     ).all()
     serializer_class = CardAnexoSerializer
-    permission_classes = [IsAuthenticated, NaoVisitanteEscreve]
+    permission_classes = [IsAuthenticated, PodeVerConteudo, NaoVisitanteEscreve]
     pagination_class = None
     http_method_names = ['get', 'post', 'delete', 'head', 'options']
+
+    def get_queryset(self):
+        """Anexos escopados pelo CARD dono.
+
+        O anexo não tem setor próprio, e o escopo aqui protege mais do que
+        metadado: o serializer devolve a `arquivo_url` absoluta e `/media/` só
+        exige estar autenticado, então entregar a linha do anexo é entregar a
+        planilha/o PDF/o print de outro setor. Escopar no queryset cobre de uma
+        vez o `list` (que filtra por `?card=<id>` vindo do cliente) e o
+        `destroy` (que sai de `get_object()` e passa a dar 404 fora do escopo).
+        """
+        return scope_card_anexos(self.queryset.all(), self.request.user)  # fail-open enquanto flag OFF
 
     def _pode_mutar(self, request, card):
         """True se o usuário pode anexar/remover neste card. Card travado
@@ -2015,18 +2313,31 @@ class CardAnexoViewSet(viewsets.GenericViewSet):
         except (TypeError, ValueError):
             return Response({'detail': 'Informe o parâmetro card (id numérico).'},
                             status=status.HTTP_400_BAD_REQUEST)
+        # `get_queryset()` já está escopado: card de outro setor devolve lista
+        # vazia, indistinguível de "card sem anexos" — nada de oráculo de ids.
         qs = self.get_queryset().filter(card_id=card_id)
         serializer = self.get_serializer(qs, many=True)
         return Response(serializer.data)
 
     def create(self, request, *args, **kwargs):
         try:
-            card = Card.objects.select_related('projeto', 'projeto__sprint').get(
-                pk=int(request.data.get('card'))
-            )
-        except (TypeError, ValueError, Card.DoesNotExist):
+            card_id = int(request.data.get('card'))
+        except (TypeError, ValueError):
             return Response({'detail': 'Card não encontrado.'},
                             status=status.HTTP_400_BAD_REQUEST)
+        # O card vem por id do cliente e este viewset não usa o
+        # `CompartilhamentoSetorMixin` (não há `get_object()` no POST), então
+        # nenhum gate de objeto roda: resolver o card DENTRO do escopo é a única
+        # barreira. Card fora do escopo responde como card inexistente.
+        card = scope_cards(  # fail-open enquanto flag OFF
+            Card.objects.select_related('projeto', 'projeto__sprint').filter(pk=card_id),
+            request.user,
+        ).first()
+        if card is None:
+            return Response({'detail': 'Card não encontrado.'},
+                            status=status.HTTP_400_BAD_REQUEST)
+        # Anexar arquivo é escrever DENTRO do card: gate de pai, sobre o card.
+        checar_escrita_no_pai(request.user, card)
         if not self._pode_mutar(request, card):
             return Response(
                 {'detail': 'Cards finalizados/inviabilizados ou de sprints finalizadas '
@@ -2045,6 +2356,12 @@ class CardAnexoViewSet(viewsets.GenericViewSet):
 
     def destroy(self, request, *args, **kwargs):
         instance = self.get_object()
+        # Gate de escrita expresso sobre `instance.card`, JAMAIS sobre o anexo:
+        # `nivel_de_acesso` não conhece CardAnexo (o model não tem `setor` nem
+        # `compartilhamentos`), então perguntar pelo próprio anexo devolveria
+        # None e negaria TODA remoção assim que a flag de escrita subisse.
+        # Quem responde pelo anexo é o card dono — a mesma regra do `create`.
+        checar_escrita_no_pai(request.user, instance.card)
         if not self._pode_mutar(request, instance.card):
             return Response(
                 {'detail': 'Sem permissão para remover anexos deste card.'},

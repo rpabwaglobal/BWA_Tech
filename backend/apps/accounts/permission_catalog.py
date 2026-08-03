@@ -23,10 +23,29 @@ PERMISSION_CATALOG = [
     ('view_all_tickets', 'Ver todos os chamados de suporte (não só os próprios)', 'Suporte'),
     ('manage_ticket_resolution', 'Editar status, responsável e resolução de chamados', 'Suporte'),
     ('notify_ticket_user', 'Notificar usuário sobre chamado', 'Suporte'),
+    # Ver o Geek Day é separado de operá-lo: o time inteiro acompanha o sorteio
+    # e o histórico do ciclo, e só quem organiza sorteia. Antes disso, ver o
+    # Geek Day exigia `view_metrics` — permissão de dados consolidados da
+    # empresa, larga demais para uma brincadeira interna.
+    ('view_geekday', 'Ver o Geek Day e o histórico de sorteios', 'Geek Day'),
     ('manage_geekday', 'Realizar sorteio, marcar sorteados e resetar Geek Day', 'Geek Day'),
+    # Piso de leitura do trabalho. Sem ela a pessoa entra, vê o próprio perfil e
+    # as próprias notificações, e mais nada — é o que faz "visitante sem acesso
+    # a nada até receber cargo e setor" valer também para LEITURA (o
+    # `NaoVisitanteEscreve` sempre cobriu só a escrita). Separada de
+    # `view_metrics` de propósito: uma coisa é enxergar a sprint em que se
+    # trabalha, outra é ver métricas consolidadas da empresa.
+    ('view_content', 'Ver sprints, projetos e cards', 'Acesso'),
     ('view_metrics', 'Ver métricas, relatórios e dados consolidados/sensíveis', 'Acesso'),
     ('view_cross_setor', 'Ver dados de todos os setores (ignora a segmentação por setor)', 'Acesso'),
-    ('manage_setor_sharing', 'Definir o setor e o compartilhamento de sprints/projetos entre setores', 'Acesso'),
+    ('manage_setor_sharing', 'Definir o setor e o compartilhamento de dados entre setores', 'Acesso'),
+    # Administração delegável: permitem que um cargo criado pelo admin (CEO,
+    # Supervisor, Gerente...) administre a plataforma, em vez de o privilégio
+    # ficar cravado no código para os codenames 'admin'/'supervisor'.
+    ('manage_users', 'Gerenciar usuários (ativar/desativar, atribuir cargo e setor)', 'Administração'),
+    ('manage_user_permissions', 'Conceder e revogar permissões de outros usuários', 'Administração'),
+    ('manage_cargos', 'Criar, editar e excluir cargos', 'Administração'),
+    ('manage_setores', 'Criar, editar e excluir setores', 'Administração'),
 ]
 
 PERMISSION_AREA_BY_CODENAME = {codename: area for codename, _label, area in PERMISSION_CATALOG}

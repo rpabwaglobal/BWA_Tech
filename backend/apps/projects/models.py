@@ -6,6 +6,7 @@ from django.core.validators import MinValueValidator
 from django.utils import timezone
 from datetime import datetime
 import logging
+from apps.accounts.models import CompartilhamentoSetorBase
 
 
 class Sprint(models.Model):
@@ -16,9 +17,12 @@ class Sprint(models.Model):
         validators=[MinValueValidator(1)],
         verbose_name='Duração em Dias'
     )
+    # A sprint é acervo: continua no histórico depois que quem a criou sai da
+    # empresa. PROTECT porque Project.sprint e Card.projeto são CASCADE — apagar
+    # o supervisor levaria a sprint junto e, atrás dela, projetos e cards.
     supervisor = models.ForeignKey(
         settings.AUTH_USER_MODEL,
-        on_delete=models.CASCADE,
+        on_delete=models.PROTECT,
         related_name='sprints_created',
         verbose_name='Supervisor'
     )
@@ -31,6 +35,7 @@ class Sprint(models.Model):
         db_index=True, related_name='sprints', verbose_name='Setor')
     setores_compartilhados = models.ManyToManyField(
         'accounts.SetorCatalogo', blank=True, related_name='sprints_compartilhadas',
+        through='projects.SprintCompartilhamento',
         verbose_name='Setores com quem compartilha')
     created_at = models.DateTimeField(auto_now_add=True, verbose_name='Data de Criação')
     updated_at = models.DateTimeField(auto_now=True, verbose_name='Data de Atualização')
@@ -118,13 +123,13 @@ class Project(models.Model):
         blank=True,
         verbose_name='Gerente Atribuído'
     )
+    # Qualquer usuário pode ser atribuído: quem pode atribuir é decidido por permissão, não pelo cargo
     desenvolvedor = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.SET_NULL,
         related_name='projects_assigned',
         null=True,
         blank=True,
-        limit_choices_to={'role': 'desenvolvedor'},
         verbose_name='Desenvolvedor'
     )
     status = models.CharField(
@@ -172,6 +177,7 @@ class Project(models.Model):
         db_index=True, related_name='projetos', verbose_name='Setor')
     setores_compartilhados = models.ManyToManyField(
         'accounts.SetorCatalogo', blank=True, related_name='projetos_compartilhados',
+        through='projects.ProjectCompartilhamento',
         verbose_name='Setores com quem compartilha')
     created_at = models.DateTimeField(auto_now_add=True, verbose_name='Data de Criação')
     updated_at = models.DateTimeField(auto_now=True, verbose_name='Data de Atualização')
@@ -416,6 +422,13 @@ class Card(models.Model):
     setor = models.ForeignKey(
         'accounts.SetorCatalogo', on_delete=models.PROTECT, blank=True,
         db_index=True, related_name='cards', verbose_name='Setor')
+    # Compartilhamento pontual: empresta ESTE card a outros setores sem mover o
+    # projeto inteiro. Como `setor` é espelho do projeto, é o único jeito de dar
+    # acesso a um card específico. Herda também o que vier do projeto/sprint.
+    setores_compartilhados = models.ManyToManyField(
+        'accounts.SetorCatalogo', blank=True, related_name='cards_compartilhados',
+        through='projects.CardCompartilhamento',
+        verbose_name='Setores com acesso compartilhado')
 
     def save(self, *args, **kwargs):
         # data_inicio = instante em que o card entrou em desenvolvimento (não criação nem sprint).
@@ -435,6 +448,21 @@ class Card(models.Model):
         return f"{self.nome} - {self.projeto.nome}"
 
 
+def caminho_anexo_card(instance, filename):
+    """Nome aleatório para o anexo, preservando só a extensão.
+
+    O arquivo é servido por `/media/` sem exigir header (o SPA aponta um
+    `<a download>` direto para ele), então o nome é a única barreira: gravado
+    com o nome original, `/media/card_anexos/contrato-cliente.pdf` seria
+    adivinhável de fora. O nome amigável fica em `nome_original` e é o que
+    aparece na interface e no download."""
+    import uuid
+    from pathlib import Path
+
+    extensao = Path(filename).suffix.lower()[:12]
+    return f'card_anexos/{uuid.uuid4().hex}{extensao}'
+
+
 class CardAnexo(models.Model):
     """Arquivo anexado a um card (imagem, PDF, CSV, Excel, documento, etc.).
 
@@ -447,7 +475,7 @@ class CardAnexo(models.Model):
         related_name='anexos',
         verbose_name='Card',
     )
-    arquivo = models.FileField(upload_to='card_anexos/', verbose_name='Arquivo')
+    arquivo = models.FileField(upload_to=caminho_anexo_card, verbose_name='Arquivo')
     nome_original = models.CharField(max_length=255, blank=True, verbose_name='Nome original')
     tamanho = models.PositiveBigIntegerField(default=0, verbose_name='Tamanho (bytes)')
     enviado_por = models.ForeignKey(
@@ -518,10 +546,15 @@ class Event(models.Model):
     )
     descricao = models.TextField(verbose_name='Descrição')
     motivo = models.TextField(verbose_name='Motivo', blank=True)
+    # O evento pertence ao card, não a quem o registrou: a autoria é rastro
+    # pessoal e some com a conta, mas a pendência/comentário fica no histórico
+    # (mesmo tratamento de CardLog.usuario).
     usuario = models.ForeignKey(
         settings.AUTH_USER_MODEL,
-        on_delete=models.CASCADE,
+        on_delete=models.SET_NULL,
         related_name='events_created',
+        null=True,
+        blank=True,
         verbose_name='Usuário'
     )
     data = models.DateTimeField(auto_now_add=True, verbose_name='Data do Evento')
@@ -671,10 +704,15 @@ class CardDueDateChangeRequest(models.Model):
         related_name='due_date_change_requests',
         verbose_name='Card'
     )
+    # Quem pediu é autoria, não o objeto do registro: a solicitação faz parte do
+    # histórico de prazo do card e sobrevive anônima à saída da pessoa — mesma
+    # regra de `reviewed_by`, logo abaixo.
     requested_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
-        on_delete=models.CASCADE,
+        on_delete=models.SET_NULL,
         related_name='due_date_change_requests_created',
+        null=True,
+        blank=True,
         verbose_name='Solicitado Por'
     )
     requested_date = models.DateTimeField(verbose_name='Nova data e hora solicitada')
@@ -713,12 +751,17 @@ class CardDueDateChangeRequest(models.Model):
 
 class WeeklyPriority(models.Model):
     """Prioridade da semana definida pelo supervisor para cada usuário"""
+    # Prioridade pode ser definida para qualquer usuário; quem pode definir é decidido
+    # pela permissão manage_weekly_priorities, não pelo cargo.
+    # Aqui o usuário é o ALVO da prioridade (o autor é `definido_por`): sem ele o
+    # registro não quer dizer nada e a unicidade (usuario, card, semana_inicio)
+    # deixaria de valer, porque NULLs não colidem entre si. Daí PROTECT: a conta
+    # só sai depois que as prioridades dela saírem.
     usuario = models.ForeignKey(
         settings.AUTH_USER_MODEL,
-        on_delete=models.CASCADE,
+        on_delete=models.PROTECT,
         related_name='weekly_priorities',
-        verbose_name='Usuário',
-        limit_choices_to={'role__in': ['desenvolvedor']}
+        verbose_name='Usuário'
     )
     card = models.ForeignKey(
         Card,
@@ -740,8 +783,7 @@ class WeeklyPriority(models.Model):
         related_name='weekly_priorities_defined',
         null=True,
         blank=True,
-        verbose_name='Definido por',
-        limit_choices_to={'role__in': ['supervisor', 'admin']}
+        verbose_name='Definido por'
     )
     created_at = models.DateTimeField(auto_now_add=True, verbose_name='Data de Criação')
     updated_at = models.DateTimeField(auto_now=True, verbose_name='Data de Atualização')
@@ -1081,9 +1123,11 @@ class CardScore(models.Model):
         related_name='score',
         verbose_name='Card'
     )
+    # Sem `choices`: o setor solicitante vem do catálogo (SetorCatalogo), que o
+    # admin monta como quiser. Uma lista fixa aqui rejeitaria qualquer setor
+    # criado depois — inclusive o setor padrão do sistema.
     setor_solicitante = models.CharField(
-        max_length=30,
-        choices=SetorSolicitante.choices,
+        max_length=40,
         null=True,
         blank=True,
         verbose_name='Setor Solicitante'
@@ -1213,3 +1257,52 @@ class ScoreHistory(models.Model):
     def __str__(self):
         return f'{self.card.nome} — {self.get_acao_display()} ({self.data})'
 
+
+
+class _CompartilhamentoProjects(CompartilhamentoSetorBase):
+    """Só para não repetir a Meta abstrata nas três tabelas abaixo."""
+    class Meta(CompartilhamentoSetorBase.Meta):
+        abstract = True
+
+
+class SprintCompartilhamento(_CompartilhamentoProjects):
+    """Sprint emprestada a outro setor. É o compartilhamento mais amplo: pela
+    cascata de `scoping.py`, alcança os projetos e os cards da sprint."""
+    sprint = models.ForeignKey(
+        Sprint, on_delete=models.CASCADE, related_name='compartilhamentos')
+
+    class Meta:
+        constraints = [models.UniqueConstraint(
+            fields=['sprint', 'setor'], name='uniq_compartilhamento_sprint_setor')]
+        # O escopo pergunta sempre "quais itens o setor S enxerga?" — o índice
+        # segue essa ordem, e o `nivel` junto evita voltar à tabela no gate de
+        # escrita.
+        indexes = [models.Index(fields=['setor', 'nivel'], name='idx_compart_sprint_setor')]
+        verbose_name = 'Compartilhamento de sprint'
+        verbose_name_plural = 'Compartilhamentos de sprint'
+
+
+class ProjectCompartilhamento(_CompartilhamentoProjects):
+    """Projeto emprestado a outro setor; alcança os cards dele."""
+    project = models.ForeignKey(
+        Project, on_delete=models.CASCADE, related_name='compartilhamentos')
+
+    class Meta:
+        constraints = [models.UniqueConstraint(
+            fields=['project', 'setor'], name='uniq_compartilhamento_project_setor')]
+        indexes = [models.Index(fields=['setor', 'nivel'], name='idx_compart_project_setor')]
+        verbose_name = 'Compartilhamento de projeto'
+        verbose_name_plural = 'Compartilhamentos de projeto'
+
+
+class CardCompartilhamento(_CompartilhamentoProjects):
+    """Card avulso emprestado a outro setor, sem levar o projeto junto."""
+    card = models.ForeignKey(
+        Card, on_delete=models.CASCADE, related_name='compartilhamentos')
+
+    class Meta:
+        constraints = [models.UniqueConstraint(
+            fields=['card', 'setor'], name='uniq_compartilhamento_card_setor')]
+        indexes = [models.Index(fields=['setor', 'nivel'], name='idx_compart_card_setor')]
+        verbose_name = 'Compartilhamento de card'
+        verbose_name_plural = 'Compartilhamentos de card'

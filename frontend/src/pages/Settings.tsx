@@ -1,27 +1,51 @@
 import { useState } from 'react';
 import { useAuth } from '@/context/AuthContext';
-import { isSupervisorOrAdmin } from '@/lib/roles';
+import { hasPermission } from '@/lib/permissions';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
-import { PerfilTab } from '@/components/settings/PerfilTab';
 import { GerenciamentoUsuarios } from '@/components/settings/GerenciamentoUsuarios';
-import { GerenciamentoSetoresCargos } from '@/components/settings/GerenciamentoSetoresCargos';
+import { GerenciamentoCargos } from '@/components/settings/GerenciamentoCargos';
+import { GerenciamentoSetores } from '@/components/settings/GerenciamentoSetores';
 
+/** Cada aba exige a permissão que a própria API cobra — quem só administra
+ * setores não vê a aba de cargos, e vice-versa. O perfil saiu daqui: virou
+ * página própria, acessível pela engrenagem no cabeçalho. */
 const TABS = [
-  { key: 'perfil' as const, label: 'Configurações do Perfil' },
-  { key: 'usuarios' as const, label: 'Gerenciamento de Usuários' },
-  { key: 'setores-cargos' as const, label: 'Gerenciamento de Setores e Cargos' },
+  { key: 'usuarios' as const, label: 'Usuários', perms: ['manage_users', 'manage_user_permissions'] },
+  { key: 'cargos' as const, label: 'Cargos', perms: ['manage_cargos'] },
+  { key: 'setores' as const, label: 'Setores', perms: ['manage_setores'] },
 ];
 type TabKey = (typeof TABS)[number]['key'];
 
 export default function Settings() {
   const { user } = useAuth();
-  const canManageUsers = isSupervisorOrAdmin(user);
-  const [activeTab, setActiveTab] = useState<TabKey>(() => {
+
+  const visiveis = TABS.filter((t) => t.perms.some((p) => hasPermission(user, p)));
+
+  const [activeTab, setActiveTab] = useState<TabKey | null>(() => {
     const t = new URLSearchParams(window.location.search).get('tab');
-    if (t === 'usuarios' || t === 'setores-cargos' || t === 'perfil') return t;
-    return 'perfil';
+    if (t === 'usuarios' || t === 'cargos' || t === 'setores') return t;
+    return null;
   });
+
+  // Sem aba escolhida (ou apontando para uma que este usuário não acessa),
+  // abre na primeira disponível.
+  const abaAtual =
+    visiveis.find((t) => t.key === activeTab)?.key ?? visiveis[0]?.key ?? null;
+
+  if (visiveis.length === 0) {
+    return (
+      <div className="space-y-2">
+        <h1 className="text-2xl font-semibold tracking-tight text-[var(--color-foreground)]">
+          Configurações
+        </h1>
+        <p className="text-sm text-[var(--color-muted-foreground)]">
+          Você não tem permissão para gerenciar usuários, cargos ou setores. Suas configurações
+          pessoais ficam na engrenagem, no canto superior direito.
+        </p>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -30,41 +54,31 @@ export default function Settings() {
           Configurações
         </h1>
         <p className="mt-1 text-sm text-[var(--color-muted-foreground)]">
-          {canManageUsers
-            ? 'Gerencie seu perfil e os usuários da plataforma.'
-            : 'Gerencie seu perfil e sua conta.'}
+          Gerencie os usuários, os cargos e os setores da plataforma.
         </p>
       </div>
 
-      {canManageUsers && (
-        <div className="flex items-center gap-[8px] border-b border-[var(--color-border)]">
-          {TABS.map((t) => (
-            <Button
-              key={t.key}
-              variant="ghost"
-              onClick={() => setActiveTab(t.key)}
-              className={cn(
-                'rounded-none border-b-2 border-transparent px-[16px] py-[8px] h-auto',
-                activeTab === t.key
-                  ? 'border-[var(--color-primary)] text-[var(--color-primary)] font-semibold'
-                  : 'text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]',
-              )}
-            >
-              {t.label}
-            </Button>
-          ))}
-        </div>
-      )}
+      <div className="flex items-center gap-[8px] border-b border-[var(--color-border)]">
+        {visiveis.map((t) => (
+          <Button
+            key={t.key}
+            variant="ghost"
+            onClick={() => setActiveTab(t.key)}
+            className={cn(
+              'rounded-none border-b-2 border-transparent px-[16px] py-[8px] h-auto',
+              abaAtual === t.key
+                ? 'border-[var(--color-primary)] text-[var(--color-primary)] font-semibold'
+                : 'text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]',
+            )}
+          >
+            {t.label}
+          </Button>
+        ))}
+      </div>
 
-      {!canManageUsers ? (
-        <PerfilTab />
-      ) : activeTab === 'usuarios' ? (
-        <GerenciamentoUsuarios />
-      ) : activeTab === 'setores-cargos' ? (
-        <GerenciamentoSetoresCargos />
-      ) : (
-        <PerfilTab />
-      )}
+      {abaAtual === 'usuarios' && <GerenciamentoUsuarios />}
+      {abaAtual === 'cargos' && <GerenciamentoCargos />}
+      {abaAtual === 'setores' && <GerenciamentoSetores />}
     </div>
   );
 }

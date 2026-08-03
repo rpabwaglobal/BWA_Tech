@@ -29,13 +29,13 @@ class Report(BaseReport):
     def fetch_data(self) -> dict[str, Any]:
         self.set_progress(10, 'Carregando projetos...')
         project_ids = self.filters.get('project_ids') or []
-        qs = Project.objects.filter(arquivado=False, is_system=False).select_related('sprint').order_by('nome')
+        qs = self.projetos_visiveis().filter(arquivado=False, is_system=False).select_related('sprint').order_by('nome')
         if project_ids:
             qs = qs.filter(id__in=project_ids)
         projects = list(qs)
 
         cards_qs = (
-            Card.objects.select_related('responsavel', 'projeto')
+            self.cards_visiveis().select_related('responsavel', 'projeto')
             .filter(projeto_id__in=[p.id for p in projects])
             .order_by('projeto_id', '-finalizado_em', 'data_fim')
         )

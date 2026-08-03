@@ -50,10 +50,14 @@ class ReportJob(models.Model):
     # data, usuário, filtros) que SEMPRE é gravado.
     include_header = models.BooleanField(default=True)
 
+    # O relatório gerado continua no disco: apagar a linha deixaria o arquivo
+    # órfão e sumiria com o registro de que ele foi emitido.
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL,
-        on_delete=models.CASCADE,
+        on_delete=models.SET_NULL,
         related_name='report_jobs',
+        null=True,
+        blank=True,
     )
 
     status = models.CharField(

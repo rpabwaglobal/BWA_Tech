@@ -7,20 +7,18 @@ from .permission_catalog import PermissaoPlataforma  # noqa: F401 — registra M
 
 
 class Role(models.TextChoices):
-    """Códigos de cargo com regras de negócio hard-coded (promoção a supervisor,
-    is_superuser -> admin, etc.). Cargos 'de sistema' (is_system=True) são hoje
-    só 3: admin, supervisor, visitante. As constantes GERENTE/DESENVOLVEDOR/
-    DADOS/PROCESSOS são mantidas porque ainda existem como cargos criados
-    (is_system=False) e são referenciadas pelo command de migração de legados e
-    por limit_choices_to. Cargos criados pelo admin/supervisor viram apenas
-    linhas em `Cargo`, sem regras especiais — ver `validate_role`."""
+    """Os dois únicos cargos com significado para o código.
+
+    `ADMIN` porque `User.save()` força esse cargo em superusers e o backend de
+    autenticação lhe concede o catálogo inteiro; `VISITANTE` porque é o cargo
+    de entrada e `NaoVisitanteEscreve` o usa como rede de segurança.
+
+    Todo o resto do organograma — Supervisor, Gerente, CEO, o que a empresa
+    precisar — é criado pelo admin na tela de Setores e Cargos e vira apenas
+    uma linha em `Cargo`, sem regra especial no código. Autorização é sempre
+    por permissão (`has_perm`), nunca por comparação de cargo."""
     ADMIN = 'admin', 'Administrador BWA Tech'
-    SUPERVISOR = 'supervisor', 'Supervisor'
     VISITANTE = 'visitante', 'Visitante'
-    GERENTE = 'gerente', 'Gerente de Projetos'
-    DESENVOLVEDOR = 'desenvolvedor', 'Desenvolvedor'
-    DADOS = 'dados', 'Dados'
-    PROCESSOS = 'processos', 'Processos'
 
 
 # TTL curto: cargos/setores mudam raramente (ação manual de admin/supervisor),
@@ -66,10 +64,24 @@ class Cargo(models.Model):
     protegidos (não editam codename nem excluem); admin/supervisor podem criar
     novos cargos (is_system=False) e editar cor/rótulo.
 
-    `permissoes_padrao` é um TEMPLATE de conveniência (lista de codenames de
-    permissão): NUNCA re-propaga sozinho — só é aplicado quando o operador
-    marca 'aplicar permissões-padrão' numa atribuição. A autoridade das
-    permissões continua 100% em `user_permissions` por usuário."""
+    `permissoes_padrao` (lista de codenames do PERMISSION_CATALOG) é FONTE DE
+    AUTORIDADE, não um template de conveniência: `CargoPermissionBackend`
+    (accounts/auth_backends.py) resolve essas permissões a cada `has_perm`, de
+    modo que quem tem o cargo já as tem, sem nada ser copiado para
+    `user_permissions`.
+
+    Duas consequências que importam:
+      - o acesso efetivo de um usuário é a UNIÃO desta lista com as permissões
+        personalizadas dele (`user_permissions`). Uma nunca sobrescreve a outra,
+        e a ordem em que foram concedidas é irrelevante;
+      - editar esta lista muda o acesso de TODO MUNDO que tem o cargo, na hora.
+        Por isso o `CargoViewSet` avisa esses usuários em tempo real
+        (accounts/realtime.py) e aplica a trava anti-escalonamento: ninguém põe
+        aqui permissão que não possui.
+
+    A caixinha 'aplicar permissões-padrão' das atribuições continua existindo e
+    copia esta lista para `user_permissions` — mas hoje é só um atalho para dar
+    a alguém, de forma avulsa, as permissões que o cargo já daria."""
     codename = models.SlugField(max_length=40, unique=True)
     nome = models.CharField(max_length=60)
     is_system = models.BooleanField(default=False)
@@ -195,17 +207,31 @@ class User(AbstractUser):
     def __str__(self):
         return f"{self.username} ({self.get_role_display()})"
 
+    def delete(self, *args, **kwargs):
+        """Conta não é apagada — é desativada.
+
+        Toda a plataforma pendura histórico no usuário: sprints, projetos,
+        cards, logs, anexos, score. Apagar a linha levaria isso junto, e o
+        trabalho de uma pessoa que saiu continua sendo o acervo da empresa.
+        Desativar barra o login e revoga as sessões, preservando a autoria.
+
+        Sobrescrito no model (e não só na API) porque o `delete()` também é
+        alcançável pelo admin do Django e pelo shell — o offboarding tem que
+        ser o mesmo caminho independentemente de por onde se chega.
+        """
+        from rest_framework.authtoken.models import Token
+
+        self.is_active = False
+        self.save(update_fields=['is_active', 'updated_at'])
+        Token.objects.filter(user=self).delete()
+
     @property
     def is_admin(self):
         return self.role == Role.ADMIN
 
-    @property
-    def is_supervisor(self):
-        return self.role == Role.SUPERVISOR
-
-    # NB: as properties is_gerente/is_desenvolvedor/is_dados/is_processos foram
-    # removidas na Fase 6 — cargos legados agora são criados (is_system=False) e
-    # a autorização é 100% por has_perm, não por role. Use has_perm(...) ou o
+    # NB: não existem properties is_supervisor/is_gerente/is_desenvolvedor —
+    # esses cargos são criados pelo admin e não têm significado para o código.
+    # A autorização é 100% por has_perm, não por role. Use has_perm(...) ou o
     # catálogo Cargo em vez de comparar role.
 
 
@@ -222,3 +248,42 @@ class UserSetor(models.Model):
         unique_together = [('user', 'setor')]
         verbose_name = 'Vínculo usuário-setor'
         verbose_name_plural = 'Vínculos usuário-setor'
+
+
+class NivelCompartilhamento(models.TextChoices):
+    """O que o setor convidado pode fazer com o item emprestado.
+
+    A distinção é o motivo de o compartilhamento ter tabela própria em vez de
+    M2M automático: emprestar para consulta e emprestar para trabalho são
+    coisas diferentes, e sem o nível o dono não teria como escolher.
+    """
+    LEITURA = 'leitura', 'Somente visualizar'
+    EDICAO = 'edicao', 'Visualizar e editar'
+
+
+class CompartilhamentoSetorBase(models.Model):
+    """Base dos vínculos "o setor X enxerga este item, neste nível".
+
+    Abstrata porque cada tipo de conteúdo tem a sua tabela: FK de verdade
+    (indexada, com CASCADE) vale mais que uma tabela genérica com id solto.
+
+    O nível governa apenas o que o COMPARTILHAMENTO concede. Ele não amplia as
+    permissões do cargo: quem não pode editar sprint no próprio setor também
+    não passa a poder por causa de um empréstimo em nível de edição.
+    """
+    setor = models.ForeignKey(
+        'accounts.SetorCatalogo', on_delete=models.CASCADE, related_name='+',
+        verbose_name='Setor convidado')
+    nivel = models.CharField(
+        max_length=10, choices=NivelCompartilhamento.choices,
+        default=NivelCompartilhamento.LEITURA, verbose_name='Nível de acesso')
+    compartilhado_em = models.DateTimeField(auto_now_add=True)
+    compartilhado_por = models.ForeignKey(
+        'accounts.User', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='+', verbose_name='Quem compartilhou')
+
+    class Meta:
+        abstract = True
+
+    def __str__(self):
+        return f'{self.setor_id} ({self.get_nivel_display()})'

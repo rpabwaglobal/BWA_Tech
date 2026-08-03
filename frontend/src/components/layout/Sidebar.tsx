@@ -2,49 +2,35 @@ import { Link, useLocation } from 'react-router-dom';
 import { useEffect, useState } from 'react';
 import { useAuth } from '@/context/AuthContext';
 import { useSidebar } from '@/context/SidebarContext';
-import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
 import { sprintService } from '@/services/sprintService';
 import { getSprintEmAndamentoPrincipal } from '@/lib/sprintFechamento';
-import {
-  LayoutDashboard,
-  Zap,
-  FolderKanban,
-  Users,
-  LogOut,
-  ChevronLeft,
-  ChevronRight,
-  Target,
-  Sparkles,
-  CheckSquare,
-  Settings,
-  Shield,
-  BarChart3,
-  FileText,
-  Headset,
-  Trophy,
-} from 'lucide-react';
+import { BarChart3, CheckSquare, ChevronLeft, ChevronRight, FileText, FolderKanban, Headset, LayoutDashboard, LogOut, Settings, Sparkles, Target, Trophy, Users, Zap } from 'lucide-react';
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { cn } from '@/lib/utils';
 import { ROUTES, isNavRouteActive } from '@/routes';
-import { isAdminUser } from '@/lib/roles';
 import { hasPermission } from '@/lib/permissions';
 
+// `requires`: o item só aparece para quem tem a permissão.
+// `view_content` é o piso de leitura do trabalho — sem ela a API devolve 403 em
+// sprint/projeto/card, então mostrar o item levaria a uma tela de erro. Fora da
+// lista ficam só Suporte (alguém sem acesso precisa conseguir PEDIR acesso) e o
+// perfil, no header.
 const navigation = [
-  { path: ROUTES.painel, label: 'Dashboard', icon: LayoutDashboard },
-  { path: ROUTES.sprint, label: 'Sprints', icon: Zap },
-  { path: ROUTES.projetos, label: 'Projetos', icon: FolderKanban },
-  { path: ROUTES.prioridades, label: 'Prioridades', icon: Target },
-  { path: ROUTES.meusAfazeres, label: 'Meus Afazeres', icon: CheckSquare },
-  { path: ROUTES.pessoas, label: 'Pessoas', icon: Users },
-  // `requires`: só aparece se o usuário tiver a permissão (Visitante não vê).
+  { path: ROUTES.painel, label: 'Dashboard', icon: LayoutDashboard, requires: 'view_content' },
+  { path: ROUTES.sprint, label: 'Sprints', icon: Zap, requires: 'view_content' },
+  { path: ROUTES.projetos, label: 'Projetos', icon: FolderKanban, requires: 'view_content' },
+  { path: ROUTES.prioridades, label: 'Prioridades', icon: Target, requires: 'view_content' },
+  { path: ROUTES.meusAfazeres, label: 'Meus Afazeres', icon: CheckSquare, requires: 'view_content' },
+  { path: ROUTES.pessoas, label: 'Pessoas', icon: Users, requires: 'view_content' },
   { path: ROUTES.metricas, label: 'Métricas', icon: BarChart3, requires: 'view_metrics' },
   { path: ROUTES.relatorios, label: 'Relatórios', icon: FileText, requires: 'view_metrics' },
   { path: ROUTES.suporte, label: 'Suporte', icon: Headset },
-  { path: ROUTES.diaGeek, label: 'Geek Day', icon: Sparkles, requires: 'view_metrics' },
+  { path: ROUTES.diaGeek, label: 'Geek Day', icon: Sparkles, requires: 'view_geekday' },
 ];
 
-/** Itens visíveis apenas para supervisor/admin. */
-const supervisorNavigation = [
+/** Itens que dependem da permissão de gerenciar Score. */
+const scoreNavigation = [
   { path: ROUTES.score, label: 'Score', icon: Trophy },
 ];
 
@@ -101,7 +87,7 @@ export default function Sidebar() {
 
   const formatUserName = (u: { first_name?: string; last_name?: string; username: string } | null) => {
     if (!u) return '';
-    
+
     // Se tiver first_name e last_name, formatar como "Nome S."
     if (u.first_name && u.last_name) {
       const firstName = u.first_name.trim();
@@ -110,13 +96,13 @@ export default function Sidebar() {
       const lastNameInitial = lastName.charAt(0).toUpperCase();
       return `${formattedFirstName} ${lastNameInitial}.`;
     }
-    
+
     // Se tiver apenas first_name
     if (u.first_name) {
       const firstName = u.first_name.trim();
       return firstName.charAt(0).toUpperCase() + firstName.slice(1).toLowerCase();
     }
-    
+
     // Fallback para username com primeira letra maiúscula
     return u.username.charAt(0).toUpperCase() + u.username.slice(1).toLowerCase();
   };
@@ -188,7 +174,7 @@ export default function Sidebar() {
               );
             })}
             {hasPermission(user, 'manage_score') &&
-              supervisorNavigation.map((item) => {
+              scoreNavigation.map((item) => {
                 const isActive = isNavRouteActive(item.path, location.pathname);
                 const Icon = item.icon;
                 return (
@@ -210,7 +196,7 @@ export default function Sidebar() {
                 );
               })}
           </div>
-          {/* Configurações e Administração — parte de baixo */}
+          {/* Configurações — parte de baixo */}
           <div className="mt-auto space-y-[8px]">
             <Link
               to={ROUTES.configuracoes}
@@ -226,46 +212,43 @@ export default function Sidebar() {
               <Settings className="h-[20px] w-[20px] shrink-0" />
               {!collapsed && <span>Configurações</span>}
             </Link>
-            {isAdminUser(user) && (
-              <Link
-                to={ROUTES.administracao}
-                className={cn(
-                  "flex items-center gap-[16px] rounded-[8px] px-[16px] py-[8px] text-sm font-medium transition-colors h-[40px]",
-                  location.pathname === ROUTES.administracao
-                    ? "bg-white/22 text-white shadow-sm"
-                    : "text-white/80 hover:bg-white/10 hover:text-white",
-                  collapsed && "justify-center px-[8px]"
-                )}
-                title={collapsed ? 'Administração' : undefined}
-              >
-                <Shield className="h-[20px] w-[20px] shrink-0" />
-                {!collapsed && <span>Administração</span>}
-              </Link>
-            )}
           </div>
         </nav>
 
-        {/* User */}
+        {/* User — a foto e o nome levam ao perfil; o botão de sair fica FORA do
+            link, senão sair navegaria para o perfil no mesmo clique. */}
         <div className="border-t border-white/20 p-[16px]">
           <div className={cn("flex items-center gap-[16px]", collapsed && "justify-center")}>
-            <Avatar className="h-[40px] w-[40px] ring-2 ring-white/30">
-              {profilePictureUrl && <AvatarImage src={profilePictureUrl} alt="" />}
-              <AvatarFallback className="text-sm bg-white/90 text-[#3a2557]">
-                {user ? getInitials(user.username) : 'U'}
-              </AvatarFallback>
-            </Avatar>
+            <Link
+              to={ROUTES.perfil}
+              title={collapsed ? 'Meu perfil' : 'Ver meu perfil'}
+              className={cn(
+                "flex min-w-0 flex-1 items-center gap-[16px] rounded-[8px] p-[4px] transition-colors",
+                location.pathname === ROUTES.perfil
+                  ? "bg-white/22 shadow-sm"
+                  : "hover:bg-white/10",
+                collapsed && "flex-none justify-center"
+              )}
+            >
+              <Avatar className="h-[40px] w-[40px] ring-2 ring-white/30">
+                {profilePictureUrl && <AvatarImage src={profilePictureUrl} alt="" />}
+                <AvatarFallback className="text-sm bg-white/90 text-[#3a2557]">
+                  {user ? getInitials(user.username) : 'U'}
+                </AvatarFallback>
+              </Avatar>
+              {!collapsed && (
+                <div className="flex-1 min-w-0">
+                  <p className="truncate text-sm font-semibold text-white drop-shadow-sm">
+                    {formatUserName(user)}
+                  </p>
+                  <p className="truncate text-xs text-white/75">
+                    {user?.role_display}
+                  </p>
+                </div>
+              )}
+            </Link>
             {!collapsed && (
-              <div className="flex-1 min-w-0">
-                <p className="truncate text-sm font-semibold text-white drop-shadow-sm">
-                  {formatUserName(user)}
-                </p>
-                <p className="truncate text-xs text-white/75">
-                  {user?.role_display}
-                </p>
-              </div>
-            )}
-            {!collapsed && (
-              <Button variant="ghost" size="icon" onClick={logout} className="h-[40px] w-[40px] text-white hover:bg-white/15 hover:text-white">
+              <Button variant="ghost" size="icon" onClick={logout} className="h-[40px] w-[40px] shrink-0 text-white hover:bg-white/15 hover:text-white">
                 <LogOut className="h-[16px] w-[16px]" />
               </Button>
             )}
