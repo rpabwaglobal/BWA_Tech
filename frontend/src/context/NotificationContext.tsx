@@ -24,7 +24,7 @@ type NotificationContextType = {
 const NotificationContext = createContext<NotificationContextType | undefined>(undefined);
 
 export function NotificationProvider({ children }: { children: ReactNode }) {
-  const { isAuthenticated } = useAuth();
+  const { isAuthenticated, refreshUser, logout } = useAuth();
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -108,9 +108,24 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
     window.dispatchEvent(new CustomEvent('notificationReceived', { detail: notification }));
   }, []);
 
+  // Cargo/permissões/setor alterados por um admin/supervisor: refaz /users/me/
+  // na hora — Sidebar, rotas protegidas e qualquer `hasPermission(user, ...)`
+  // reagem sozinhos porque tudo deriva do `user` do AuthContext (re-render).
+  const handlePermissionsChanged = useCallback(() => {
+    void refreshUser();
+  }, [refreshUser]);
+
+  // Conta desativada por um admin/supervisor: encerra a sessão na hora (o
+  // token já foi revogado no servidor).
+  const handleAccountDeactivated = useCallback(() => {
+    void logout();
+  }, [logout]);
+
   // Conectar WebSocket
   useWebSocket({
     onNotification: handleNotification,
+    onPermissionsChanged: handlePermissionsChanged,
+    onAccountDeactivated: handleAccountDeactivated,
     enabled: isAuthenticated,
   });
 

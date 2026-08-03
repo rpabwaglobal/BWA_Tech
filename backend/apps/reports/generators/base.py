@@ -63,6 +63,30 @@ class BaseReport:
         self.user = job.user
         self.include_header = job.include_header
 
+    # ───────────────────────── fontes de dados escopadas ─────────────────────
+    # Todo gerador parte daqui, e nunca de `Card.objects` direto. Relatório é
+    # exportação: os dados saem da plataforma em PDF/XLSX e circulam por e-mail.
+    # Um gerador que esquecesse o escopo entregaria o acervo de outro setor num
+    # arquivo, sem deixar rastro na tela. Concentrar as três fontes num lugar só
+    # torna esse esquecimento visível na revisão.
+    #
+    # Fail-open enquanto `SETOR_SCOPING_ENABLED` estiver desligada, como o resto.
+
+    def cards_visiveis(self):
+        from apps.accounts.scoping import scope_cards
+        from apps.projects.models import Card
+        return scope_cards(Card.objects.all(), self.user)
+
+    def projetos_visiveis(self):
+        from apps.accounts.scoping import scope_projects
+        from apps.projects.models import Project
+        return scope_projects(Project.objects.all(), self.user)
+
+    def sprints_visiveis(self):
+        from apps.accounts.scoping import scope_sprints
+        from apps.projects.models import Sprint
+        return scope_sprints(Sprint.objects.all(), self.user)
+
     # ─────────────────── métodos que subclasses sobrescrevem ───────────────────
 
     def fetch_data(self) -> Any:

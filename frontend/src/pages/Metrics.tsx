@@ -285,7 +285,6 @@ function MetricsDeliveredCardRow({
 
 export default function Metrics() {
   const { user: authUser } = useAuth();
-  const isSupervisor = authUser?.role === 'supervisor' || authUser?.role === 'admin';
 
   const [cards, setCards] = useState<CardType[]>([]);
   const [sprints, setSprints] = useState<Sprint[]>([]);

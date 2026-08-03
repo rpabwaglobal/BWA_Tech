@@ -1,4 +1,5 @@
 import api from './api';
+import type { SetorDoUsuario } from './userService';
 
 export type User = {
   id: string; // UUID
@@ -8,6 +9,17 @@ export type User = {
   last_name: string;
   role: string;
   role_display: string;
+  /** Setor PRIMÁRIO (codename e rótulo). Descrevem UM setor — para mostrar
+   * "o setor de alguém" na tela use `setores`. */
+  setor?: string | null;
+  setor_display?: string | null;
+  /** TODOS os setores da pessoa, primário primeiro. Ver `SetorDoUsuario` e o
+   * campo homônimo em `userService.User` — é a mesma carga, o backend serializa
+   * o usuário logado com o mesmo `UserSerializer`. */
+  setores?: SetorDoUsuario[];
+  is_active?: boolean;
+  /** Codenames das permissões granulares atribuídas ao usuário. */
+  permissions?: string[];
   profile_picture_url?: string | null;
   date_joined: string;
 }
@@ -78,12 +90,21 @@ export const authService = {
   },
 
   async logout(): Promise<void> {
+    // `catch` e não `finally`: o `finally` limpava a sessão mas RE-LANÇAVA o
+    // erro, e como quem chama faz `void performLogout()` a rejeição virava um
+    // "Uncaught (in promise)" no console a cada saída com token já inválido.
+    //
+    // Sair não pode falhar. Se o servidor recusa (401 com token expirado, ou
+    // está fora do ar), o efeito desejado — esta máquina não tem mais sessão —
+    // já foi obtido pela limpeza local. Um 401 aqui significa que o token que
+    // se queria revogar já não valia.
     try {
       await api.post('/users/logout/');
-    } finally {
-      localStorage.removeItem('auth_token');
-      localStorage.removeItem('auth_expires_at');
+    } catch {
+      // erro de rede ou token já inválido: sair localmente basta
     }
+    localStorage.removeItem('auth_token');
+    localStorage.removeItem('auth_expires_at');
   },
 
   async getCurrentUser(): Promise<User> {

@@ -33,8 +33,7 @@ urlpatterns = [
     path('api/portal-formularios/<path:path>', PortalFormulariosProxyView.as_view(), name='portal-formularios-proxy'),
     path('api/', include('apps.accounts.urls')),
     path('api/', include('apps.projects.urls')),
-    path('api/', include('apps.teams.urls')),
-    path('api/', include('apps.timeline.urls')),
+    # teams e timeline seguem instalados (as tabelas guardam histórico), mas sem API exposta.
     path('api/', include('apps.suggestions.urls')),
     path('api/', include('apps.geekday.urls')),
     path('api/', include('apps.reports.urls')),

@@ -19,6 +19,7 @@ import {
 } from '@/components/ui/dialog';
 import { Badge } from '@/components/ui/badge';
 import { useAuth } from '@/context/AuthContext';
+import { hasPermission } from '@/lib/permissions';
 import api from '@/services/api';
 import { cardService, type Card as CardType, CARD_AREAS, CARD_TYPES, CARD_PRIORITIES, CARD_STATUSES } from '@/services/cardService';
 import { userService, type User as UserType } from '@/services/userService';
@@ -81,7 +82,7 @@ type UserWithCards = {
 export default function Priorities() {
   const navigate = useNavigate();
   const { user } = useAuth();
-  const isSupervisor = user?.role === 'supervisor' || user?.role === 'admin';
+  const isSupervisor = hasPermission(user, 'manage_weekly_priorities');
   const [usersWithCards, setUsersWithCards] = useState<UserWithCards[]>([]);
   const [loading, setLoading] = useState(true);
   const [periodo, setPeriodo] = useState<'dia' | 'semana'>('dia');

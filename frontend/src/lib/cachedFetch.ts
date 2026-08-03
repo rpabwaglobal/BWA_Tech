@@ -31,12 +31,31 @@ function readLs(key: string): { value: unknown; ts: number } | null {
   }
 }
 
-function writeLs(key: string, value: unknown, ts: number): void {
-  try {
-    localStorage.setItem(lsKey(key), JSON.stringify({ value, ts }));
-  } catch {
-    // Quota exceeded ou modo privado — ignora silenciosamente.
+/** Agenda `fn` pra depois do próximo paint, sem travar a navegação em curso.
+ * `requestIdleCallback` quando disponível (com timeout de segurança); senão
+ * cai pra `setTimeout(0)`. */
+function runIdle(fn: () => void): void {
+  const w = window as Window & { requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number };
+  if (typeof w.requestIdleCallback === 'function') {
+    w.requestIdleCallback(fn, { timeout: 1500 });
+  } else {
+    setTimeout(fn, 0);
   }
+}
+
+function writeLs(key: string, value: unknown, ts: number): void {
+  // JSON.stringify + localStorage.setItem de bundles grandes (ex.: todos os
+  // cards/projetos/usuários da página de Métricas) é síncrono e pode travar a
+  // main thread por >100ms. Se isso resolve bem no instante em que o usuário
+  // já navegou pra outra página, essa página trava ao montar. Adiar pro
+  // próximo idle evita competir com a renderização da navegação seguinte.
+  runIdle(() => {
+    try {
+      localStorage.setItem(lsKey(key), JSON.stringify({ value, ts }));
+    } catch {
+      // Quota exceeded ou modo privado — ignora silenciosamente.
+    }
+  });
 }
 
 export type CachedResult<T> = {

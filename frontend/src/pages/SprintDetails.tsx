@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type MouseEvent } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
+import { hasPermission } from '@/lib/permissions';
 import { useSprintKanbanWebSocket } from '@/hooks/useSprintKanbanWebSocket';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -79,12 +80,12 @@ import {
   Filter,
   Trophy,
   ListChecks,
-  Shield,
+  Share2,
 } from 'lucide-react';
 import { calcularDiasTotais, calcularDiasUteis, formatDate, formatDateTime } from '@/lib/dateUtils';
 import { ATRASADO_STATUS_BADGE } from '@/lib/dueDateBadgeClasses';
 import { QuickCreateCardModal } from '@/components/QuickCreateCardModal';
-import { isAdminUser } from '@/lib/roles';
+import { CompartilharSetoresDialog } from '@/components/CompartilharSetoresDialog';
 import {
   fechamentoIsoToDatetimeLocal,
   datetimeLocalToFechamentoIso,
@@ -372,9 +373,12 @@ export default function SprintDetails() {
     fechamento_em: '',
   });
 
-  const canCreate = user?.role === 'supervisor' || user?.role === 'admin';
-  const canFinalizar = user?.role === 'supervisor' || user?.role === 'admin';
+  const canCreate = hasPermission(user, 'manage_sprints');
+  const canFinalizar = hasPermission(user, 'finalize_sprints');
+  const canCompartilhar = hasPermission(user, 'manage_setor_sharing');
   const canCreateCard = true;
+
+  const [compartilharOpen, setCompartilharOpen] = useState(false);
 
   useEffect(() => {
     if (sprintId) {
@@ -1912,17 +1916,6 @@ export default function SprintDetails() {
                   Gerenciar Sprints
                 </Button>
               )}
-              {isAdminUser(user) && (
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => navigate(ROUTES.administracao)}
-                  className="gap-2"
-                >
-                  <Shield className="h-4 w-4" />
-                  Administração
-                </Button>
-              )}
             </div>
           </div>
           {canCreate && sprint && !isSprintFinished(sprint) && (
@@ -1984,10 +1977,27 @@ export default function SprintDetails() {
                   <div className="border-b border-[var(--color-border)] bg-[var(--color-muted)]/25 px-3 py-2.5">
                     <p className="text-sm font-semibold text-[var(--color-foreground)]">Sprint</p>
                     <p className="mt-0.5 text-[11px] leading-tight text-[var(--color-muted-foreground)]">
-                      Visualização da página e exportação dos cards
+                      {canCompartilhar && sprint
+                        ? 'Acesso, visualização da página e exportação dos cards'
+                        : 'Visualização da página e exportação dos cards'}
                     </p>
                   </div>
                   <div className="p-1.5">
+                    {canCompartilhar && sprint && (
+                      <>
+                        <p className="mb-1 px-2 pt-1 text-[10px] font-semibold uppercase tracking-wider text-[var(--color-muted-foreground)]">
+                          Acesso
+                        </p>
+                        <DropdownMenuItem
+                          className="gap-2 rounded-md py-2.5"
+                          onClick={() => setCompartilharOpen(true)}
+                        >
+                          <Share2 className="h-4 w-4 shrink-0 text-[var(--color-primary)]" />
+                          <span className="flex-1 text-left">Compartilhar entre setores</span>
+                        </DropdownMenuItem>
+                        <DropdownMenuSeparator className="my-2" />
+                      </>
+                    )}
                     <p className="mb-1 px-2 pt-1 text-[10px] font-semibold uppercase tracking-wider text-[var(--color-muted-foreground)]">
                       Modo de visualização
                     </p>
@@ -3225,8 +3235,7 @@ export default function SprintDetails() {
                   disabled={Boolean(
                     editingCard &&
                     editingCard.status === 'em_desenvolvimento' &&
-                    user?.role !== 'admin' &&
-                    user?.role !== 'supervisor'
+                    !hasPermission(user, 'approve_due_date_requests')
                   )}
                 />
                 {editingCard?.responsavel && String(editingCard.responsavel) === String(user?.id) && editingCard?.data_fim && (
@@ -3244,9 +3253,9 @@ export default function SprintDetails() {
                 {cardFormData.status === 'em_desenvolvimento' && (
                   <p className="text-xs text-[var(--color-muted-foreground)]">
                     * Obrigatório para cards em desenvolvimento (sugerida baseada na estimativa de complexidade)
-                    {editingCard && editingCard.status === 'em_desenvolvimento' && user?.role !== 'admin' && user?.role !== 'supervisor' && (
+                    {editingCard && editingCard.status === 'em_desenvolvimento' && !hasPermission(user, 'approve_due_date_requests') && (
                       <span className="block mt-1 text-[var(--color-destructive)]">
-                        Apenas administradores e supervisores podem alterar a data de entrega de cards em desenvolvimento.
+                        Você não tem permissão para alterar a data de entrega de cards em desenvolvimento; use "Solicitar mudança de data".
                       </span>
                     )}
                   </p>
@@ -3530,6 +3539,16 @@ export default function SprintDetails() {
       />
 
       <QuickCreateCardModal isOpen={quickCreateOpen} onClose={() => setQuickCreateOpen(false)} />
+
+      {compartilharOpen && sprint && (
+        <CompartilharSetoresDialog
+          recurso="sprints"
+          itemId={sprint.id}
+          itemNome={sprint.nome}
+          open={compartilharOpen}
+          onOpenChange={setCompartilharOpen}
+        />
+      )}
     </div>
   );
 }

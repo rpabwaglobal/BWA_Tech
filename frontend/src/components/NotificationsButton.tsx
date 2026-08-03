@@ -37,8 +37,9 @@ export function NotificationsButton() {
         ref={buttonRef}
         onClick={() => setIsOpen(!isOpen)}
         className={cn(
-          "relative flex items-center justify-center w-[40px] h-[40px] rounded-full",
-          "bg-[var(--color-card)] border border-[var(--color-border)]",
+          // Sem contorno nem fundo próprio: no header ele fica ao lado dos
+          // outros ícones de conta, que também são só o glifo.
+          "relative flex items-center justify-center w-[36px] h-[36px] rounded-full",
           "hover:bg-[var(--color-accent)] transition-colors",
           "focus:outline-none focus:ring-2 focus:ring-[var(--color-ring)] focus:ring-offset-2"
         )}

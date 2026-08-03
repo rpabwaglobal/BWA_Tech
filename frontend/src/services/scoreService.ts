@@ -1,4 +1,5 @@
 import api, { fetchAllPaginated } from './api';
+import { userService } from './userService';
 
 // ----------------------------------------------------------------------------
 // Tipos
@@ -115,23 +116,21 @@ export type PickableCard = {
   score_final: string | null;
 };
 
-// Setores solicitantes (espelha SetorSolicitante no backend).
-export const SETORES_SOLICITANTES: Array<{ value: string; label: string }> = [
-  { value: 'fiscal', label: 'Fiscal' },
-  { value: 'contabil', label: 'Contábil' },
-  { value: 'marketing', label: 'Marketing' },
-  { value: 'legalizacao', label: 'Legalização' },
-  { value: 'pessoal', label: 'Pessoal' },
-  { value: 'diretoria', label: 'Diretoria' },
-  { value: 'novos_negocios', label: 'Novos Negócios' },
-  { value: 'rh', label: 'RH' },
-];
+/** Opção de setor solicitante nos seletores da tela de Score. */
+export type SetorSolicitanteOption = { value: string; label: string };
 
 // ----------------------------------------------------------------------------
 // Service
 // ----------------------------------------------------------------------------
 
 export const scoreService = {
+  /** Setores que podem ser apontados como solicitantes — o catálogo real, o
+   * mesmo que define o setor dos usuários, e não uma lista à parte. */
+  async getSetoresSolicitantes(): Promise<SetorSolicitanteOption[]> {
+    const setores = await userService.getSetores();
+    return setores.map((s) => ({ value: s.codename, label: s.nome }));
+  },
+
   // --- Critérios (formulário configurável) ---
   async getCriterios(apenasAtivos = false): Promise<ScoreCriterion[]> {
     const path = apenasAtivos ? '/score-criterios/?ativos=true' : '/score-criterios/';

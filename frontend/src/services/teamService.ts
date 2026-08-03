@@ -1,3 +1,10 @@
+/**
+ * @deprecated Fase 6 — o organograma (ReactFlow + hierarquia Supervisor→Gerente→Dev)
+ * foi substituído pelo mural read-only por setor em `pages/People.tsx`. Nenhum
+ * componente consome mais este serviço. Mantido apenas como referência até o app
+ * backend `teams` ser removido (migração de drop planejada). NÃO USAR em código novo —
+ * a organização da equipe agora é por setor (SetorCatalogo / UserSetor).
+ */
 import api from './api';
 
 export type Team = {

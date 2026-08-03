@@ -1244,8 +1244,8 @@ export default function Support() {
           Badge mostra quantos chamados estão na etapa "A desenvolver"
           (trabalho aguardando) — não o total da tab. */}
       {!(loading && items.length === 0) ? (
-        <div className="flex items-center justify-between gap-[8px] border-b border-[var(--color-border)] shrink-0">
-          <div className="flex items-center gap-[8px]">
+        <div className="flex items-end justify-between gap-[8px] shrink-0">
+          <div className="flex flex-1 min-w-0 items-center gap-[8px] border-b border-[var(--color-border)] self-stretch">
           {TABS.map((t) => {
             const count = tabADesenvolverCounts[t.key] ?? 0;
             const active = currentTab === t.key;
@@ -1277,8 +1277,7 @@ export default function Support() {
           <Button
             type="button"
             variant="outline"
-            size="sm"
-            className="mr-[4px] shrink-0 gap-[6px]"
+            className="mb-[1px] h-[40px] shrink-0 gap-[8px] px-[14px] shadow-sm"
             onClick={() => navigate('/metricas?tab=suporte')}
             title="Ver as métricas de suporte"
           >

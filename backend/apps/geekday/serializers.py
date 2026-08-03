@@ -1,6 +1,7 @@
 from rest_framework import serializers
 from django.conf import settings
-from .models import GeekDayDraw
+from .models import GeekDayDraw, GeekDayGrupo, GeekDayGrupoSetor
+from apps.accounts.models import SetorCatalogo, get_cargo_choices
 from apps.accounts.profile_picture_utils import get_profile_picture_url
 
 
@@ -17,10 +18,64 @@ def format_user_name(user):
     return user.username
 
 
+class GeekDayGrupoSerializer(serializers.ModelSerializer):
+    """Grupo de Geek Day (um ou mais setores que sorteiam juntos)."""
+
+    # Declarado à mão de propósito: o DRF marca como READ-ONLY todo M2M com
+    # `through` explícito (`has_through_model` em utils/field_mapping.py), e o
+    # nosso through existe justamente para o UNIQUE de setor. Sem esta linha,
+    # `setores` nunca seria gravável e não haveria como montar/desmontar grupo
+    # pela API.
+    setores = serializers.PrimaryKeyRelatedField(
+        many=True, required=False, queryset=SetorCatalogo.objects.all())
+    setores_detalhe = serializers.SerializerMethodField()
+
+    class Meta:
+        model = GeekDayGrupo
+        fields = ['id', 'nome', 'setores', 'setores_detalhe',
+                  'current_cycle', 'updated_at']
+        # `current_cycle` só anda por `resetar_sorteios`: deixá-lo gravável aqui
+        # permitiria "desfazer" um reset por PATCH e ressuscitar uma fila
+        # fechada.
+        read_only_fields = ['id', 'current_cycle', 'updated_at']
+
+    def get_setores_detalhe(self, obj):
+        """Setores com o que a tela precisa para desenhar o grupo sem uma
+        segunda chamada ao catálogo."""
+        return [
+            {'id': s.id, 'codename': s.codename, 'nome': s.nome, 'cor': s.cor}
+            for s in obj.setores.all()
+        ]
+
+    def validate_nome(self, value):
+        value = (value or '').strip()
+        if not value:
+            raise serializers.ValidationError('Nome do grupo é obrigatório.')
+        return value
+
+    def validate_setores(self, setores):
+        """Um setor em dois grupos deixaria o usuário em dois sorteios e o
+        ciclo ambíguo. O banco já barra (UNIQUE em GeekDayGrupoSetor.setor);
+        aqui a mesma regra vira mensagem legível em vez de erro 500."""
+        conflitos = (GeekDayGrupoSetor.objects
+                     .filter(setor__in=setores)
+                     .select_related('setor', 'grupo'))
+        if self.instance is not None:
+            conflitos = conflitos.exclude(grupo=self.instance)
+        ocupados = list(conflitos)
+        if ocupados:
+            detalhe = ', '.join(
+                f'{v.setor.nome} (já no grupo «{v.grupo.nome}»)' for v in ocupados)
+            raise serializers.ValidationError(
+                f'Cada setor só pode estar em um grupo de Geek Day: {detalhe}.')
+        return setores
+
+
 class GeekDayDrawSerializer(serializers.ModelSerializer):
     usuario_name = serializers.SerializerMethodField()
     sorteado_por_name = serializers.SerializerMethodField()
     usuario_profile_picture = serializers.SerializerMethodField()
+    grupo_nome = serializers.CharField(source='grupo.nome', read_only=True)
 
     class Meta:
         model = GeekDayDraw
@@ -29,9 +84,13 @@ class GeekDayDrawSerializer(serializers.ModelSerializer):
             'sorteado_por', 'sorteado_por_name', 'data_sorteio',
             'data_apresentacao',
             'marcado_manual', 'observacoes',
-            'cycle',
+            'cycle', 'grupo', 'grupo_nome',
         ]
         read_only_fields = ['data_sorteio']
+        # `grupo` é NOT NULL no banco, mas opcional no payload: a view preenche
+        # com o grupo do requisitante quando o cliente não manda (é o caso de
+        # todas as @actions). Exigi-lo no serializer quebraria essas rotas.
+        extra_kwargs = {'grupo': {'required': False}}
 
     def get_usuario_name(self, obj):
         return format_user_name(obj.usuario)
@@ -50,8 +109,22 @@ class GeekDayUserStatusSerializer(serializers.Serializer):
     first_name = serializers.CharField(allow_null=True)
     last_name = serializers.CharField(allow_null=True)
     email = serializers.EmailField()
-    role = serializers.CharField()  # Adicionar role para cores na roleta
+    # `role` continua sendo o CODENAME do cargo, e não o rótulo: a roleta do
+    # frontend decide cor e ordenação por `switch (role)` sobre codenames
+    # ('supervisor', 'gerente', ...). Devolver o rótulo aqui derrubaria todos
+    # esses casos para o `default`. O rótulo vai à parte, em `role_display` —
+    # mesma convenção de `apps/accounts/serializers.py`.
+    role = serializers.CharField(allow_blank=True)
+    role_display = serializers.SerializerMethodField()
     profile_picture_url = serializers.URLField(allow_null=True)
     ja_sorteado = serializers.BooleanField()
     total_sorteios = serializers.IntegerField()
     ultimo_sorteio = serializers.DateTimeField(allow_null=True)
+
+    def get_role_display(self, obj):
+        """A view monta dicts (não instâncias de User), então não há
+        `get_role_display()` do model — o rótulo sai do catálogo de cargos.
+        Cargo sem linha no catálogo cai no próprio codename para não exibir
+        vazio."""
+        codename = obj.get('role') or ''
+        return dict(get_cargo_choices()).get(codename, codename)

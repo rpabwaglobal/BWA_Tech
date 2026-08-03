@@ -6,6 +6,7 @@ from rest_framework.decorators import action
 from rest_framework.exceptions import PermissionDenied
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
+from apps.accounts.sharing import CompartilhamentoSetorMixin
 
 from .models import (
     ChamadoSuporte,
@@ -35,27 +36,38 @@ logger = logging.getLogger(__name__)
 _VALID_STATUSES = {choice.value for choice in ChamadoSuporteStatus}
 
 
-def _is_privileged(user) -> bool:
-    """Privilegiado = supervisor/admin/gerente ou superuser. Usado em
-    múltiplos pontos pra restringir mutações sensíveis."""
-    if not user.is_authenticated:
-        return False
-    role = getattr(user, 'role', None)
-    return role in ChamadoSuporteViewSet.PRIVILEGED_ROLES or user.is_superuser
-
-
 def _user_can_access_chamado(request, chamado_id: int) -> bool:
-    """True se o usuário é privilegiado OU dono do chamado.
+    """True se o usuário alcança o chamado: privilegiado DENTRO do escopo de
+    setor, ou dono do chamado (pelo e-mail).
 
     Em produção os chamados ficam no PORTAL externo (a tabela `ChamadoSuporte`
     local fica vazia em modo proxy). Se o chamado não existe localmente não há
     como conferir o owner aqui, então libera (a gate real fica no portal, já
     consultado pelo frontend). Em modo local, o filtro por email é a autoridade.
+
+    `view_all_tickets` NÃO foi removida daqui — ela continua sendo o que vence a
+    POSSE do chamado. O catálogo a descreve como "Ver todos os chamados de
+    suporte (não só os próprios)" (accounts/permission_catalog.py), isto é, o
+    contraste que ela resolve é próprio-vs-alheio, não setor-vs-setor; tanto que
+    `ChamadoSuporteViewSet.get_queryset` já a faz conviver com `scope_chamados`.
+    O escopo passa a valer aqui também porque este helper é a ÚNICA porta da
+    timeline e da resolução: sem ele, um atendente do setor A pedia por id
+    (`?chamado_id=`) exatamente o chamado do setor B que a listagem escondia
+    dele — e a divergência entre as duas rotas é o furo.
     """
-    if _is_privileged(request.user):
-        return True
-    user_email = (request.user.email or '').strip().lower()
+    from apps.accounts.scoping import scope_chamados
+
     local_qs = ChamadoSuporte.objects.filter(pk=chamado_id)
+    if request.user.has_perm('accounts.view_all_tickets'):
+        # O escopo primeiro, o fail-open do proxy só depois: com a flag OFF
+        # `scope_chamados` devolve o queryset intacto e o caso comum (chamado
+        # local) responde numa única consulta por pk. A segunda só roda quando o
+        # escopo não achou nada — e aí ela distingue "chamado de outro setor"
+        # (existe localmente, nega) de "chamado que mora no portal externo"
+        # (tabela local vazia, libera, como o atalho de permissão fazia antes).
+        return (scope_chamados(local_qs, request.user).exists()
+                or not local_qs.exists())
+    user_email = (request.user.email or '').strip().lower()
     if not local_qs.exists():
         return True
     if not user_email:
@@ -63,7 +75,7 @@ def _user_can_access_chamado(request, chamado_id: int) -> bool:
     return local_qs.filter(usuario_email__iexact=user_email).exists()
 
 
-class ChamadoSuporteViewSet(viewsets.ModelViewSet):
+class ChamadoSuporteViewSet(CompartilhamentoSetorMixin, viewsets.ModelViewSet):
     """
     Compatível com o contrato documentado:
     POST /suporte/
@@ -78,9 +90,6 @@ class ChamadoSuporteViewSet(viewsets.ModelViewSet):
     pagination_class = None
     http_method_names = ['get', 'post', 'patch', 'head', 'options']
 
-    # Roles privilegiados que podem ver/alterar chamados de QUALQUER usuário.
-    PRIVILEGED_ROLES = {'admin', 'supervisor', 'gerente'}
-
     # Campos que SÓ usuários privilegiados podem mutar via PATCH. Usuário comum
     # autenticado dono do chamado consegue, no máximo, abrir um novo — não
     # marca o próprio como Resolvido/Cancelado nem altera responsável/notas.
@@ -91,13 +100,16 @@ class ChamadoSuporteViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         """Mitigação de IDOR: usuários comuns só veem chamados associados ao
-        próprio email (usuario_email). Roles privilegiados veem tudo."""
+        próprio email (usuario_email). Quem tem `view_all_tickets` vê todos os
+        chamados do seu setor (mais os compartilhados com ele)."""
+        from apps.accounts.scoping import scope_chamados
+
         qs = ChamadoSuporte.objects.select_related('tipo', 'item', 'item__tipo', 'motivo')
         user = self.request.user
         if not user.is_authenticated:
             return qs.none()
-        if _is_privileged(user):
-            return qs
+        if user.has_perm('accounts.view_all_tickets'):
+            return scope_chamados(qs, user)  # fail-open enquanto flag OFF
         # Filtragem por email do usuário autenticado (case-insensitive)
         user_email = (user.email or '').strip().lower()
         if not user_email:
@@ -123,10 +135,30 @@ class ChamadoSuporteViewSet(viewsets.ModelViewSet):
         # estourar antes, o WS não envia evento fantasma.
         with transaction.atomic():
             instance = serializer.save()
+            # Deriva o setor do chamado pelo e-mail do solicitante (best-effort).
+            self._derivar_setor(instance)
             read = ChamadoSuporteReadSerializer(instance)
             payload = read.data
             transaction.on_commit(lambda: broadcast_chamado('chamado_created', payload))
         return Response(payload, status=status.HTTP_201_CREATED)
+
+    @staticmethod
+    def _derivar_setor(chamado):
+        """Setor do chamado = setor primário do usuário dono do e-mail. Silencioso
+        se não houver correspondência (chamados do portal externo)."""
+        if chamado.setor_id:
+            return
+        from apps.accounts.models import User
+        from apps.accounts.scoping import setor_primario_do_usuario
+        email = (chamado.usuario_email or '').strip().lower()
+        if not email:
+            return
+        u = User.objects.filter(email__iexact=email).first()
+        if u:
+            s = setor_primario_do_usuario(u)
+            if s:
+                chamado.setor = s
+                chamado.save(update_fields=['setor'])
 
     def partial_update(self, request, *args, **kwargs):
         instance = self.get_object()
@@ -138,9 +170,10 @@ class ChamadoSuporteViewSet(viewsets.ModelViewSet):
         patch_sr.is_valid(raise_exception=True)
         data = patch_sr.validated_data
 
-        # [C1] Campos que só privilegiados mutam. Usuário comum não fecha
-        # próprio chamado, não muda responsável solução, nem move entre tabs.
-        if not _is_privileged(request.user):
+        # [C1] Campos que só quem tem `manage_ticket_resolution` muta. Usuário
+        # comum não fecha próprio chamado, não muda responsável solução, nem
+        # move entre tabs.
+        if not request.user.has_perm('accounts.manage_ticket_resolution'):
             forbidden = self._PRIVILEGED_PATCH_FIELDS & data.keys()
             if forbidden:
                 raise PermissionDenied(
@@ -218,7 +251,7 @@ class ChamadoSuporteViewSet(viewsets.ModelViewSet):
           - Sem limit/offset, retorna lista pura (compat com chamadas legadas).
         """
         qs = self.get_queryset()
-        if _is_privileged(request.user):
+        if request.user.has_perm('accounts.view_all_tickets'):
             email = request.query_params.get('usuario_email')
             if email:
                 qs = qs.filter(usuario_email__iexact=email.strip())
@@ -277,9 +310,9 @@ class ChamadoSuporteViewSet(viewsets.ModelViewSet):
         """Marca/desmarca o chamado como "notificado". Operação só pra
         privilegiados — usuário comum NÃO falseia métricas de notificação
         do próprio chamado (A1)."""
-        if not _is_privileged(request.user):
+        if not request.user.has_perm('accounts.notify_ticket_user'):
             raise PermissionDenied(
-                detail={'detail': 'Apenas suporte/admin pode alterar a flag de notificação.'},
+                detail={'detail': 'Você não tem permissão para alterar a flag de notificação.'},
             )
         instance = self.get_object()
         # [M3] Payload vazio = no-op (antes forçava True silenciosamente).
@@ -363,7 +396,8 @@ class ChamadoSuporteTimelineViewSet(mixins.ListModelMixin, mixins.CreateModelMix
         a tela de métricas tem centenas de tickets e mandar todos os ids na
         query string estourava o limite prático de URL.
 
-        Escopo igual ao do `list`: privilegiado vê tudo; usuário comum só os
+        Escopo igual ao do `list`: quem tem `view_all_tickets` vê os chamados do
+        próprio setor (mais os compartilhados com ele); usuário comum só os
         chamados dele (em modo proxy, com a tabela local vazia, o critério de
         posse não se aplica — mesma semântica de `_user_can_access_chamado`).
         Chamados sem nenhum evento de troca de etapa ficam de fora do mapa.
@@ -382,16 +416,29 @@ class ChamadoSuporteTimelineViewSet(mixins.ListModelMixin, mixins.CreateModelMix
             tipo_evento=ChamadoSuporteTimelineTipo.ETAPA_ALTERADA)
         if ids:
             qs = qs.filter(chamado_id__in=ids)
-        if not _is_privileged(request.user):
-            # Versão em lote do `_user_can_access_chamado`: exclui só os
-            # chamados que existem localmente e pertencem a outra pessoa.
+        from apps.accounts.scoping import scope_chamados
+
+        # Versão em lote do `_user_can_access_chamado`: exclui só os chamados
+        # que existem localmente e que o usuário NÃO alcança. Quem existe só no
+        # portal externo (modo proxy) nunca entra em `alheios`, e por isso
+        # continua no mapa — mesmo fail-open do helper unitário.
+        if request.user.has_perm('accounts.view_all_tickets'):
+            # Privilegiado alcança os chamados do escopo dele, não os de todo
+            # mundo: mesma regra do `get_queryset` e do
+            # `_user_can_access_chamado`. Com a flag OFF `scope_chamados`
+            # devolve tudo, `alheios` sai vazio e nada é excluído.
+            alheios = ChamadoSuporte.objects.exclude(
+                pk__in=scope_chamados(ChamadoSuporte.objects.all(), request.user)
+                .values('pk'),
+            )
+        else:
             email = (request.user.email or '').strip().lower()
             alheios = ChamadoSuporte.objects.all()
             if email:
                 alheios = alheios.exclude(usuario_email__iexact=email)
-            alheios_ids = set(alheios.values_list('id', flat=True))
-            if alheios_ids:
-                qs = qs.exclude(chamado_id__in=alheios_ids)
+        alheios_ids = set(alheios.values_list('id', flat=True))
+        if alheios_ids:
+            qs = qs.exclude(chamado_id__in=alheios_ids)
         qs = qs.order_by('chamado_id', '-data').values_list('chamado_id', 'data')
         result = {}
         for chamado_id, data in qs:
@@ -410,6 +457,11 @@ class ChamadoSuporteResolucaoViewSet(viewsets.GenericViewSet):
     Restrito a suporte/admin (mesma regra da conclusão do ticket, que só
     privilegiados executam). Guardado localmente por `chamado_id` — funciona
     também quando o chamado vive no portal externo.
+
+    Duas perguntas independentes governam o POST, e ele precisa das duas:
+    `manage_ticket_resolution` responde "esta pessoa anexa resolução?" e
+    `_user_can_access_chamado` responde "neste chamado?". Ter a primeira sem a
+    segunda não dá acesso a chamado alheio.
     """
 
     queryset = ChamadoSuporteResolucao.objects.all()
@@ -446,11 +498,61 @@ class ChamadoSuporteResolucaoViewSet(viewsets.GenericViewSet):
                 {'detail': 'Informe chamado_id válido.'},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        # Anexar resolução é parte de concluir o chamado — operação de suporte/admin.
-        if not _is_privileged(request.user):
+        # Anexar resolução é parte de concluir o chamado — exige `manage_ticket_resolution`.
+        if not request.user.has_perm('accounts.manage_ticket_resolution'):
             raise PermissionDenied(
-                detail={'detail': 'Apenas suporte/admin pode anexar a resolução do chamado.'},
+                detail={'detail': 'Você não tem permissão para anexar a resolução do chamado.'},
             )
+
+        # Eixo POSSE (IDOR). `manage_ticket_resolution` e `view_all_tickets` são
+        # permissões INDEPENDENTES no catálogo (accounts/permission_catalog.py):
+        # quem tinha a primeira sem a segunda anexava a resolução de QUALQUER
+        # chamado, bastando informar o `chamado_id` — e LIA a de qualquer um,
+        # porque o 201 devolve o link/arquivo que já estava gravado. O gate de
+        # setor não fechava isso: o furo aparecia também DENTRO do próprio setor,
+        # entre chamados de pessoas diferentes.
+        #
+        # A regra de posse é a de `_user_can_access_chamado` — reaproveitada em
+        # vez de reescrita, para que o `list` desta mesma viewset e o POST não
+        # possam divergir. Chamado só no ramo SEM `view_all_tickets`, que é
+        # exatamente o ramo em que aquele helper decide por e-mail e não encosta
+        # em `scope_chamados`: o eixo SETOR desta rota é o `checar_escrita_no_pai`
+        # logo abaixo, que obedece à flag de ESCRITA. Recusar escrita a partir da
+        # flag de VISIBILIDADE é o acoplamento que as duas flags separadas
+        # existem para evitar (ver config/settings.py).
+        if (not request.user.has_perm('accounts.view_all_tickets')
+                and not _user_can_access_chamado(request, cid_int)):
+            raise PermissionDenied(
+                detail={'detail': 'Você não tem acesso a esse chamado.'},
+            )
+
+        # A permissão diz O QUE a pessoa faz; o setor diz ONDE. Este POST é um
+        # upsert por `chamado_id` (o `update_or_create` lá embaixo), ou seja,
+        # ESCRITA dentro de um chamado — e ele NÃO passa por `get_object()`,
+        # então o `SetorPermiteEscrita` que o `CompartilhamentoSetorMixin`
+        # acopla às rotas de detalhe nunca roda por aqui. Sem este gate, quem
+        # tem `manage_ticket_resolution` sobrescreve a resolução de um chamado
+        # de outro setor — e o próprio 201 devolve o link/arquivo que já
+        # estava lá, virando também um caminho de LEITURA.
+        #
+        # O gate é `checar_escrita_no_pai` (o mesmo dos POSTs de
+        # projects/views.py), e não o `_user_can_access_chamado` do `list`: o
+        # helper de leitura obedece à flag de VISIBILIDADE, e passar a recusar
+        # escrita ao ligar só a visibilidade é exatamente o acoplamento que as
+        # duas flags separadas existem para evitar (ver config/settings.py).
+        # Com SETOR_WRITE_ENFORCEMENT_ENABLED OFF ele retorna sem fazer nada —
+        # fail-open, nada muda hoje.
+        from apps.accounts.scoping import checar_escrita_no_pai
+
+        chamado = ChamadoSuporte.objects.filter(pk=cid_int).first()
+        if chamado is not None and chamado.setor_id is not None:
+            # Chamado inexistente na tabela local (modo PROXY, em que os
+            # chamados vivem no portal externo) e chamado ainda sem setor ficam
+            # de fora do gate de propósito: é o mesmo fail-open de
+            # `_user_can_access_chamado` e da cláusula `setor__isnull=True` de
+            # `scope_chamados` — chamado órfão não pode virar chamado que
+            # ninguém consegue concluir.
+            checar_escrita_no_pai(request.user, chamado)
 
         serializer = ChamadoResolucaoSerializer(data=request.data, context={'request': request})
         serializer.is_valid(raise_exception=True)

@@ -48,7 +48,7 @@ class Report(BaseReport):
         period_start = _parse_date(self.filters.get('period_start'))
         period_end = _parse_date(self.filters.get('period_end'))
 
-        cards = Card.objects.filter(projeto__arquivado=False, projeto__is_system=False)
+        cards = self.cards_visiveis().filter(projeto__arquivado=False, projeto__is_system=False)
         delivered = cards.filter(status='finalizado', finalizado_em__isnull=False)
         # Tipo de data do filtro: default 'delivered' (relatório executivo é
         # sobre entregas), opcional 'created' (criação).
@@ -70,7 +70,7 @@ class Report(BaseReport):
         dev_time = aggregate_dev_time(delivered_list)
 
         # Sprint ativa
-        active_sprint = Sprint.objects.filter(finalizada=False).order_by('-data_inicio').first()
+        active_sprint = self.sprints_visiveis().filter(finalizada=False).order_by('-data_inicio').first()
 
         # Em aberto atrasados
         open_late = cards.exclude(status__in=['finalizado', 'inviabilizado']).filter(data_fim__lt=now).count()
@@ -89,7 +89,7 @@ class Report(BaseReport):
         top_user = max(per_user.values(), key=lambda r: r['count'], default=None)
 
         # Projetos ativos
-        active_projects = Project.objects.filter(arquivado=False, is_system=False).count()
+        active_projects = self.projetos_visiveis().filter(arquivado=False, is_system=False).count()
 
         # Operação geral (filtrada pelo mesmo período do report).
         # `support_resolved`: chamados marcados como 'Resolvido' (atualização

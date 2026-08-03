@@ -37,6 +37,8 @@ export type Project = {
   cards_count?: number;
   cards_entregues_count?: number;
   cards_em_desenvolvimento_count?: number;
+  /** Codename do setor dono, herdado da sprint. Os cards do projeto o espelham. */
+  setor?: string | null;
   created_at?: string;
   updated_at?: string;
 };

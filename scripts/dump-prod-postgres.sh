@@ -48,12 +48,14 @@ print_dump_done() {
 run_pg_dump_in_container() {
   local ctr="$1"
   local user db
-  user="$(docker exec -T "$ctr" printenv POSTGRES_USER 2>/dev/null | tr -d '\r' || true)"
-  db="$(docker exec -T "$ctr" printenv POSTGRES_DB 2>/dev/null | tr -d '\r' || true)"
+  # `docker exec` (ao contrário de `docker compose exec`) não tem -T: sem -i/-t já
+  # roda sem TTY e sem stdin, que é o que se quer aqui.
+  user="$(docker exec "$ctr" printenv POSTGRES_USER 2>/dev/null | tr -d '\r' || true)"
+  db="$(docker exec "$ctr" printenv POSTGRES_DB 2>/dev/null | tr -d '\r' || true)"
   user="${user:-bwaproj}"
   db="${db:-bwaproj_db}"
   echo "Gerando dump (formato custom -Fc) em $OUT ..."
-  docker exec -T "$ctr" pg_dump \
+  docker exec "$ctr" pg_dump \
     -U "$user" \
     -d "$db" \
     -Fc \

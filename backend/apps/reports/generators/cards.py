@@ -49,7 +49,7 @@ class Report(BaseReport):
     def fetch_data(self) -> list[Card]:
         self.set_progress(5, 'Filtrando cards...')
         qs = (
-            Card.objects.select_related('projeto', 'projeto__sprint', 'responsavel')
+            self.cards_visiveis().select_related('projeto', 'projeto__sprint', 'responsavel')
             .filter(projeto__arquivado=False, projeto__is_system=False)
             .order_by('-finalizado_em', '-created_at')
         )
@@ -114,11 +114,11 @@ class Report(BaseReport):
             except (TypeError, ValueError):
                 sprint_ids = []
         if sprint_ids:
-            names = list(Sprint.objects.filter(id__in=sprint_ids).values_list('nome', flat=True))
+            names = list(self.sprints_visiveis().filter(id__in=sprint_ids).values_list('nome', flat=True))
             label = ', '.join(names) if names else ', '.join(f'#{i}' for i in sprint_ids)
             out.append(FilterDisplay('Sprint(s)', label))
         if f.get('project_id'):
-            pr = Project.objects.filter(pk=f['project_id']).first()
+            pr = self.projetos_visiveis().filter(pk=f['project_id']).first()
             if pr:
                 out.append(FilterDisplay('Projeto', pr.nome))
         if f.get('status'):

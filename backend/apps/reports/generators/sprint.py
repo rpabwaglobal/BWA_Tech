@@ -33,17 +33,17 @@ class Report(BaseReport):
             raise ValueError('Filtro obrigatório: sprint_id')
 
         self.set_progress(5, 'Carregando sprint...')
-        sprint = Sprint.objects.get(pk=sprint_id)
+        sprint = self.sprints_visiveis().get(pk=sprint_id)
 
         self.set_progress(10, 'Carregando projetos...')
         projects = list(
-            Project.objects.filter(sprint=sprint, arquivado=False, is_system=False)
+            self.projetos_visiveis().filter(sprint=sprint, arquivado=False, is_system=False)
             .order_by('nome')
         )
 
         project_ids = [p.id for p in projects]
         cards_qs = (
-            Card.objects.select_related('responsavel', 'projeto')
+            self.cards_visiveis().select_related('responsavel', 'projeto')
             .filter(projeto_id__in=project_ids)
             .order_by('projeto_id', '-finalizado_em', 'data_fim')
         )

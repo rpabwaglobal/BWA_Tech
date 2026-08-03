@@ -3,52 +3,39 @@ from apps.accounts.models import User, Role
 
 
 class Command(BaseCommand):
-    help = 'Cadastra usuários de Dados e remove usuários antigos (dev, gerente, supervisor)'
+    help = 'Cadastra os usuários do time de Dados'
 
     def handle(self, *args, **options):
-        # Usuários de Dados a serem criados
+        # O command não remove usuários legados (dev, gerente, supervisor):
+        # Sprint.supervisor é on_delete=CASCADE, então apagar um usuário que
+        # supervisiona sprints leva junto as sprints dele e, por
+        # Project.sprint, os cards. Para tirar alguém de circulação use
+        # is_active=False pela tela de usuários.
         dados_users = [
-            ('pedro', 'pedro@gmail.com', 'pedro123', Role.DADOS),
-            ('levy', 'levy@gmail.com', 'levy123', Role.DADOS),
-            ('douglas', 'douglas@gmail.com', 'douglas123', Role.DADOS),
-            ('jhonnatan', 'jhonnatan@gmail.com', 'jhonnatan123', Role.DADOS),
+            ('pedro', 'pedro@gmail.com', 'pedro123'),
+            ('levy', 'levy@gmail.com', 'levy123'),
+            ('douglas', 'douglas@gmail.com', 'douglas123'),
+            ('jhonnatan', 'jhonnatan@gmail.com', 'jhonnatan123'),
         ]
 
-        # Usuários a serem deletados
-        users_to_delete = ['dev', 'gerente', 'supervisor']
-
-        # Deletar usuários antigos
-        deleted_count = 0
-        for username in users_to_delete:
-            try:
-                user = User.objects.get(username=username)
-                user.delete()
-                self.stdout.write(
-                    self.style.SUCCESS(f'[DELETADO] Usuario removido: {username}')
-                )
-                deleted_count += 1
-            except User.DoesNotExist:
-                self.stdout.write(
-                    self.style.WARNING(f'[NAO ENCONTRADO] Usuario nao existe: {username}')
-                )
-
-        # Criar usuários de Dados
         created_count = 0
         existing_count = 0
 
-        for username, email, password, role in dados_users:
+        for username, email, password in dados_users:
             if not User.objects.filter(username=username).exists():
-                user = User.objects.create_user(
+                User.objects.create_user(
                     username=username,
                     email=email,
                     password=password,
-                    role=role,
+                    # Visitante é o cargo padrão do sistema; o cargo real
+                    # (e o setor) é atribuído manualmente pelo admin.
+                    role=Role.VISITANTE,
                     is_staff=False,
                     is_superuser=False
                 )
                 self.stdout.write(
                     self.style.SUCCESS(
-                        f'[OK] Usuario criado: {username} - Email: {email} - Senha: {password} - Role: Dados'
+                        f'[OK] Usuario criado: {username} - Email: {email} - Senha: {password}'
                     )
                 )
                 created_count += 1
@@ -59,6 +46,11 @@ class Command(BaseCommand):
                 existing_count += 1
 
         self.stdout.write(self.style.SUCCESS(f'\n=== Resumo ==='))
-        self.stdout.write(f'Usuarios deletados: {deleted_count}')
-        self.stdout.write(f'Usuarios de Dados criados: {created_count}')
-        self.stdout.write(f'Usuarios de Dados ja existentes: {existing_count}')
+        self.stdout.write(f'Usuarios criados: {created_count}')
+        self.stdout.write(f'Usuarios ja existentes: {existing_count}')
+        self.stdout.write(self.style.WARNING(
+            '\n[ATENCAO] Todos nasceram como VISITANTE.'
+        ))
+        self.stdout.write(
+            '[INFO] O ADMIN deve atribuir cargo e setor de cada um na tela de usuarios.'
+        )

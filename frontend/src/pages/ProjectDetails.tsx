@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
+import { hasPermission } from '@/lib/permissions';
 import { useSprintKanbanWebSocket } from '@/hooks/useSprintKanbanWebSocket';
 import { Button } from '@/components/ui/button';
 import { CardAnexosSection } from '@/components/CardAnexosSection';
@@ -25,6 +26,8 @@ import {
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { userService } from '@/services/userService';
@@ -87,12 +90,14 @@ import {
   CheckSquare,
   FolderInput,
   Trophy,
+  Share2,
 } from 'lucide-react';
 import { formatDate, formatDateTime, isCardAtrasado, calcularDiasTotais, calcularDiasUteis } from '@/lib/dateUtils';
 import { ATRASADO_STATUS_BADGE } from '@/lib/dueDateBadgeClasses';
 import { sprintFimDiaParaCalendario, sprintInicioDiaParaCalendario } from '@/lib/sprintFechamento';
 import { CardLogsModal, CARD_TIMELINE_LAYOUT_RESERVE_PX } from '@/components/CardLogsModal';
 import { PendenciaModal } from '@/components/PendenciaModal';
+import { CompartilharSetoresDialog } from '@/components/CompartilharSetoresDialog';
 import { ConclusaoModal } from '@/components/ConclusaoModal';
 import { cardLogService } from '@/services/cardLogService';
 import {
@@ -372,7 +377,7 @@ function KanbanColumn({
   onCardClick,
   onCardDelete,
   disabled = false,
-  userRole,
+  canManageLockedCards,
   users,
   showPriorityColorsOnCards,
   selectionMode,
@@ -385,7 +390,7 @@ function KanbanColumn({
   onCardClick: (card: CardType) => void;
   onCardDelete: (e: React.MouseEvent, cardId: string) => void;
   disabled?: boolean;
-  userRole?: string;
+  canManageLockedCards?: boolean;
   users: UserType[];
   showPriorityColorsOnCards: boolean;
   selectionMode: boolean;
@@ -450,7 +455,7 @@ function KanbanColumn({
                   getCardStatusIcon={getCardStatusIcon}
                   getAreaBadgeColor={getAreaBadgeColor}
                   disabled={disabled}
-                  userRole={userRole}
+                  canManageLockedCards={canManageLockedCards}
                   users={users}
                   showPriorityColorsOnCards={showPriorityColorsOnCards}
                   selectionMode={selectionMode}
@@ -477,7 +482,7 @@ function KanbanCard({
   getCardStatusIcon,
   getAreaBadgeColor,
   disabled = false,
-  userRole,
+  canManageLockedCards,
   users,
   showPriorityColorsOnCards,
   selectionMode,
@@ -492,7 +497,7 @@ function KanbanCard({
   getCardStatusIcon: (status: string) => React.ReactNode;
   getAreaBadgeColor: (area: string) => string;
   disabled?: boolean;
-  userRole?: string;
+  canManageLockedCards?: boolean;
   users: UserType[];
   showPriorityColorsOnCards: boolean;
   selectionMode: boolean;
@@ -514,7 +519,7 @@ function KanbanCard({
   // Permitir delete:
   // - Se sprint não está finalizada
   // - Se card está inviabilizado, apenas admin ou supervisor podem deletar
-  const canDelete = !disabled && (!isInviabilizado || userRole === 'admin' || userRole === 'supervisor');
+  const canDelete = !disabled && (!isInviabilizado || !!canManageLockedCards);
   // Permitir pin pessoal: card precisa estar em andamento (não finalizado/inviabilizado) e sprint ativa.
   const canPin = !!onTogglePin && !disabled && !isCardFinished;
 
@@ -773,6 +778,9 @@ export default function ProjectDetails() {
   const [project, setProject] = useState<Project | null>(null);
   const [sprint, setSprint] = useState<Sprint | null>(null);
   const [cards, setCards] = useState<CardType[]>([]);
+
+  const canCompartilhar = hasPermission(user, 'manage_setor_sharing');
+  const [compartilharOpen, setCompartilharOpen] = useState(false);
 
   // Real-time: assina o Kanban da sprint do projeto. Eventos de OUTROS
   // projetos da mesma sprint passam batido (o card_id não está no estado local).
@@ -1825,7 +1833,7 @@ export default function ProjectDetails() {
   };
 
   const openConfigProjectDialog = async () => {
-    if (user?.role !== 'supervisor' && user?.role !== 'admin') return;
+    if (!hasPermission(user, 'manage_kanban_config')) return;
     setConfigProjectDialogOpen(true);
     setConfigLoading(true);
     try {
@@ -2184,9 +2192,9 @@ export default function ProjectDetails() {
     // Verificar se o card está inviabilizado
     const card = cards.find(c => c.id === cardId);
     if (card && card.status === 'inviabilizado') {
-      // Apenas admin e supervisor podem apagar cards inviabilizados
-      if (user?.role !== 'admin' && user?.role !== 'supervisor') {
-        setAlertMessage('Apenas administradores e supervisores podem excluir cards inviabilizados.');
+      // Cards inviabilizados exigem a permissão de gerenciar cards travados
+      if (!hasPermission(user, 'manage_locked_cards')) {
+        setAlertMessage('Você não tem permissão para excluir cards inviabilizados.');
         setAlertDialogOpen(true);
         return;
       }
@@ -2224,7 +2232,7 @@ export default function ProjectDetails() {
 
   const canBulkDeleteKanbanCard = (card: CardType): boolean => {
     if (sprintIsFinished) return false;
-    if (card.status === 'inviabilizado' && user?.role !== 'admin' && user?.role !== 'supervisor') {
+    if (card.status === 'inviabilizado' && !hasPermission(user, 'manage_locked_cards')) {
       return false;
     }
     return true;
@@ -2366,9 +2374,9 @@ export default function ProjectDetails() {
   const handleDeleteProject = () => {
     if (!project) return;
     
-    // Verificar se o usuário tem permissão (admin ou supervisor)
-    if (user?.role !== 'admin' && user?.role !== 'supervisor') {
-      setAlertMessage('Apenas administradores e supervisores podem excluir projetos inviabilizados.');
+    // Verificar se o usuário tem permissão de excluir projetos
+    if (!hasPermission(user, 'delete_projects')) {
+      setAlertMessage('Você não tem permissão para excluir projetos.');
       setAlertDialogOpen(true);
       return;
     }
@@ -2526,7 +2534,7 @@ export default function ProjectDetails() {
                       type="button"
                       variant="outline"
                       className="h-[40px] gap-[8px] border-[var(--color-border)] px-[14px] shadow-sm hover:bg-[var(--color-accent)]"
-                      title="Opções do Kanban"
+                      title="Opções do projeto"
                     >
                       <SlidersHorizontal className="h-[18px] w-[18px] shrink-0 text-[var(--color-muted-foreground)]" />
                       <span className="hidden text-sm font-medium sm:inline">Opções</span>
@@ -2534,6 +2542,24 @@ export default function ProjectDetails() {
                     </Button>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="end" className="w-[min(100vw-24px,300px)] p-1.5">
+                    {canCompartilhar && (
+                      <>
+                        <p className="mb-1 px-2 pt-1 text-[10px] font-semibold uppercase tracking-wider text-[var(--color-muted-foreground)]">
+                          Acesso
+                        </p>
+                        <DropdownMenuItem
+                          className="gap-2 rounded-md py-2.5"
+                          onClick={() => setCompartilharOpen(true)}
+                        >
+                          <Share2 className="h-4 w-4 shrink-0 text-[var(--color-primary)]" />
+                          <span className="flex-1 text-left">Compartilhar entre setores</span>
+                        </DropdownMenuItem>
+                        <DropdownMenuSeparator className="my-2" />
+                        <p className="mb-1 px-2 text-[10px] font-semibold uppercase tracking-wider text-[var(--color-muted-foreground)]">
+                          Kanban
+                        </p>
+                      </>
+                    )}
                     <label className="flex cursor-pointer items-center gap-2.5 rounded-md px-2 py-2.5 text-sm text-[var(--color-foreground)] transition-colors hover:bg-[var(--color-accent)]">
                       <input
                         type="checkbox"
@@ -2547,8 +2573,8 @@ export default function ProjectDetails() {
                     </label>
                   </DropdownMenuContent>
                 </DropdownMenu>
-                {/* Configurar Projeto (supervisor ou admin) */}
-                {(user?.role === 'supervisor' || user?.role === 'admin') && (
+                {/* Configurar Projeto (quem gerencia colunas do kanban) */}
+                {hasPermission(user, 'manage_kanban_config') && (
                   <Button
                     variant="outline"
                     size="icon"
@@ -2566,8 +2592,8 @@ export default function ProjectDetails() {
           {(() => {
             const projectStatus = (project.status || '').toLowerCase();
             const isInviabilizado = projectStatus === 'inviabilizado';
-            const hasPermission = user?.role === 'admin' || user?.role === 'supervisor';
-            const shouldShow = isInviabilizado && hasPermission;
+            const podeExcluirProjeto = hasPermission(user, 'delete_projects');
+            const shouldShow = isInviabilizado && podeExcluirProjeto;
             
             if (shouldShow) {
               return (
@@ -2679,7 +2705,7 @@ export default function ProjectDetails() {
                 }}
                 onCardDelete={handleCardDelete}
                 disabled={sprintIsFinished}
-                userRole={user?.role}
+                canManageLockedCards={hasPermission(user, 'manage_locked_cards')}
                 users={users}
                 showPriorityColorsOnCards={showPriorityColorsOnCards}
                 selectionMode={cardSelectionMode}
@@ -3089,8 +3115,7 @@ export default function ProjectDetails() {
                     disabled={Boolean(
                       editingCard &&
                       editingCard.status === 'em_desenvolvimento' &&
-                      user?.role !== 'admin' &&
-                      user?.role !== 'supervisor'
+                      !hasPermission(user, 'approve_due_date_requests')
                     )}
                   />
                 </div>
@@ -3109,9 +3134,9 @@ export default function ProjectDetails() {
                 {cardFormData.status === 'em_desenvolvimento' && (
                   <p className="text-xs text-[var(--color-muted-foreground)]">
                     * Obrigatório para cards em desenvolvimento (sugerida baseada na estimativa de complexidade)
-                    {editingCard && editingCard.status === 'em_desenvolvimento' && user?.role !== 'admin' && user?.role !== 'supervisor' && (
+                    {editingCard && editingCard.status === 'em_desenvolvimento' && !hasPermission(user, 'approve_due_date_requests') && (
                       <span className="block mt-1 text-[var(--color-destructive)]">
-                        Apenas administradores e supervisores podem alterar a data de entrega de cards em desenvolvimento.
+                        Você não tem permissão para alterar a data de entrega de cards em desenvolvimento; use "Solicitar mudança de data".
                       </span>
                     )}
                   </p>
@@ -3550,26 +3575,26 @@ export default function ProjectDetails() {
           <DialogHeader>
             <DialogTitle>Apagar cards selecionados</DialogTitle>
             <div className="space-y-3 text-sm text-[var(--color-muted-foreground)]">
-                <p>Os cards serão removidos permanentemente. A exclusão obedece às mesmas regras do ícone de lixeira no Kanban.</p>
-                {(() => {
-                  const sel = cards.filter((c) => selectedKanbanCardIds.includes(c.id));
-                  const ok = sel.filter((c) => canBulkDeleteKanbanCard(c));
-                  const blocked = sel.filter((c) => !canBulkDeleteKanbanCard(c));
-                  return (
-                    <ul className="list-inside list-disc text-sm space-y-1">
+              <p>Os cards serão removidos permanentemente. A exclusão obedece às mesmas regras do ícone de lixeira no Kanban.</p>
+              {(() => {
+                const sel = cards.filter((c) => selectedKanbanCardIds.includes(c.id));
+                const ok = sel.filter((c) => canBulkDeleteKanbanCard(c));
+                const blocked = sel.filter((c) => !canBulkDeleteKanbanCard(c));
+                return (
+                  <ul className="list-inside list-disc text-sm space-y-1">
+                    <li>
+                      Serão apagados: <strong className="text-[var(--color-foreground)]">{ok.length}</strong>
+                    </li>
+                    {blocked.length > 0 && (
                       <li>
-                        Serão apagados: <strong className="text-[var(--color-foreground)]">{ok.length}</strong>
+                        Ignorados (sprint encerrada ou sem permissão para inviabilizado):{' '}
+                        <strong className="text-[var(--color-foreground)]">{blocked.length}</strong>
                       </li>
-                      {blocked.length > 0 && (
-                        <li>
-                          Ignorados (sprint encerrada ou sem permissão para inviabilizado):{' '}
-                          <strong className="text-[var(--color-foreground)]">{blocked.length}</strong>
-                        </li>
-                      )}
-                    </ul>
-                  );
-                })()}
-              </div>
+                    )}
+                  </ul>
+                );
+              })()}
+            </div>
           </DialogHeader>
           <DialogFooter>
             <Button
@@ -3924,6 +3949,16 @@ export default function ProjectDetails() {
         }
         cardName={conclusaoCardName || undefined}
       />
+
+      {compartilharOpen && project && (
+        <CompartilharSetoresDialog
+          recurso="projects"
+          itemId={project.id}
+          itemNome={project.nome}
+          open={compartilharOpen}
+          onOpenChange={setCompartilharOpen}
+        />
+      )}
     </div>
   );
 }

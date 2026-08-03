@@ -24,7 +24,7 @@ class Report(BaseReport):
     def fetch_data(self) -> dict[str, Any]:
         self.set_progress(10, 'Filtrando cards não-terminados...')
         qs = (
-            Card.objects.select_related('projeto', 'projeto__sprint', 'responsavel')
+            self.cards_visiveis().select_related('projeto', 'projeto__sprint', 'responsavel')
             .filter(projeto__arquivado=False, projeto__is_system=False)
             .exclude(status__in=['finalizado', 'inviabilizado'])
             .order_by('projeto_id', 'data_fim')
@@ -43,7 +43,7 @@ class Report(BaseReport):
         # Projetos com cards (mantém ordem alfabética por nome)
         proj_ids = list(by_project.keys())
         projects = list(
-            Project.objects.filter(id__in=proj_ids)
+            self.projetos_visiveis().filter(id__in=proj_ids)
             .select_related('sprint')
             .order_by('nome')
         )
@@ -57,7 +57,7 @@ class Report(BaseReport):
 
     def filters_display(self, data: Any) -> list[FilterDisplay]:
         if self.filters.get('project_id'):
-            pj = Project.objects.filter(pk=self.filters['project_id']).first()
+            pj = self.projetos_visiveis().filter(pk=self.filters['project_id']).first()
             return [FilterDisplay('Projeto', pj.nome if pj else '—')]
         return [FilterDisplay('Projeto', 'Todos os ativos')]
 

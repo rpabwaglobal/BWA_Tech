@@ -1,7 +1,9 @@
+from django.conf import settings
 from django.db.models.signals import pre_save, post_save, post_delete
 from django.dispatch import receiver
 from django.contrib.auth import get_user_model
 from django.db import transaction
+from django.db.models import Q
 from django.utils import timezone
 
 from .models import (
@@ -16,14 +18,144 @@ from .models import (
     CardPin,
     ScoreCriterion,
     CardScore,
+    SprintCompartilhamento,
+    ProjectCompartilhamento,
+    CardCompartilhamento,
 )
 from .notification_utils import send_notification, send_notification_to_multiple_users
+from apps.accounts.models import Role, UserSetor
 
 User = get_user_model()
 
 # Thread-local storage para passar o usuário da requisição para o signal
 import threading
 _thread_locals = threading.local()
+
+
+def usuarios_com_permissao(codename, alcancando=None):
+    """Usuários ativos que têm `accounts.<codename>`.
+
+    Destinatário de notificação é escolhido em massa, então precisa sair numa
+    consulta em vez de `has_perm` num laço — e a consulta tem que reproduzir os
+    três caminhos que o `has_perm` enxerga: concessão direta em
+    `user_permissions`, cargo Admin (que recebe o catálogo inteiro em
+    accounts/auth_backends.py) e superusuário. `distinct()` porque quem casa em
+    mais de um critério voltaria duplicado.
+
+    `alcancando` (opcional, uma Sprint/Project/Card): recorta o resultado para
+    quem o SETOR alcança esse objeto. Permissão e setor respondem perguntas
+    diferentes — a permissão diz o que a pessoa pode fazer, o setor diz sobre
+    QUE conteúdo. Sem o segundo recorte, a notificação leva o nome de um card
+    do setor A para todo portador da permissão na empresa, justamente a
+    informação que `scope_cards` esconde dele em `/api/cards/`.
+    """
+    qs = User.objects.filter(
+        Q(
+            user_permissions__codename=codename,
+            user_permissions__content_type__app_label='accounts',
+        )
+        | Q(role=Role.ADMIN)
+        | Q(is_superuser=True),
+        is_active=True,
+    ).distinct()
+    if alcancando is None:
+        return qs
+    return usuarios_que_alcancam(qs, alcancando)  # fail-open enquanto flag OFF
+
+
+def _setores_que_alcancam(obj):
+    """Ids dos setores que enxergam `obj`: o setor dono mais os que receberam o
+    empréstimo, seguindo a MESMA cascata de `apps.accounts.scoping` — emprestar
+    a sprint empresta os projetos e os cards de dentro dela.
+
+    É a pergunta INVERTIDA da que o `scoping.py` responde. Lá se pergunta
+    "quais itens o setor S alcança?" e a resposta vira filtro de queryset; aqui
+    se pergunta "quais setores alcançam este item?", porque destinatário de
+    notificação não sai de queryset nenhum — ele é escolhido a partir do
+    objeto, e é exatamente por isso que a notificação atravessa a segmentação
+    sem passar por nenhum `scope_*`. Não existe helper nessa direção em
+    `scoping.py` e esta fase não deve criar um, então a expressão fica aqui.
+
+    Devolve `None` quando não há setor dono resolvível ou quando o tipo do
+    objeto não é previsto — o sinal de "não sei recortar", que quem chama trata
+    como fail-open.
+    """
+    setor_dono = getattr(obj, 'setor_id', None)
+    if setor_dono is None:
+        return None
+
+    def setores_de(modelo, **filtro):
+        return set(modelo.objects.filter(**filtro).values_list('setor_id', flat=True))
+
+    alcancam = {setor_dono}
+    if isinstance(obj, Sprint):
+        alcancam |= setores_de(SprintCompartilhamento, sprint_id=obj.pk)
+    elif isinstance(obj, Project):
+        alcancam |= setores_de(ProjectCompartilhamento, project_id=obj.pk)
+        if obj.sprint_id:
+            alcancam |= setores_de(SprintCompartilhamento, sprint_id=obj.sprint_id)
+    elif isinstance(obj, Card):
+        alcancam |= setores_de(CardCompartilhamento, card_id=obj.pk)
+        if obj.projeto_id:
+            alcancam |= setores_de(ProjectCompartilhamento, project_id=obj.projeto_id)
+            # `values_list(...).first()` em vez de `obj.projeto.sprint` para não
+            # depender de o signal ter o projeto carregado nem disparar um
+            # SELECT do objeto inteiro só para ler uma FK.
+            sprint_id = (Project.objects.filter(pk=obj.projeto_id)
+                         .values_list('sprint_id', flat=True).first())
+            if sprint_id:
+                alcancam |= setores_de(SprintCompartilhamento, sprint_id=sprint_id)
+    else:
+        return None
+    return alcancam
+
+
+def usuarios_que_alcancam(qs, obj, sempre_ids=()):
+    """Recorta um queryset de usuários para quem o SETOR alcança `obj`.
+
+    Notificação é o único caminho que ENTREGA o nome de uma sprint/card na tela
+    de alguém sem passar por queryset escopado: quando o usuário abre
+    `/api/notifications/`, a `Notification` já foi gravada com a mensagem
+    dentro, e ali o filtro é só `usuario=self.request.user`. Por isso o recorte
+    tem de acontecer aqui, na escolha do destinatário.
+
+    Continuam recebendo sempre: quem tem `accounts.view_cross_setor` (ou é
+    superusuário/Admin — os mesmos três caminhos que `usuarios_com_permissao`
+    reproduz), porque essa permissão existe justamente para atravessar a
+    segmentação; e os ids de `sempre_ids`, gente ligada ao objeto por vínculo
+    explícito, que não pode ser calada por um detalhe de cadastro de setor.
+
+    FAIL-OPEN deliberado em três situações: flag `SETOR_SCOPING_ENABLED`
+    desligada, objeto sem setor resolvível e qualquer erro inesperado no
+    recorte. Notificação que não chega é bug silencioso — ninguém abre chamado
+    por não ter recebido um aviso que não sabia que existia —, então o lado
+    seguro do erro aqui é notificar demais, nunca de menos.
+    """
+    if not getattr(settings, 'SETOR_SCOPING_ENABLED', False):
+        return qs  # fail-open enquanto flag OFF
+    try:
+        setores = _setores_que_alcancam(obj)
+        if not setores:
+            return qs  # fail-open: sem setor conhecido não há como recortar
+        # Ids resolvidos antes de filtrar, como no resto do escopo: as tabelas
+        # de vínculo têm ordem de centenas de linhas e o filtro em `User` fica
+        # com um único predicado indexável, sem join extra nem `distinct()`.
+        permitidos = set(
+            UserSetor.objects.filter(setor_id__in=setores)
+            .values_list('user_id', flat=True)
+        )
+        permitidos |= set(
+            usuarios_com_permissao('view_cross_setor').values_list('id', flat=True)
+        )
+        permitidos |= {uid for uid in sempre_ids if uid}
+        return qs.filter(pk__in=permitidos)
+    except Exception:
+        # Erro no recorte não pode virar silêncio: cai para a lista inteira e
+        # deixa rastro, porque notificação faltando não gera reclamação.
+        import logging
+        logging.getLogger(__name__).exception(
+            'Falha ao recortar destinatarios por setor; notificando sem recorte')
+        return qs
 
 
 def format_user_name(user):
@@ -246,12 +378,11 @@ def card_created_or_updated(sender, instance, created, **kwargs):
         import logging
         logger = logging.getLogger(__name__)
         logger.info(f'[CardLog] Tentando criar log para card {instance.id} (nome: {instance.nome})')
-        print(f'[CardLog DEBUG] Criando log para card {instance.id} - {instance.nome}')
+
         
         # Verificar se já existe um log (o serializer pode ter criado)
         if CardLog.objects.filter(card=instance, tipo_evento=CardLogEventType.CRIADO).exists():
             logger.info(f'[CardLog] Log já existe para card {instance.id}, pulando criação no signal')
-            print(f'[CardLog DEBUG] Log já existe, pulando')
             return
         
         try:
@@ -262,11 +393,9 @@ def card_created_or_updated(sender, instance, created, **kwargs):
                 usuario=usuario
             )
             logger.info(f'[CardLog] Log criado com sucesso! ID: {log.id}, Card: {instance.id}')
-            print(f'[CardLog DEBUG] Log criado! ID: {log.id}')
         except Exception as e:
             # Log o erro mas não interrompa o processo
             logger.error(f'[CardLog] Erro ao criar CardLog para card {instance.id}: {str(e)}', exc_info=True)
-            print(f'[CardLog DEBUG] Erro: {str(e)}')
             # Tentar criar sem usuário
             try:
                 log = CardLog.objects.create(
@@ -276,10 +405,8 @@ def card_created_or_updated(sender, instance, created, **kwargs):
                     usuario=None
                 )
                 logger.info(f'[CardLog] Log criado sem usuário! ID: {log.id}, Card: {instance.id}')
-                print(f'[CardLog DEBUG] Log criado sem usuário! ID: {log.id}')
             except Exception as e2:
                 logger.error(f'[CardLog] Erro ao criar CardLog sem usuário para card {instance.id}: {str(e2)}', exc_info=True)
-                print(f'[CardLog DEBUG] Erro ao criar sem usuário: {str(e2)}')
         
         # Card criado - notificações
         if instance.responsavel:
@@ -305,13 +432,18 @@ def card_created_or_updated(sender, instance, created, **kwargs):
                 metadata={'card_nome': instance.nome, 'project_nome': instance.projeto.nome}
             )
         
-        # Se for uma demanda (card no projeto "Sugestões"), notificar todos os supervisores
+        # Demanda (card no projeto "Sugestões") aguarda avaliação de quem
+        # transforma sugestão em trabalho planejado — quem gerencia projetos.
+        # `alcancando` limita ao setor da demanda: a mensagem carrega o nome do
+        # card e o de quem o criou, e quem não enxerga a demanda em
+        # `/api/cards/` também não deveria lê-la na caixa de notificações.
         if instance.projeto.nome == 'Sugestões':
-            supervisores = User.objects.filter(role__in=['supervisor', 'admin'], is_active=True)
+            avaliadores = usuarios_com_permissao(
+                'manage_projects', alcancando=instance)  # fail-open enquanto flag OFF
             criador_nome = format_user_name(instance.criado_por) if instance.criado_por else 'Usuário desconhecido'
-            for supervisor in supervisores:
+            for avaliador in avaliadores:
                 send_notification(
-                    user_id=supervisor.id,
+                    user_id=avaliador.id,
                     tipo=NotificationType.CARD_CREATED,
                     titulo='Nova Demanda Criada',
                     mensagem=f'Uma nova demanda "{instance.nome}" foi criada por {criador_nome} e aguarda avaliação.',
@@ -490,14 +622,21 @@ def card_created_or_updated(sender, instance, created, **kwargs):
                 logger.info(f'[Card Signal] Comentário antigo: "{old_card_comment}", Comentário novo: "{new_card_comment}"')
                 
                 if card_comment_changed:
-                    # Notificar supervisores e gerentes sobre mudança no comentário do card
-                    supervisors_and_managers = User.objects.filter(
-                        role__in=['supervisor', 'gerente', 'admin'],
-                        is_active=True
-                    )
-                    
-                    user_ids = [user.id for user in supervisors_and_managers]
-                    
+                    # O comentário do card é recado de andamento para quem
+                    # coordena o trabalho alheio — o mesmo punhado de pessoas
+                    # que antes eram supervisor/gerente/admin. `view_metrics`
+                    # não serve aqui: é o gate das telas consolidadas e quase
+                    # todo mundo tem, o que transformaria isto em spam.
+                    #
+                    # `alcancando` recorta por setor: coordenar trabalho alheio
+                    # é coordenar o trabalho do SEU setor. Sem isso, a mensagem
+                    # ('O comentário do card "<nome>" foi atualizado.') entrega
+                    # o nome de um card do setor A a todo gerente da empresa.
+                    acompanhamento = usuarios_com_permissao(
+                        'manage_others_cards', alcancando=instance)  # fail-open enquanto flag OFF
+
+                    user_ids = [user.id for user in acompanhamento]
+
                     # Também notificar o responsável do card e o gerente do projeto
                     if instance.responsavel:
                         if instance.responsavel.id not in user_ids:
@@ -702,14 +841,16 @@ def card_created_or_updated(sender, instance, created, **kwargs):
                     }
                 )
             
-            # Se for uma demanda (card no projeto "Sugestões"), notificar todos os supervisores
+            # Demanda (card no projeto "Sugestões"): quem avalia é quem gerencia
+            # projetos, mesmo público avisado na criação — e com o mesmo recorte
+            # de setor da criação, pelo mesmo motivo.
             if instance.projeto.nome == 'Sugestões':
-                from django.contrib.auth import get_user_model
-                supervisores = User.objects.filter(role__in=['supervisor', 'admin'], is_active=True)
+                avaliadores = usuarios_com_permissao(
+                    'manage_projects', alcancando=instance)  # fail-open enquanto flag OFF
                 criador_nome = format_user_name(instance.criado_por) if instance.criado_por else 'Usuário desconhecido'
-                for supervisor in supervisores:
+                for avaliador in avaliadores:
                     send_notification(
-                        user_id=supervisor.id,
+                        user_id=avaliador.id,
                         tipo=NotificationType.CARD_UPDATED,
                         titulo='Demanda Atualizada',
                         mensagem=f'A demanda "{instance.nome}" criada por {criador_nome} foi atualizada.',
@@ -746,10 +887,33 @@ def card_deleted(sender, instance, **kwargs):
 
 @receiver(post_save, sender=Sprint)
 def sprint_created(sender, instance, created, **kwargs):
-    """Notificar quando uma sprint é criada"""
+    """Notificar quando uma sprint é criada.
+
+    A sprint é a autoridade do setor (ver o comentário em models.py:30), então
+    o aviso de criação para a plataforma inteira era o vazamento mais direto
+    que existia: o tipo `sprint_created` é opt-in livre em
+    `PATCH /api/notifications/preferences/`, e quem o ligasse passava a receber
+    nome e id de toda sprint de todo setor — um enumerador de ids de sprint que
+    `scope_sprints` esconde em `/api/sprints/`.
+
+    O supervisor entra sempre: ele acabou de criar a sprint e pode tê-la criado
+    para outro setor (o campo `setor` é gravável por quem tem
+    `manage_setor_sharing`), e um descompasso de cadastro não pode calar o aviso
+    justamente para o autor.
+
+    Limite conhecido: `setores_compartilhados` informado JÁ no POST de criação
+    não é visto aqui — o DRF grava o M2M depois do `save()`, ou seja, depois
+    deste `post_save`. Nesse caso o setor convidado não recebe o aviso de
+    criação (recebe todo o resto). Corrigir exigiria adiar o envio para fora do
+    signal, o que mudaria o comportamento atual — fora do escopo desta fase.
+    """
     if created:
         try:
-            users = User.objects.filter(is_active=True)
+            users = usuarios_que_alcancam(
+                User.objects.filter(is_active=True),
+                instance,
+                sempre_ids=(instance.supervisor_id,),
+            )  # fail-open enquanto flag OFF
             user_ids = [user.id for user in users]
             if user_ids:
                 send_notification_to_multiple_users(

@@ -1,5 +1,6 @@
 from django.conf import settings
 from django.db import models
+from apps.accounts.models import CompartilhamentoSetorBase
 
 
 class SuporteTipo(models.Model):
@@ -72,6 +73,17 @@ class ChamadoSuporte(models.Model):
     responsavel = models.CharField(max_length=200, blank=True, null=True)
     responsavel_solucao = models.CharField(max_length=200, blank=True, null=True)
     descricao_resolucao = models.TextField(blank=True, null=True)
+    # Segmentação por setor (Fase 2 best-effort): derivado por e-mail no create.
+    # NB: `usuario_setor` (acima) é outra coisa — texto livre preenchido pelo
+    # solicitante e exibido na tela de Suporte. Este aqui é o vínculo com o
+    # catálogo, usado pelo escopo.
+    setor = models.ForeignKey(
+        'accounts.SetorCatalogo', on_delete=models.SET_NULL, null=True, blank=True,
+        db_index=True, related_name='chamados', verbose_name='Setor')
+    setores_compartilhados = models.ManyToManyField(
+        'accounts.SetorCatalogo', blank=True, related_name='chamados_compartilhados',
+        through='formularios.ChamadoCompartilhamento',
+        verbose_name='Setores com acesso compartilhado')
     data_abertura = models.DateTimeField(auto_now_add=True)
     data_atualizacao = models.DateTimeField(auto_now=True)
 
@@ -92,6 +104,18 @@ class ChamadoSuporte(models.Model):
         return f'#{self.pk} {self.usuario_email}'
 
 
+def caminho_resolucao_suporte(instance, filename):
+    """Nome aleatório para o anexo de resolução, preservando só a extensão.
+
+    Mesmo motivo do anexo de card: o arquivo é servido por `/media/` sem
+    header, então o nome é a única barreira contra alguém adivinhar a URL."""
+    import uuid
+    from pathlib import Path
+
+    extensao = Path(filename).suffix.lower()[:12]
+    return f'suporte_resolucao/{uuid.uuid4().hex}{extensao}'
+
+
 class ChamadoSuporteResolucao(models.Model):
     """Anexos de RESOLUÇÃO de um chamado: link + arquivo, adicionados ao concluir.
 
@@ -102,7 +126,7 @@ class ChamadoSuporteResolucao(models.Model):
 
     chamado_id = models.PositiveIntegerField(unique=True, db_index=True)
     link = models.URLField(blank=True, null=True)
-    arquivo = models.FileField(upload_to='suporte_resolucao/', blank=True, null=True)
+    arquivo = models.FileField(upload_to=caminho_resolucao_suporte, blank=True, null=True)
     usuario = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.SET_NULL,
@@ -156,3 +180,16 @@ class ChamadoSuporteTimeline(models.Model):
 
     def __str__(self):
         return f'Chamado #{self.chamado_id} · {self.get_tipo_evento_display()} ({self.data})'
+
+
+class ChamadoCompartilhamento(CompartilhamentoSetorBase):
+    """Chamado de suporte encaminhado a outro setor."""
+    chamado = models.ForeignKey(
+        ChamadoSuporte, on_delete=models.CASCADE, related_name='compartilhamentos')
+
+    class Meta:
+        constraints = [models.UniqueConstraint(
+            fields=['chamado', 'setor'], name='uniq_compartilhamento_chamado_setor')]
+        indexes = [models.Index(fields=['setor', 'nivel'], name='idx_compart_chamado_setor')]
+        verbose_name = 'Compartilhamento de chamado'
+        verbose_name_plural = 'Compartilhamentos de chamado'

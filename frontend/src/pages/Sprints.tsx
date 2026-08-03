@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { SprintPeriodHelpNote } from '@/components/SprintPeriodHelpNote';
 import { useAuth } from '@/context/AuthContext';
+import { hasPermission } from '@/lib/permissions';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -91,9 +92,9 @@ export default function Sprints() {
   const [finalizarLoading, setFinalizarLoading] = useState(false);
   const [finalizarError, setFinalizarError] = useState('');
 
-  const canCreate = user?.role === 'supervisor' || user?.role === 'admin';
-  const canDeleteFinished = user?.role === 'admin';
-  const canFinalizar = user?.role === 'supervisor' || user?.role === 'admin';
+  const canCreate = hasPermission(user, 'manage_sprints');
+  const canDeleteFinished = hasPermission(user, 'manage_closed_sprints');
+  const canFinalizar = hasPermission(user, 'finalize_sprints');
 
   const activeSprintPrincipal = useMemo(
     () => getSprintEmAndamentoPrincipal(sprints),

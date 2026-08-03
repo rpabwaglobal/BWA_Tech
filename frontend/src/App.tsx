@@ -16,15 +16,15 @@ import Priorities from './pages/Priorities';
 import MyTasks from './pages/MyTasks';
 import GeekDay from './pages/GeekDay';
 import Settings from './pages/Settings';
-import Admin from './pages/Admin';
+import Perfil from './pages/Perfil';
 import Metrics from './pages/Metrics';
 import Reports from './pages/Reports';
 import Support from './pages/Support';
 import Score from './pages/Score';
 import Layout from './components/layout/Layout';
-import { Loader2 } from 'lucide-react';
+import { Loader2, ShieldAlert } from 'lucide-react';
 import { ROUTES } from './routes';
-import { isAdminUser, isSupervisorOrAdmin } from './lib/roles';
+import { hasPermission } from './lib/permissions';
 
 function LegacyProjectToProjeto() {
   const { id } = useParams();
@@ -74,7 +74,8 @@ function PublicRoute({ children }: { children: React.ReactNode }) {
   return isAuthenticated ? <Navigate to={ROUTES.painel} /> : <>{children}</>;
 }
 
-function AdminRoute({ children }: { children: React.ReactNode }) {
+/** Guard de rota baseado numa permissão granular do catálogo. */
+function PermissionRoute({ codename, children }: { codename: string; children: React.ReactNode }) {
   const { isAuthenticated, loading, user } = useAuth();
 
   if (loading) {
@@ -86,26 +87,36 @@ function AdminRoute({ children }: { children: React.ReactNode }) {
   }
 
   if (!isAuthenticated) return <Navigate to={ROUTES.entrar} />;
-  if (!isAdminUser(user)) return <Navigate to={ROUTES.painel} replace />;
+
+  if (!hasPermission(user, codename)) {
+    // Mandar para o painel é o fallback normal — MAS o painel também exige
+    // `view_content`. Para quem não a tem, redirecionar para lá seria um laço
+    // infinito. Nesse caso a tela explica o que falta, que é a informação de
+    // que essa pessoa precisa: ela não errou o caminho, ainda não foi liberada.
+    if (!hasPermission(user, 'view_content')) return <SemAcesso />;
+    return <Navigate to={ROUTES.painel} replace />;
+  }
 
   return <>{children}</>;
 }
 
-function SupervisorRoute({ children }: { children: React.ReactNode }) {
-  const { isAuthenticated, loading, user } = useAuth();
-
-  if (loading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-[var(--color-background)]">
-        <Loader2 className="h-8 w-8 animate-spin text-[var(--color-primary)]" />
+/** Conta autenticada que ainda não recebeu acesso ao conteúdo da plataforma. */
+function SemAcesso() {
+  return (
+    <div className="flex min-h-[60vh] flex-col items-center justify-center gap-3 px-6 text-center">
+      <div className="rounded-full bg-[var(--color-muted)] p-4">
+        <ShieldAlert className="h-7 w-7 text-[var(--color-muted-foreground)]" strokeWidth={1.5} />
       </div>
-    );
-  }
-
-  if (!isAuthenticated) return <Navigate to={ROUTES.entrar} />;
-  if (!isSupervisorOrAdmin(user)) return <Navigate to={ROUTES.painel} replace />;
-
-  return <>{children}</>;
+      <h1 className="text-xl font-semibold text-[var(--color-foreground)]">
+        Sua conta ainda não foi liberada
+      </h1>
+      <p className="max-w-md text-sm leading-relaxed text-[var(--color-muted-foreground)]">
+        Você entrou, mas ainda não tem um cargo e um setor atribuídos — por isso as
+        sprints, os projetos e os cards não aparecem. Peça a um gestor da plataforma
+        para liberar o seu acesso.
+      </p>
+    </div>
+  );
 }
 
 function AppRoutes() {
@@ -152,44 +163,102 @@ function AppRoutes() {
           </PrivateRoute>
         }
       >
+        {/* As rotas de conteúdo exigem `view_content`: sem ela a API responde
+            403, e sem a guarda quem digitasse a URL cairia numa tela quebrada em
+            vez de um aviso. As rotas de redirecionamento ficam de fora — elas só
+            apontam para uma rota que já tem a guarda. */}
         <Route index element={<Navigate to={ROUTES.painel} replace />} />
-        <Route path={ROUTES.painel.replace(/^\//, '')} element={<Dashboard />} />
-        <Route path={ROUTES.sprintGerenciar.replace(/^\//, '')} element={<Sprints />} />
-        <Route path="sprint/:sprintId/card/:cardId" element={<SprintDetails />} />
-        <Route path="sprint/:sprintId" element={<SprintDetails />} />
+        <Route path={ROUTES.painel.replace(/^\//, '')} element={
+            <PermissionRoute codename="view_content">
+              <Dashboard />
+            </PermissionRoute>
+          } />
+        <Route path={ROUTES.sprintGerenciar.replace(/^\//, '')} element={
+            <PermissionRoute codename="view_content">
+              <Sprints />
+            </PermissionRoute>
+          } />
+        <Route path="sprint/:sprintId/card/:cardId" element={
+            <PermissionRoute codename="view_content">
+              <SprintDetails />
+            </PermissionRoute>
+          } />
+        <Route path="sprint/:sprintId" element={
+            <PermissionRoute codename="view_content">
+              <SprintDetails />
+            </PermissionRoute>
+          } />
         <Route path={ROUTES.sprint.replace(/^\//, '')} element={<SprintEntryRedirect />} />
         <Route path="iteracoes" element={<Navigate to={ROUTES.sprint} replace />} />
         <Route path="iteracao/:sprintId" element={<LegacySprintPorIdRedirect />} />
         <Route path="sprints" element={<Navigate to={ROUTES.sprint} replace />} />
         <Route path="sprints/:sprintId/card/:cardId" element={<LegacySprintCardRedirect />} />
         <Route path="sprints/:sprintId" element={<LegacySprintPorIdRedirect />} />
-        <Route path="projeto/:id/card/:cardId" element={<ProjectDetails />} />
-        <Route path="projeto/:id" element={<ProjectDetails />} />
-        <Route path={ROUTES.projetos.replace(/^\//, '')} element={<Projects />} />
-        <Route path={ROUTES.pessoas.replace(/^\//, '')} element={<People />} />
-        <Route path={ROUTES.prioridades.replace(/^\//, '')} element={<Priorities />} />
-        <Route path="meus-afazeres" element={<MyTasks />} />
-        <Route path={ROUTES.metricas.replace(/^\//, '')} element={<Metrics />} />
-        <Route path={ROUTES.relatorios.replace(/^\//, '')} element={<Reports />} />
+        <Route path="projeto/:id/card/:cardId" element={
+            <PermissionRoute codename="view_content">
+              <ProjectDetails />
+            </PermissionRoute>
+          } />
+        <Route path="projeto/:id" element={
+            <PermissionRoute codename="view_content">
+              <ProjectDetails />
+            </PermissionRoute>
+          } />
+        <Route path={ROUTES.projetos.replace(/^\//, '')} element={
+            <PermissionRoute codename="view_content">
+              <Projects />
+            </PermissionRoute>
+          } />
+        <Route path={ROUTES.pessoas.replace(/^\//, '')} element={
+            <PermissionRoute codename="view_content">
+              <People />
+            </PermissionRoute>
+          } />
+        <Route path={ROUTES.prioridades.replace(/^\//, '')} element={
+            <PermissionRoute codename="view_content">
+              <Priorities />
+            </PermissionRoute>
+          } />
+        <Route path="meus-afazeres" element={
+            <PermissionRoute codename="view_content">
+              <MyTasks />
+            </PermissionRoute>
+          } />
+        <Route
+          path={ROUTES.metricas.replace(/^\//, '')}
+          element={
+            <PermissionRoute codename="view_metrics">
+              <Metrics />
+            </PermissionRoute>
+          }
+        />
+        <Route
+          path={ROUTES.relatorios.replace(/^\//, '')}
+          element={
+            <PermissionRoute codename="view_metrics">
+              <Reports />
+            </PermissionRoute>
+          }
+        />
         <Route path={ROUTES.suporte.replace(/^\//, '')} element={<Support />} />
         <Route
           path={ROUTES.score.replace(/^\//, '')}
           element={
-            <SupervisorRoute>
+            <PermissionRoute codename="manage_score">
               <Score />
-            </SupervisorRoute>
+            </PermissionRoute>
           }
         />
-        <Route path="dia-geek" element={<GeekDay />} />
-        <Route path={ROUTES.configuracoes.replace(/^\//, '')} element={<Settings />} />
         <Route
-          path={ROUTES.administracao.replace(/^\//, '')}
+          path="dia-geek"
           element={
-            <AdminRoute>
-              <Admin />
-            </AdminRoute>
+            <PermissionRoute codename="view_geekday">
+              <GeekDay />
+            </PermissionRoute>
           }
         />
+        <Route path={ROUTES.configuracoes.replace(/^\//, '')} element={<Settings />} />
+        <Route path={ROUTES.perfil.replace(/^\//, '')} element={<Perfil />} />
 
         {/* Legado: painel e demais rotas em inglês */}
         <Route path="dashboard" element={<Navigate to={ROUTES.painel} replace />} />
@@ -201,7 +270,6 @@ function AppRoutes() {
         <Route path="support" element={<Navigate to={ROUTES.suporte} replace />} />
         <Route path="geekday" element={<Navigate to={ROUTES.diaGeek} replace />} />
         <Route path="settings" element={<Navigate to={ROUTES.configuracoes} replace />} />
-        <Route path="admin" element={<Navigate to={ROUTES.administracao} replace />} />
         <Route path="projects" element={<Navigate to={ROUTES.projetos} replace />} />
         <Route path="projects/:id/card/:cardId" element={<LegacyProjectCardRedirect />} />
         <Route path="projects/:id" element={<LegacyProjectToProjeto />} />

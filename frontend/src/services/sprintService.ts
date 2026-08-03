@@ -21,6 +21,9 @@ export type Sprint = {
   cards_entregues_atrasados?: number;
   cards_abertos_atrasados?: number;
   finalizada?: boolean;
+  /** Codename do setor dono. A sprint é a autoridade: projetos e cards dela
+   * herdam este setor. */
+  setor?: string | null;
   created_at?: string;
   updated_at?: string;
 };

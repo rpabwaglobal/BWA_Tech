@@ -6,33 +6,31 @@ class Command(BaseCommand):
     help = 'Cadastra os novos usuários do sistema'
 
     def handle(self, *args, **options):
-        # Novos usuários - todos começam como desenvolvedor
         new_users = [
-            # Supervisores (serão definidos pelo admin)
-            ('gustavo', 'gustavo@gmail.com', 'gustavo123', Role.DESENVOLVEDOR),
-            ('elton', 'elton@gmail.com', 'elton123', Role.DESENVOLVEDOR),
-            # Gerentes de Projeto (serão definidos pelo supervisor)
-            ('jefferson', 'jefferson@gmail.com', 'jefferson123', Role.DESENVOLVEDOR),
-            ('thiago', 'thiago@gmail.com', 'thiago123', Role.DESENVOLVEDOR),
-            ('robert', 'robert@gmail.com', 'robert123', Role.DESENVOLVEDOR),
-            # Desenvolvedores
-            ('ilton', 'ilton@gmail.com', 'ilton123', Role.DESENVOLVEDOR),
-            ('lucas', 'lucas@gmail.com', 'lucas123', Role.DESENVOLVEDOR),
-            ('italo', 'italo@gmail.com', 'italo123', Role.DESENVOLVEDOR),
-            ('geymerson', 'geymerson@gmail.com', 'geymerson123', Role.DESENVOLVEDOR),
-            ('neilton', 'neilton@gmail.com', 'neilton123', Role.DESENVOLVEDOR),
+            ('gustavo', 'gustavo@gmail.com', 'gustavo123'),
+            ('elton', 'elton@gmail.com', 'elton123'),
+            ('jefferson', 'jefferson@gmail.com', 'jefferson123'),
+            ('thiago', 'thiago@gmail.com', 'thiago123'),
+            ('robert', 'robert@gmail.com', 'robert123'),
+            ('ilton', 'ilton@gmail.com', 'ilton123'),
+            ('lucas', 'lucas@gmail.com', 'lucas123'),
+            ('italo', 'italo@gmail.com', 'italo123'),
+            ('geymerson', 'geymerson@gmail.com', 'geymerson123'),
+            ('neilton', 'neilton@gmail.com', 'neilton123'),
         ]
 
         created_count = 0
         existing_count = 0
 
-        for username, email, password, role in new_users:
+        for username, email, password in new_users:
             if not User.objects.filter(username=username).exists():
-                user = User.objects.create_user(
+                User.objects.create_user(
                     username=username,
                     email=email,
                     password=password,
-                    role=role,
+                    # Visitante é o cargo padrão do sistema; o cargo real
+                    # (e o setor) é atribuído manualmente pelo admin.
+                    role=Role.VISITANTE,
                     is_staff=False,
                     is_superuser=False
                 )
@@ -52,11 +50,9 @@ class Command(BaseCommand):
         self.stdout.write(f'Usuarios criados: {created_count}')
         self.stdout.write(f'Usuarios ja existentes: {existing_count}')
         self.stdout.write(self.style.WARNING(
-            '\n[ATENCAO] Todos os novos usuarios foram criados como DESENVOLVEDOR.'
+            '\n[ATENCAO] Todos os novos usuarios foram criados como VISITANTE.'
         ))
         self.stdout.write(
-            '[INFO] O ADMIN deve alterar os cargos de Gustavo e Elton para SUPERVISOR.'
-        )
-        self.stdout.write(
-            '[INFO] Os SUPERVISORES podem alterar os cargos dos outros usuarios.'
+            '[INFO] O ADMIN deve atribuir cargo, setor e permissoes de cada um '
+            'na tela de usuarios.'
         )
