@@ -128,6 +128,32 @@ class SprintReplicationTests(TestCase):
         self.assertIn('Sprint 4', transfer.descricao)
         self.assertIn('Sprint 5', transfer.descricao)
 
+    def test_replicacao_preserva_a_marca_de_gerar_formulario_de_feedback(self):
+        """O checkbox atravessa a virada da sprint.
+
+        Sem isto o defeito é MUDO: o card marcado que ainda não foi finalizado é
+        replicado para a sprint seguinte, a cópia nasce com o padrão False, e
+        quando ela enfim for para "Finalizado" o signal do fluxo de feedback não
+        dispara. Não há erro nem log — só um formulário que nunca é gerado,
+        justamente nos cards de vida mais longa, que são os que mais atravessam
+        sprint. O construtor de `_replicar_card_para_sprint` lista os campos um a
+        um, então todo campo novo do Card precisa ser lembrado aqui.
+        """
+        marcado = Card.objects.create(
+            nome='Card com feedback',
+            projeto=self.projeto,
+            status=CardStatus.EM_DESENVOLVIMENTO,
+            criado_por=self.user,
+            gerar_formulario_feedback=True,
+        )
+        self.assertTrue(marcado.gerar_formulario_feedback)
+
+        finalizar_sprint_replicacao(self.sprint_origem, criado_por_user=self.user)
+
+        novo = Card.objects.get(
+            nome='Card com feedback', projeto__sprint=self.sprint_destino)
+        self.assertTrue(novo.gerar_formulario_feedback)
+
     def test_replicacao_a_desenvolver_sem_data_inicio(self):
         card_backlog = Card.objects.create(
             nome='Card backlog',

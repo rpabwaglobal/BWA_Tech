@@ -53,13 +53,26 @@ export function PainelFeedbacks() {
    */
   const [previaAberta, setPreviaAberta] = useState<'xlsx' | 'csv' | null>(null);
 
+  /**
+   * ERRO DE EXPORTAÇÃO É OUTRO ERRO — e por isso tem estado próprio.
+   *
+   * Ele escrevia no mesmo `erro` que o guarda de carregamento consome, e aquele
+   * guarda faz `return` antes do quadro inteiro: uma exportação que falhasse
+   * (timeout do axios numa planilha grande, 403, queda de rede) trocava o
+   * painel todo por um cartão de erro — sumindo com o board, a busca e os
+   * botões. E era um beco sem saída: `erro` só é zerado dentro de `carregar()`,
+   * que roda uma vez na montagem. A pessoa perdia a tela até dar F5.
+   */
+  const [erroExportacao, setErroExportacao] = useState('');
+
   const baixar = async (formato: 'xlsx' | 'csv') => {
     setExportando(formato);
+    setErroExportacao('');
     try {
       await exportarFeedbacks(formato);
       setPreviaAberta(null);
     } catch {
-      setErro('Não foi possível gerar o arquivo. Tente de novo.');
+      setErroExportacao('Não foi possível gerar o arquivo. Tente de novo.');
     } finally {
       setExportando(null);
     }
@@ -133,6 +146,14 @@ export function PainelFeedbacks() {
         <p className="text-sm text-[var(--color-muted-foreground)]">
           {erro || 'O fluxo de feedbacks ainda não existe. Ele é criado sozinho na primeira entrega de um card marcado.'}
         </p>
+        {/* Só quando FALHOU: `carregar` roda uma vez na montagem, então sem este
+            botão uma falha de rede deixava a aba inutilizável até o F5. A
+            ausência do fluxo não é falha — não há o que retentar ali. */}
+        {erro && (
+          <Button type="button" variant="outline" onClick={() => { void carregar(); }}>
+            Tentar de novo
+          </Button>
+        )}
       </div>
     );
   }
@@ -194,6 +215,17 @@ export function PainelFeedbacks() {
           ))}
         </div>
       </div>
+
+      {/* A falha de exportação aparece DENTRO do painel montado: o quadro, a
+          busca e os botões continuam ali, e tentar de novo é um clique. */}
+      {erroExportacao && (
+        <p
+          role="alert"
+          className="rounded-[8px] border border-[var(--color-destructive)]/40 bg-[var(--color-destructive)]/10 px-[12px] py-[8px] text-xs text-[var(--color-destructive)]"
+        >
+          {erroExportacao}
+        </p>
+      )}
 
       <div className="flex min-h-0 flex-1 gap-[14px] overflow-x-auto pb-[8px]">
         {etapas.map((etapa) => {

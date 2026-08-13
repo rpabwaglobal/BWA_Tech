@@ -57,6 +57,13 @@ def _replicar_card_para_sprint(card: Card, novo_projeto: Project, sprint_origem:
         complexidade_selected_development=card.complexidade_selected_development or '',
         complexidade_custom_items=card.complexidade_custom_items or [],
         card_comment=card.card_comment or '',
+        # SEM ISTO O CHECKBOX SE PERDE NA VIRADA DA SPRINT, EM SILÊNCIO.
+        # Um card marcado para gerar formulário que ainda não foi finalizado é
+        # replicado para a sprint seguinte; a cópia nascia com o padrão False, e
+        # quando ela finalmente fosse para "Finalizado" o signal não dispararia.
+        # Ninguém perceberia: não há erro, não há log — só um feedback que nunca
+        # é colhido, justamente nos cards de vida mais longa.
+        gerar_formulario_feedback=card.gerar_formulario_feedback,
     )
     novo._from_sprint_replication = True
     novo.save()
