@@ -11,6 +11,7 @@ from .models import (
     CARGO_CHOICES_CACHE_KEY, SETOR_CHOICES_CACHE_KEY,
 )
 from .permission_catalog import PERMISSION_CATALOG
+from .permissions import ids_que_participam_do_trabalho
 from .profile_picture_utils import get_profile_picture_url
 from .image_processing import process_profile_picture
 from .scoping import SETOR_PADRAO_CODENAME, setor_padrao_do_sistema
@@ -147,6 +148,7 @@ class UserSerializer(serializers.ModelSerializer):
     setores = serializers.SerializerMethodField(read_only=True)
     profile_picture_url = serializers.SerializerMethodField(read_only=True)
     permissions = serializers.SerializerMethodField(read_only=True)
+    participa_do_trabalho = serializers.SerializerMethodField(read_only=True)
 
     def get_profile_picture_url(self, obj):
         return get_profile_picture_url(obj, request=self.context.get('request'))
@@ -209,6 +211,51 @@ class UserSerializer(serializers.ModelSerializer):
             codename for codename, _label, _area in PERMISSION_CATALOG
             if obj.has_perm(f'accounts.{codename}')
         )
+
+    def get_participa_do_trabalho(self, obj):
+        """Esta pessoa enxerga sprint/projeto/card? (isto é: tem `view_content`)
+
+        POR QUE precisa ser um campo do usuário, e não uma leitura de
+        `permissions`: as telas de Dashboard e Métricas baixam a lista inteira
+        (`userService.getAll()`) e cruzam com os cards no cliente para montar
+        "quem está sem card". Só que `permissions` vem `[]` para quem não
+        gerencia usuários — um desenvolvedor comum recebe lista vazia de TODOS
+        os colegas —, então o frontend não tem como decidir sozinho quem
+        participa do trabalho. Sem este campo, a única saída seria voltar a
+        comparar nome de cargo no cliente, que é justamente o que a plataforma
+        abandonou (cargo é dado de catálogo; autorização é permissão).
+
+        POR QUE é visível para TODO MUNDO, diferente de `permissions`: o que ele
+        revela é "esta pessoa participa do trabalho", não O QUE ela pode fazer.
+        É a mesma informação que qualquer um já deduz ao ver a pessoa com cards
+        no kanban — não expõe capacidade administrativa, nem permite inferir
+        quem pode excluir projeto ou gerenciar usuários. `permissions` continua
+        restrito porque ali sim está o mapa de poderes de cada um.
+
+        Sobre o N+1: `has_perm` por linha custaria uma consulta por usuário (a
+        listagem pagina 50), então o conjunto é resolvido UMA vez e guardado na
+        instância do serializer. Com `many=True` o DRF reaproveita a MESMA
+        instância-filha para todos os itens da página (`ListSerializer.child`),
+        de modo que o cache atende a página inteira: uma consulta a mais na
+        resposta, e não uma por usuário.
+
+        Conta desativada responde False, porque `has_perm` de conta desativada é
+        False para tudo — o campo não pode discordar do gate.
+        """
+        return obj.pk in self._ids_participantes()
+
+    def _ids_participantes(self):
+        """Cache por serialização (ver o `get_participa_do_trabalho`).
+
+        Guardado no `__dict__` da instância — nunca em módulo: quem acabou de
+        ganhar um cargo com `view_content` tem que aparecer certo já na próxima
+        resposta, e um cache de processo só cairia no próximo restart.
+        """
+        ids = self.__dict__.get('_cache_ids_participantes')
+        if ids is None:
+            ids = ids_que_participam_do_trabalho()
+            self.__dict__['_cache_ids_participantes'] = ids
+        return ids
 
     def validate_setor(self, value):
         """Só admin/supervisor podem alterar o setor de um usuário, e nunca o
@@ -310,7 +357,8 @@ class UserSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'username', 'email', 'first_name', 'last_name',
             'role', 'role_display', 'setor', 'setor_display', 'setores',
-            'is_active', 'permissions', 'profile_picture_url', 'date_joined',
+            'is_active', 'permissions', 'participa_do_trabalho',
+            'profile_picture_url', 'date_joined',
         ]
         # is_active só é editável via o endpoint dedicado /set-active/ (que
         # também revoga tokens) — mantido read_only aqui pra não permitir

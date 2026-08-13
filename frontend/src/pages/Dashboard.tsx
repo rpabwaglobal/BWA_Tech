@@ -15,6 +15,7 @@ import { formatDate } from '@/lib/dateUtils';
 import { QuickCreateCardModal } from '@/components/QuickCreateCardModal';
 import { ROUTES } from '@/routes';
 import { getSprintEmAndamentoPrincipal } from '@/lib/sprintFechamento';
+import { isProjetoMonitoramento } from '@/lib/monitoramentoFeedback';
 import {
   Zap,
   FolderKanban,
@@ -64,6 +65,9 @@ export default function Dashboard() {
   const [quickCreateOpen, setQuickCreateOpen] = useState(false);
   const navigate = useNavigate();
 
+  /** Base do card "Usuários sem card": SÓ quem participa do trabalho (tem a
+   * permissão `view_content`). Quem não participa não enxerga sprint, projeto
+   * nem card — cobrar card dessa pessoa não faz sentido. */
   const developersRef = useRef<User[]>([]);
   const projetosSprintsAtivasRef = useRef<Project[]>([]);
   const refreshDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -81,11 +85,16 @@ export default function Dashboard() {
         if (card.responsavel) usersWithCards.add(String(card.responsavel));
       });
 
+      // `developersRef` já vem só com quem participa do trabalho (o backend
+      // recorta por `view_content` em `getParticipantes`). Aqui resta a única
+      // pergunta da tela: essa pessoa tem card em desenvolvimento?
+      //
+      // As comparações antigas por nome de cargo (`!== 'admin'` e
+      // `!== 'supervisor'`) foram removidas: 'supervisor' não existe mais no
+      // catálogo de cargos e admin já não vem na rota /users/. Não excluíam
+      // visitante nenhum — eram código morto se passando por regra.
       const usersWithout = developers.filter(
-        (dev) =>
-          dev.role !== 'admin' &&
-          dev.role !== 'supervisor' &&
-          !usersWithCards.has(String(dev.id)),
+        (dev) => !usersWithCards.has(String(dev.id)),
       );
 
       setDevelopersWithoutCards(usersWithout);
@@ -94,9 +103,23 @@ export default function Dashboard() {
   );
 
   const refreshDevelopersWithoutCards = useCallback(async () => {
+    // Rebusca a lista de PESSOAS junto com os cards — não só os cards. Quem foi
+    // desativado (ou perdeu `view_content`) some de
+    // `/users/?participa_do_trabalho=true`, mas continuaria em `developersRef`,
+    // que só é preenchido no load inicial. Sem isto, desativar alguém — que
+    // agora também solta os cards abertos da pessoa — faria todo Dashboard
+    // aberto recalcular, não achar mais card dela e PROMOVÊ-LA para "Usuários
+    // sem card": o oposto exato do esperado, na tela em que o gestor está
+    // olhando logo após desativar a conta. Custo: uma requisição por janela de
+    // debounce, ao lado das N de cards que já acontecem aqui.
+    const participantes = await userService
+      .getParticipantes()
+      .catch(() => developersRef.current);
+    developersRef.current = participantes;
+
     const projetos = projetosSprintsAtivasRef.current;
     if (!projetos.length) {
-      setDevelopersWithoutCards(developersRef.current);
+      setDevelopersWithoutCards(participantes);
       return;
     }
     try {
@@ -136,17 +159,29 @@ export default function Dashboard() {
 
   const loadData = async () => {
     try {
-      const [sprints, projects, allUsers] = await Promise.all([
+      const [sprints, projetosCarregados, participantes] = await Promise.all([
         sprintService.getAll().catch(() => []),
         projectService.getAll().catch(() => []),
-        userService.getAll().catch(() => []),
+        // Só quem participa do trabalho: o card "Usuários sem card" e o
+        // fallback "sem sprint ativa → todos entram na lista" não podem
+        // cobrar card de quem sequer enxerga sprint/projeto/card (Visitante e
+        // qualquer cargo sem `view_content`). O recorte é por PERMISSÃO, feito
+        // no backend — o frontend não consegue fazê-lo sozinho, porque o campo
+        // `permissions` vem vazio para quem não gerencia usuários.
+        userService.getParticipantes().catch(() => []),
       ]);
-      
-      // Filtrar apenas usuários que não são admin nem supervisor
-      const developers = allUsers.filter(
-        (u) => u.role !== 'admin' && u.role !== 'supervisor',
-      );
-      developersRef.current = developers;
+
+      developersRef.current = participantes;
+
+      // Fora o fluxo de Monitoramento de Feedbacks: ele é recém-criado, e como
+      // a listagem vem por `-created_at` ele apareceria em PRIMEIRO lugar em
+      // "Projetos Recentes" — logo ele, que é oculto por definição. Também
+      // somaria em "total de projetos" e em "projetos ativos".
+      //
+      // O corte é SÓ nele, e não em `is_system` inteiro de propósito: Suporte,
+      // Sugestões e Projetos Descartados já contam nestes números hoje, e mudar
+      // isso alteraria o painel sem ninguém ter pedido.
+      const projects = projetosCarregados.filter((p) => !isProjetoMonitoramento(p));
 
       const activeProjects = projects.filter(
         (p) => p.status === 'em_desenvolvimento' || p.status === 'em_avaliacao'

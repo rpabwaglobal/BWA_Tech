@@ -92,6 +92,38 @@ class GeekDayDrawSerializer(serializers.ModelSerializer):
         # todas as @actions). Exigi-lo no serializer quebraria essas rotas.
         extra_kwargs = {'grupo': {'required': False}}
 
+    def validate_usuario(self, usuario):
+        """Sorteio gravado pelo CRUD cru também recorta por participação.
+
+        `marcar_como_sorteado` não é a única porta: este serializer atende o
+        `POST /geekday-draws/` (e o PUT/PATCH) do ModelViewSet, com `usuario`
+        gravável. Sem esta validação a regra valeria para a tela e não para a
+        API — bastaria mandar o id do visitante no corpo para ele voltar ao
+        histórico e à coluna "Já Sorteados".
+
+        Por PERMISSÃO (`view_content`, via `ids_que_participam_do_trabalho`) e
+        com a mesma explicação da @action, para o gestor não receber dois
+        motivos diferentes pela mesma regra.
+
+        A EXCEÇÃO é a de sempre — escolher recorta, desfazer/corrigir o passado
+        não: se o sorteio já existe e o `usuario` não está MUDANDO (um PUT que
+        reenvia o mesmo id), passa. Anotar a observação ou a data de uma
+        apresentação que aconteceu continua possível depois que a pessoa virou
+        visitante; apagar o sorteio é DELETE e nem chega aqui.
+        """
+        if usuario is None:
+            return usuario
+        if self.instance is not None and self.instance.usuario_id == usuario.pk:
+            return usuario
+
+        from apps.accounts.permissions import ids_que_participam_do_trabalho
+
+        if usuario.pk not in ids_que_participam_do_trabalho():
+            raise serializers.ValidationError(
+                'Este usuário não participa do sorteio do Geek Day: '
+                'ele não tem acesso a sprints, projetos e cards.')
+        return usuario
+
     def get_usuario_name(self, obj):
         return format_user_name(obj.usuario)
 
@@ -118,6 +150,12 @@ class GeekDayUserStatusSerializer(serializers.Serializer):
     role_display = serializers.SerializerMethodField()
     profile_picture_url = serializers.URLField(allow_null=True)
     ja_sorteado = serializers.BooleanField()
+    # `true` quando a pessoa tem `view_content` — o piso de leitura de
+    # sprint/projeto/card, que é o critério de PARTICIPAR do sorteio. Vem
+    # `false` para quem só assiste ao Geek Day (Visitante, cargo criado sem
+    # essa permissão); esses só aparecem na lista quando já têm sorteio no
+    # ciclo, para o gestor conseguir desfazê-lo.
+    participa_do_trabalho = serializers.BooleanField()
     total_sorteios = serializers.IntegerField()
     ultimo_sorteio = serializers.DateTimeField(allow_null=True)
 

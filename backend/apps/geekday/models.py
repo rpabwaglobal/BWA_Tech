@@ -130,8 +130,17 @@ def grupo_do_usuario(user):
 
 
 def usuarios_do_grupo(grupo):
-    """Roster do sorteio: usuários ATIVOS, sem admin, cujo setor PRIMÁRIO está
-    no grupo.
+    """Quem PERTENCE ao grupo: usuários ATIVOS, sem admin, cujo setor PRIMÁRIO
+    está no grupo.
+
+    >>> ATENÇÃO: pertencer ao grupo NÃO é o mesmo que poder ser sorteado. <<<
+    Quem entra na roleta é `participantes_do_sorteio` (mais estreito). Esta
+    função responde "esta pessoa é deste Geek Day?" — pergunta de PERTINÊNCIA,
+    usada para resolver um id recebido pela API e, principalmente, para
+    DESFAZER o passado: quem foi sorteado ontem e hoje não participa mais
+    continua tendo de ser encontrável, senão o gestor perde o único caminho de
+    corrigir o próprio histórico. Recortar participação aqui quebraria os dois
+    lados de uma vez.
 
     PRIMÁRIO, e não "qualquer setor do usuário", porque é assim que
     `grupo_do_usuario` decide o grupo da pessoa — e as duas pontas têm de dar a
@@ -192,6 +201,34 @@ def usuarios_do_grupo(grupo):
             .filter(is_active=True)
             .exclude(role='admin')
             .filter(condicao))
+
+
+def participantes_do_sorteio(grupo):
+    """Quem PODE SER SORTEADO no grupo: pertence a ele E participa do trabalho.
+
+    É a outra metade da assimetria de `usuarios_do_grupo`:
+
+      (A) ESCOLHER quem entra na roleta  -> aqui;
+      (B) RESOLVER alguém já gravado     -> `usuarios_do_grupo` (mais amplo).
+
+    O corte de participação é por PERMISSÃO, nunca por nome de cargo: quem não
+    tem `view_content` não enxerga sprint, projeto nem card, então não tem o
+    que apresentar no Geek Day — é o "visitante só assiste". Fazendo assim, um
+    cargo criado amanhã sem essa permissão some da roleta sozinho, sem ninguém
+    tocar em código. `view_geekday` NÃO serve para isto: ela é sobre ASSISTIR
+    ao ritual (e ver o histórico), não sobre participar dele.
+
+    O critério vem inteiro de `ids_que_participam_do_trabalho` — que já soma
+    permissão individual, grupos, superuser e `Cargo.permissoes_padrao`. NÃO
+    reimplementar nada disso aqui: duas definições de "participa" divergiriam
+    em silêncio.
+
+    Devolve QUERYSET, como `usuarios_do_grupo`, porque os chamadores encadeiam
+    `.count()` e `.exclude()` em cima.
+    """
+    from apps.accounts.permissions import ids_que_participam_do_trabalho
+
+    return usuarios_do_grupo(grupo).filter(pk__in=ids_que_participam_do_trabalho())
 
 
 class GeekDayDraw(models.Model):

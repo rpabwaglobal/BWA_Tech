@@ -10,7 +10,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { FilterSelect } from '@/components/ui/filter-select';
 import { chipStyle } from '@/lib/catalog-style';
-import { userService, type CatalogItem } from '@/services/userService';
+import { userService, participaDoTrabalho, type CatalogItem } from '@/services/userService';
 import {
   geekdayService,
   geekdayGrupoService,
@@ -672,11 +672,21 @@ export default function GeekDay() {
     }
   };
 
+  /** Está na FILA quem ainda não foi sorteado no ciclo E participa do trabalho.
+   *
+   * O segundo teste é o "visitante não é sorteado". O backend já não manda
+   * visitante nenhum que não tenha sorteio no ciclo, mas manda o que JÁ foi
+   * sorteado — senão não haveria card para arrastar de volta e desfazer. Esse
+   * fica só em "Já Sorteados": desmarcá-lo é permitido, recolocá-lo na fila
+   * não. Repetir o critério aqui também evita que afrouxar o backend um dia
+   * devolva o visitante à roleta em silêncio. */
+  const estaNaFila = (u: GeekDayUserStatus) => !u.ja_sorteado && participaDoTrabalho(u);
+
   // Converter usuários disponíveis em setores para a roleta
   // Ordena por role para agrupar cores similares
   const getSectors = (): Sector[] => {
-    const availableUsers = users.filter(u => !u.ja_sorteado);
-    
+    const availableUsers = users.filter(estaNaFila);
+
     // A biblioteca requer entre 2 e 24 setores
     if (availableUsers.length === 0 || availableUsers.length < 2) {
       return [];
@@ -964,6 +974,15 @@ export default function GeekDay() {
               <p className="text-xs text-green-500 truncate">
                 {rotuloCargo(user)}
               </p>
+              {/* Está aqui só por causa do sorteio DESTE ciclo: não participa
+                  mais do trabalho, então pode sair da lista mas não volta para
+                  a fila. Sem esta linha o gestor arrastaria o card de volta e
+                  o veria sumir, sem entender o porquê. */}
+              {!participaDoTrabalho(user) && (
+                <p className="text-[11px] text-[var(--color-muted-foreground)] truncate">
+                  Não participa do sorteio — arraste para desfazer
+                </p>
+              )}
             </div>
           </CardContent>
         </div>
@@ -1100,7 +1119,7 @@ export default function GeekDay() {
     return user.username.substring(0, 2).toUpperCase();
   };
 
-  const availableUsers = users.filter(u => !u.ja_sorteado);
+  const availableUsers = users.filter(estaNaFila);
   const sortedUsers = users.filter(u => u.ja_sorteado);
   const sectors = getSectors();
 
@@ -1380,8 +1399,9 @@ export default function GeekDay() {
                 </div>
                   ) : (
                     /* Grupo sem ninguém: o roster é montado pelo setor PRIMÁRIO
-                       de cada pessoa, então grupo sem setor (ou com setores
-                       vazios) não tem quem sortear. */
+                       de cada pessoa E pela participação no trabalho, então
+                       grupo sem setor (ou só com quem apenas assiste) não tem
+                       quem sortear. */
                     <div className="flex flex-col items-center justify-center h-full min-h-0">
                       <div className="w-full max-w-lg h-full max-h-[500px] aspect-square relative rounded-2xl overflow-hidden roulette-wrapper bg-[var(--color-muted)] flex items-center justify-center">
                         {/* Overlay escuro com mensagem */}
@@ -1394,7 +1414,8 @@ export default function GeekDay() {
                             </p>
                             <p className="text-white/80 text-sm mb-4">
                               Participa do sorteio quem tem um dos setores do grupo como setor
-                              principal.
+                              principal e trabalha em sprints, projetos e cards — quem só
+                              assiste ao Geek Day não entra na roleta.
                               {isGestor && ' Use "Gerenciar grupos" para incluir setores aqui.'}
                             </p>
                             {isGestor && (

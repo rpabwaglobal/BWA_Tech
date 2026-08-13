@@ -34,6 +34,17 @@ export type GeekDayUserStatus = {
   role_display: string;
   profile_picture_url: string | null;
   ja_sorteado: boolean;
+  /** `true` quando a pessoa tem `view_content` — o piso de leitura de
+   * sprint/projeto/card, que aqui é o critério de PARTICIPAR do sorteio.
+   *
+   * O backend só manda quem participa OU quem já foi sorteado no ciclo atual;
+   * logo `false` significa "está aqui só porque tem sorteio a desfazer" e
+   * nunca deve entrar na roleta nem na coluna Participantes.
+   *
+   * Opcional de propósito: resposta guardada antes deste campo existir volta
+   * sem ele. Teste com `participaDoTrabalho`, que falha em ABERTO — nunca com
+   * `=== true`, que faria a tela sumir com todo mundo. */
+  participa_do_trabalho?: boolean;
   total_sorteios: number;
   ultimo_sorteio: string | null;
 };

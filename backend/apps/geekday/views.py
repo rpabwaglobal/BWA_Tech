@@ -5,14 +5,16 @@ from rest_framework.exceptions import (NotFound, PermissionDenied,
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from django.core.exceptions import ValidationError as DjangoValidationError
-from django.db.models import Count, Max
+from django.db.models import Count, Max, Q
 from django.utils import timezone
 from .models import (GeekDayDraw, GeekDayGrupo, GeekDayGrupoSetor,
-                     grupo_do_usuario, usuarios_do_grupo)
+                     grupo_do_usuario, participantes_do_sorteio,
+                     usuarios_do_grupo)
 from .serializers import (GeekDayDrawSerializer, GeekDayGrupoSerializer,
                           GeekDayUserStatusSerializer)
 from apps.accounts.profile_picture_utils import get_profile_picture_url
-from apps.accounts.permissions import HasPerm, HasQualquerPerm
+from apps.accounts.permissions import (HasPerm, HasQualquerPerm,
+                                       ids_que_participam_do_trabalho)
 
 
 # Ler o Geek Day: `view_geekday` OU `manage_geekday`. Quem organiza o sorteio
@@ -204,7 +206,7 @@ class GeekDayDrawViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=['get'])
     def users_status(self, request):
-        """Roster do sorteio: usuários do GRUPO com o status de já sorteado.
+        """Roster da aba Sorteio: usuários do GRUPO com o status de já sorteado.
 
         Não passa por `scope_users` porque a pergunta aqui não é "o que posso
         ver", e sim "quem participa" — a roleta do frontend é montada com esta
@@ -212,7 +214,6 @@ class GeekDayDrawViewSet(viewsets.ModelViewSet):
         desligadas, por ser decisão de produto.
         """
         grupo = self._grupo_atual()
-        users = usuarios_do_grupo(grupo)
 
         # Agregados restritos ao grupo: contar sorteio de outro grupo inflaria
         # o "total de participações" e o "último sorteio" de quem já mudou de
@@ -229,11 +230,30 @@ class GeekDayDrawViewSet(viewsets.ModelViewSet):
         )
         total_sorteios_dict = {item['usuario']: item['total'] for item in total_sorteios}
 
-        # Já sorteado no ciclo atual DO GRUPO (reset não apaga histórico)
+        # Já sorteado no ciclo atual DO GRUPO (reset não apaga histórico).
+        # `usuario` é SET_NULL: sorteio de conta apagada entra como None e não
+        # representa pessoa nenhuma — fora do conjunto.
         cycle = grupo.current_cycle
         ja_sorteado_ids = set(
-            sorteios_do_grupo.filter(cycle=cycle).values_list('usuario_id', flat=True).distinct()
+            sorteios_do_grupo.filter(cycle=cycle, usuario__isnull=False)
+            .values_list('usuario_id', flat=True).distinct()
         )
+
+        ids_participantes = ids_que_participam_do_trabalho()
+
+        # A lista é a UNIÃO de duas perguntas diferentes, e é de propósito:
+        #   - quem PODE ser sorteado (participa do trabalho) — vai para a fila
+        #     e para a roleta;
+        #   - quem JÁ FOI sorteado neste ciclo, participando ou não — fica só
+        #     na coluna "Já Sorteados".
+        # A segunda parcela é o que mantém o DESFAZER possível: o único gatilho
+        # de `desmarcar_como_sorteado` na tela é arrastar o card de volta, e
+        # card só existe para quem vem nesta resposta. Sem ela, um visitante já
+        # marcado sumiria da tela E ficaria impossível de corrigir fora do
+        # /admin. Também é o que impede a aba Sorteio de discordar do Histórico
+        # no ciclo em andamento.
+        users = usuarios_do_grupo(grupo).filter(
+            Q(pk__in=ids_participantes) | Q(pk__in=ja_sorteado_ids))
 
         result = []
         for user in users:
@@ -250,6 +270,10 @@ class GeekDayDrawViewSet(viewsets.ModelViewSet):
                 'role': user.role,  # Adicionar role para cores na roleta
                 'profile_picture_url': get_profile_picture_url(user, request=request),
                 'ja_sorteado': ja_sorteado,
+                # Explícito no payload para a tela não precisar adivinhar por
+                # CARGO quem entra na roleta: um cargo novo sem `view_content`
+                # já chega aqui com `false`, sem tocar no frontend.
+                'participa_do_trabalho': user.id in ids_participantes,
                 'total_sorteios': total_sorteios_dict.get(user.id, 0),
                 'ultimo_sorteio': ultimo_sorteio.isoformat() if ultimo_sorteio else None,
             })
@@ -267,14 +291,20 @@ class GeekDayDrawViewSet(viewsets.ModelViewSet):
 
         grupo = self._grupo_atual()
         try:
-            # Mesma lógica de users_status para consistência (por grupo e ciclo)
+            # Mesma lógica de users_status para consistência (por grupo e ciclo).
+            # `usuario__isnull=False` porque a FK é SET_NULL: um None nesta
+            # lista vira `NOT (id IN (NULL, ...))` no `exclude` abaixo, que o
+            # SQL avalia como desconhecido para TODA linha e esvaziaria a
+            # roleta — o erro apareceria como "todos já foram sorteados".
             cycle = grupo.current_cycle
             usuarios_ja_sorteados_ids = list(
-                GeekDayDraw.objects.filter(grupo=grupo, cycle=cycle)
+                GeekDayDraw.objects.filter(grupo=grupo, cycle=cycle, usuario__isnull=False)
                 .values_list('usuario_id', flat=True).distinct()
             )
 
-            todos_usuarios = usuarios_do_grupo(grupo)
+            # Sortear é ESCOLHER: só entra quem participa do trabalho. Quem só
+            # assiste ao Geek Day não tem o que apresentar.
+            todos_usuarios = participantes_do_sorteio(grupo)
             total_usuarios = todos_usuarios.count()
 
             # Filtrar apenas os que ainda não foram sorteados
@@ -291,7 +321,12 @@ class GeekDayDrawViewSet(viewsets.ModelViewSet):
                         'grupo': grupo.pk,
                         'grupo_nome': grupo.nome,
                         'total_usuarios': total_usuarios,
-                        'usuarios_sorteados': len(usuarios_ja_sorteados_ids),
+                        # Contados DENTRO do roster: sorteio de quem já não
+                        # participa (ou já saiu do grupo) continua no histórico,
+                        # mas somá-lo aqui produziria o absurdo
+                        # "sorteados: 5 de um total de 3".
+                        'usuarios_sorteados': todos_usuarios.filter(
+                            id__in=usuarios_ja_sorteados_ids).count(),
                         'usuarios_disponiveis': 0
                     },
                     status=status.HTTP_400_BAD_REQUEST
@@ -342,6 +377,21 @@ class GeekDayDrawViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_404_NOT_FOUND
             )
 
+        # Marcar é ESCOLHER (ação nova), então recorta aqui — e SÓ aqui: o
+        # `desmarcar` logo abaixo usa o mesmo `_usuario_do_grupo` e tem de
+        # continuar aceitando quem não participa, senão um visitante marcado
+        # antes desta regra ficaria travado como sorteado para sempre.
+        #
+        # Erro diferente do 404 de propósito: "não é deste grupo" e "não
+        # participa do sorteio" são dois problemas distintos, e o gestor precisa
+        # saber qual dos dois está vendo.
+        if usuario.pk not in ids_que_participam_do_trabalho():
+            return Response(
+                {'detail': 'Este usuário não participa do sorteio do Geek Day: '
+                           'ele não tem acesso a sprints, projetos e cards.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
         # Verificar se já foi sorteado hoje NESTE grupo
         hoje = timezone.localdate()  # data LOCAL: `now().date()` é UTC e, das 21h à meia-noite, já é o dia seguinte
         ja_sorteado_hoje = GeekDayDraw.objects.filter(
@@ -375,6 +425,12 @@ class GeekDayDrawViewSet(viewsets.ModelViewSet):
         """
         Remove o status de sorteado de um usuário (apaga o último sorteio dele
         no ciclo atual do grupo).
+
+        DESFAZER O PASSADO, e por isso NÃO recorta por participação: o sorteio
+        que se quer apagar já aconteceu, e quem deixou de participar depois
+        (virou visitante, perdeu o cargo) tem de continuar sendo desmarcável.
+        Exigir participação aqui deixaria o histórico do ciclo impossível de
+        corrigir pela tela. Só a ação nova (`marcar_como_sorteado`) recorta.
         """
         grupo = self._grupo_atual()
         usuario_id = request.data.get('usuario_id')
@@ -450,10 +506,15 @@ class GeekDayDrawViewSet(viewsets.ModelViewSet):
         return Response(serializer.data)
 
     def _usuario_do_grupo(self, grupo, usuario_id):
-        """Usuário `usuario_id` DESDE QUE participe do grupo.
+        """Usuário `usuario_id` DESDE QUE pertença ao grupo.
 
         Restringir aqui fecha, de graça, o caminho de marcar/desmarcar alguém
         de outro setor: sem isto, o id bastaria para escrever na fila alheia.
+
+        Pertencer ao grupo, e não "poder ser sorteado": este método serve
+        marcar E desmarcar, e o recorte de participação vale só para o primeiro
+        (ver `marcar_como_sorteado`). Acrescentar o filtro aqui pareceria mais
+        limpo e quebraria o desfazer.
         """
         try:
             return usuarios_do_grupo(grupo).filter(pk=usuario_id).first()

@@ -32,12 +32,12 @@ import {
   CARD_STATUSES,
 } from '@/services/cardService';
 import { sprintService, type Sprint } from '@/services/sprintService';
-import { userService, type User } from '@/services/userService';
+import { userService, participaDoTrabalho, type User } from '@/services/userService';
 import { projectService, type Project } from '@/services/projectService';
 import { useAuth } from '@/context/AuthContext';
 import { cn } from '@/lib/utils';
 import { ROUTES } from '@/routes';
-import { cachedFetch } from '@/lib/cachedFetch';
+import { cachedFetch, METRICS_BUNDLE_CACHE_KEY } from '@/lib/cachedFetch';
 
 /** Alias usado em todo o módulo. Slim para todos os cálculos de métricas
  * (sem nested), com campos suficientes para o modal de drill-down. */
@@ -45,7 +45,10 @@ type CardType = CardForMetrics;
 
 /** TTL do cache SWR: 60s. */
 const METRICS_CACHE_TTL_MS = 60_000;
-const METRICS_CACHE_KEY = 'metrics:bundle:v1';
+/** Chave versionada, compartilhada com quem invalida (ver `lib/cachedFetch`).
+ * O bundle guardado inclui `users`, que agora carrega `participa_do_trabalho`
+ * — daí a versão ter subido junto com o campo. */
+const METRICS_CACHE_KEY = METRICS_BUNDLE_CACHE_KEY;
 type MetricsBundle = {
   cards: CardForMetrics[];
   sprints: Sprint[];
@@ -288,6 +291,12 @@ export default function Metrics() {
 
   const [cards, setCards] = useState<CardType[]>([]);
   const [sprints, setSprints] = useState<Sprint[]>([]);
+  /** Lista COMPLETA de pessoas — inclusive quem não participa mais do
+   * trabalho. É de propósito: métrica é dado histórico. Quem entregou cards e
+   * depois virou Visitante continua precisando de nome, cargo e foto no
+   * ranking daquele período; sumir com a pessoa falsearia o número já
+   * produzido. Para montar listas de "quem trabalha" use `usuariosDoTrabalho`
+   * (derivado logo abaixo), nunca este estado. */
   const [users, setUsers] = useState<User[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
@@ -396,6 +405,10 @@ export default function Metrics() {
       const [cardsRes, sprintsRes, usersRes, projectsRes] = await Promise.all([
         cardService.getForMetrics(),
         sprintService.getAll(),
+        // Lista COMPLETA de propósito (ver o estado `users`): métricas cruzam
+        // pessoas com cards ANTIGOS, e quem entregou no passado precisa
+        // continuar identificável mesmo sem acesso hoje. O recorte de "quem
+        // trabalha" é feito no cliente, por permissão, em `usuariosDoTrabalho`.
         userService.getAll(),
         projectService.getAll(),
       ]);
@@ -435,6 +448,19 @@ export default function Metrics() {
       cancelled = true;
     };
   }, []);
+
+  /** Quem participa do trabalho (tem o piso de leitura `view_content`).
+   *
+   * Usado onde a lista de PESSOAS é a origem da informação — ranking com
+   * zerados, seletores de "por usuários", "selecionar todos". Nesses lugares
+   * quem não trabalha só polui: nunca terá card, então entra sempre com 0 e
+   * empurra o resto do gráfico para baixo.
+   *
+   * NÃO é usado onde a lista nasce dos CARDS (entregas já realizadas, cycle
+   * time, tabela de no-prazo, o responsável exibido no modal): ali a pessoa só
+   * aparece porque produziu aquele dado, e esconder resultado já produzido
+   * seria falsear a métrica. */
+  const usuariosDoTrabalho = useMemo(() => users.filter(participaDoTrabalho), [users]);
 
   const projectToSprint = useMemo(() => {
     const map = new Map<string, Sprint>();
@@ -520,7 +546,11 @@ export default function Metrics() {
       };
     });
     const userIdsFromCards = new Set(entriesFromCards.map((e) => e.userId));
-    const allUsersWithZero = users
+    // As entradas ZERADAS (pessoas que não aparecem em card nenhum) saem da
+    // lista de quem participa do trabalho. `entriesFromCards` acima continua
+    // vindo da lista completa — quem entregou no passado permanece no gráfico
+    // com o número real, mesmo que hoje não tenha mais acesso.
+    const allUsersWithZero = usuariosDoTrabalho
       .filter((u) => !userIdsFromCards.has(String(u.id)))
       .map((u) => ({
         userId: String(u.id),
@@ -530,7 +560,7 @@ export default function Metrics() {
         count: 0,
       }));
     return [...entriesFromCards, ...allUsersWithZero].sort((a, b) => b.count - a.count);
-  }, [closedCards, cardsSprintFilter, cardsTypeFilter, users, projects]);
+  }, [closedCards, cardsSprintFilter, cardsTypeFilter, users, usuariosDoTrabalho, projects]);
 
   const heatmapData = useMemo(() => {
     const bySprintDay = new Map<string, Map<number, CardType[]>>();
@@ -599,16 +629,20 @@ export default function Metrics() {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [onTimeScopeUsersDropdownOpen]);
 
+  // Seletor "Por usuários" do painel de entrega no prazo: é escolha de PESSOA
+  // para medir pontualidade, então só quem participa do trabalho entra. Um
+  // não participante selecionado geraria uma linha 0/0, com percentual sem
+  // significado.
   const filteredOnTimeScopeUsers = useMemo(() => {
     const query = onTimeScopeUsersSearchQuery.trim().toLowerCase();
-    if (!query) return users;
-    return users.filter((u) => {
+    if (!query) return usuariosDoTrabalho;
+    return usuariosDoTrabalho.filter((u) => {
       const fullName = `${u.first_name ?? ''} ${u.last_name ?? ''}`.toLowerCase();
       const username = u.username.toLowerCase();
       const role = (u.role_display || u.role || '').toLowerCase();
       return fullName.includes(query) || username.includes(query) || role.includes(query);
     });
-  }, [users, onTimeScopeUsersSearchQuery]);
+  }, [usuariosDoTrabalho, onTimeScopeUsersSearchQuery]);
 
   const handleToggleOnTimeScopeUser = (userId: string, checked: boolean) => {
     setOnTimeScopeUserIds((prev) => {
@@ -621,18 +655,22 @@ export default function Metrics() {
   };
 
   const handleOnTimeScopeSelectAll = () => {
-    setOnTimeScopeUserIds(users.map((u) => String(u.id)));
+    // "Todos" = todos os que trabalham. Marcar em bloco a lista completa
+    // injetaria linhas zeradas de quem nem enxerga card.
+    setOnTimeScopeUserIds(usuariosDoTrabalho.map((u) => String(u.id)));
   };
 
   const handleOnTimeScopeClear = () => {
     setOnTimeScopeUserIds([]);
   };
 
+  // Seletor "Por usuários" do leaderboard: mesma regra do escopo de prazo —
+  // é ranking de produtividade, não diretório.
   const filteredLeaderboardUsers = useMemo(() => {
     const query = leaderboardUsersSearchQuery.trim().toLowerCase();
-    if (!query) return users;
+    if (!query) return usuariosDoTrabalho;
 
-    return users.filter((user) => {
+    return usuariosDoTrabalho.filter((user) => {
       const fullName = `${user.first_name ?? ''} ${user.last_name ?? ''}`.toLowerCase();
       const username = user.username.toLowerCase();
       const role = (user.role_display || user.role || '').toLowerCase();
@@ -642,7 +680,7 @@ export default function Metrics() {
         role.includes(query)
       );
     });
-  }, [users, leaderboardUsersSearchQuery]);
+  }, [usuariosDoTrabalho, leaderboardUsersSearchQuery]);
 
   const handleToggleLeaderboardUser = (userId: string, checked: boolean) => {
     setLeaderboardSelectedUserIds((prev) => {
@@ -655,7 +693,8 @@ export default function Metrics() {
   };
 
   const handleSelectAllLeaderboardUsers = () => {
-    setLeaderboardSelectedUserIds(users.map((u) => String(u.id)));
+    // Mesmo motivo do "selecionar todos" do escopo de prazo.
+    setLeaderboardSelectedUserIds(usuariosDoTrabalho.map((u) => String(u.id)));
   };
 
   const handleClearLeaderboardUsers = () => {
@@ -755,16 +794,11 @@ export default function Metrics() {
           profile_picture_url: user?.profile_picture_url ?? null,
         };
       });
-    } else if (isAll) {
-      result = users.map((user) => ({
-        userId: String(user.id),
-        name: getShortDisplayName(user),
-        count: byUser.get(String(user.id)) ?? 0,
-        role: user.role ?? '',
-        profile_picture_url: user.profile_picture_url ?? null,
-      }));
     } else {
-      result = Array.from(byUser.entries()).map(([userId, count]) => {
+      // Quem ENTREGOU no período — nasce dos cards, então entra sempre, mesmo
+      // que a pessoa não participe mais do trabalho hoje. Esconder entrega já
+      // realizada falsearia a métrica daquele período.
+      const entradasDosCards = Array.from(byUser.entries()).map(([userId, count]) => {
         const user = users.find((u) => String(u.id) === userId);
         return {
           userId,
@@ -774,6 +808,24 @@ export default function Metrics() {
           profile_picture_url: user?.profile_picture_url ?? null,
         };
       });
+      if (isAll) {
+        // "Exibir: todos os usuários" completa o ranking com quem ficou em
+        // zero no período. ESSE preenchimento sai de quem participa do
+        // trabalho: quem não participa nunca terá card e só engrossaria a
+        // cauda de zeros do gráfico.
+        const zerados = usuariosDoTrabalho
+          .filter((u) => !byUser.has(String(u.id)))
+          .map((user) => ({
+            userId: String(user.id),
+            name: getShortDisplayName(user),
+            count: 0,
+            role: user.role ?? '',
+            profile_picture_url: user.profile_picture_url ?? null,
+          }));
+        result = [...entradasDosCards, ...zerados];
+      } else {
+        result = entradasDosCards;
+      }
     }
     result.sort((a, b) => b.count - a.count);
     return limit != null ? result.slice(0, limit) : result;
@@ -789,6 +841,7 @@ export default function Metrics() {
     leaderboardSelectedUserIds,
     leaderboardLimit,
     users,
+    usuariosDoTrabalho,
     projects,
   ]);
 
@@ -1795,12 +1848,16 @@ export default function Metrics() {
                     className="flex h-9 w-full items-center justify-between rounded-md border border-[var(--color-input)] bg-[var(--color-background)] px-3 text-sm text-left"
                   >
                     <span className="truncate">
+                      {/* Comparação contra os que TRABALHAM: a lista do
+                          dropdown é essa, então "todos" precisa significar
+                          "todos os selecionáveis" — senão o rótulo nunca
+                          chegaria a "Todos os usuários selecionados". */}
                       {leaderboardSelectedUserIds.length === 0 && 'Selecione os usuários'}
                       {leaderboardSelectedUserIds.length > 0 &&
-                        leaderboardSelectedUserIds.length < users.length &&
+                        leaderboardSelectedUserIds.length < usuariosDoTrabalho.length &&
                         `${leaderboardSelectedUserIds.length} usuário(s) selecionado(s)`}
-                      {leaderboardSelectedUserIds.length === users.length &&
-                        users.length > 0 &&
+                      {leaderboardSelectedUserIds.length === usuariosDoTrabalho.length &&
+                        usuariosDoTrabalho.length > 0 &&
                         'Todos os usuários selecionados'}
                     </span>
                     <ChevronDown
@@ -2263,9 +2320,11 @@ export default function Metrics() {
                       className="flex h-9 w-full items-center justify-between rounded-md border border-[var(--color-input)] bg-[var(--color-background)] px-3 text-sm text-left"
                     >
                       <span className="truncate">
+                        {/* Mesma comparação do leaderboard: "todos" é sobre
+                            os selecionáveis (quem participa do trabalho). */}
                         {onTimeScopeUserIds.length === 0 && 'Selecione os usuários'}
-                        {onTimeScopeUserIds.length > 0 && onTimeScopeUserIds.length < users.length && `${onTimeScopeUserIds.length} usuário(s) selecionado(s)`}
-                        {onTimeScopeUserIds.length === users.length && users.length > 0 && 'Todos os usuários selecionados'}
+                        {onTimeScopeUserIds.length > 0 && onTimeScopeUserIds.length < usuariosDoTrabalho.length && `${onTimeScopeUserIds.length} usuário(s) selecionado(s)`}
+                        {onTimeScopeUserIds.length === usuariosDoTrabalho.length && usuariosDoTrabalho.length > 0 && 'Todos os usuários selecionados'}
                       </span>
                       <ChevronDown
                         className={`ml-2 h-4 w-4 shrink-0 text-[var(--color-muted-foreground)] transition-transform ${onTimeScopeUsersDropdownOpen ? 'rotate-180' : ''}`}

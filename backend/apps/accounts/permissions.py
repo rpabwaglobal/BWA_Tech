@@ -9,11 +9,29 @@ As duas únicas exceções, ambas deliberadas:
     segurança de leitura-apenas, não um gate de capacidade;
   - `AdminRolePermissionBackend` (auth_backends.py) concede tudo a role='admin',
     para que a plataforma nunca fique sem administrador.
+
+Além dos gates (que respondem "ESTA pessoa pode?"), este módulo abriga o
+resolvedor EM MASSA `usuarios_com_perm_qs` (que responde "QUEM pode?"). Os dois
+lados moram juntos de propósito: eles precisam concordar, e é mais fácil manter
+isso quando estão no mesmo arquivo.
 """
+import logging
+
 from django.conf import settings
+from django.db.models import Q
+from django.db.utils import DatabaseError
 from rest_framework import permissions
 
 from .models import Role
+from .permission_catalog import PERMISSION_CATALOG
+
+logger = logging.getLogger(__name__)
+
+# Os codenames que a plataforma reconhece. Importa para o resolvedor em massa:
+# dois dos backends de `has_perm` (accounts/auth_backends.py) intersectam com
+# este conjunto antes de conceder, então o que está fora dele não é concedido
+# nem pelo cargo nem por role='admin'.
+CODENAMES_DO_CATALOGO = frozenset(c for c, _label, _area in PERMISSION_CATALOG)
 
 
 def HasPerm(codename: str):
@@ -191,6 +209,134 @@ class SetorPermiteEscrita(permissions.BasePermission):
             return True
         from .scoping import pode_editar
         return pode_editar(request.user, obj)
+
+
+# --- Resolvedor em massa ---------------------------------------------------
+#
+# Tudo abaixo responde à pergunta INVERTIDA dos gates acima: em vez de "esta
+# pessoa pode?", "quem pode?".
+
+
+def cargos_que_concedem(codename: str):
+    """Codenames dos CARGOS cujo `permissoes_padrao` contém `codename`.
+
+    Resolvido em Python, e não com um lookup dentro do JSONField, por dois
+    motivos: `permissoes_padrao` guarda uma lista JSON e a sintaxe de busca
+    dentro dela varia entre backends de banco e versões do Django (`contains`
+    sobre JSONField não é portável para SQLite, por exemplo), e a tabela `Cargo`
+    tem ordem de DEZENAS de linhas — cabe inteira na memória sem custo. Uma
+    consulta lê o catálogo, o filtro acontece aqui, e quem chama usa o resultado
+    num `role__in=[...]`, que é indexável e não faz join nenhum.
+
+    Ignora entradas que não são string e cargos cujo `permissoes_padrao` não é
+    lista: espelha exatamente o que `CargoPermissionBackend._consultar_cargo`
+    faz ao conceder — se ele não concede por causa de um valor estranho gravado
+    no JSON, aqui também não pode contar.
+    """
+    from .models import Cargo
+
+    try:
+        linhas = list(Cargo.objects.values_list('codename', 'permissoes_padrao'))
+    except DatabaseError:
+        # Tabela ainda não existe (bootstrapping antes das migrations). Mesma
+        # postura fail-closed do backend: não conceder por falha de leitura.
+        logger.warning('Cargos indisponíveis ao resolver quem tem %s', codename)
+        return []
+    return [
+        cargo_codename
+        for cargo_codename, template in linhas
+        if isinstance(template, list) and codename in template
+    ]
+
+
+def usuarios_com_perm_qs(codename: str):
+    """Queryset dos usuários ATIVOS para quem `has_perm('accounts.<codename>')`
+    é True. É o "quem pode?" — a pergunta invertida do `has_perm`.
+
+    POR QUE existem as duas versões. `has_perm` responde por UMA pessoa e é o
+    que os gates usam; mas escolher destinatário de notificação, ou filtrar uma
+    listagem de usuários, é decidir sobre TODO MUNDO de uma vez. Fazer isso com
+    `has_perm` num laço custa uma consulta por linha (e, na listagem paginada,
+    mais uma por usuário só para responder um booleano). Daí a versão em massa.
+
+    E POR QUE isso é delicado: as duas TÊM que concordar. Se uma enxerga um
+    caminho de concessão que a outra não enxerga, o sistema passa a mentir de
+    formas silenciosas — foi exatamente o que aconteceu quando o CARGO virou
+    fonte de autoridade (`CargoPermissionBackend`, accounts/auth_backends.py) e
+    a versão em massa continuou olhando só `user_permissions`: quem tinha a
+    permissão pelo cargo deixava de ser notificado, e ninguém abre chamado por
+    um aviso que não sabia que existia.
+
+    Por isso TODOS os caminhos que o `has_perm` enxerga são reproduzidos aqui:
+      1. `user_permissions` — concessão individual, resolvida pelo ModelBackend;
+      2. grupos do Django — o ModelBackend também os soma. A plataforma não usa
+         grupos hoje (a gestão de acesso é cargo + permissão individual), mas o
+         /admin permite criar um, e aí a divergência que esta função existe para
+         eliminar voltaria calada;
+      3. `is_superuser=True` — `PermissionsMixin.has_perm` devolve True para
+         QUALQUER string, sem consultar catálogo nenhum;
+      4. `role` apontando para um `Cargo` cujo `permissoes_padrao` contém o
+         codename — resolvido por `CargoPermissionBackend`;
+      5. `role='admin'` — recebe o catálogo inteiro (`AdminRolePermissionBackend`).
+
+    Os caminhos 4 e 5 valem SÓ para codename do catálogo, porque os dois
+    backends que os implementam intersectam com `_ALL_PERMS` antes de conceder;
+    1, 2 e 3 valem para qualquer string, porque o ModelBackend e o
+    `PermissionsMixin` não conhecem o catálogo. Reproduzir essa assimetria é o
+    que faz um codename digitado errado devolver aqui exatamente o mesmo
+    conjunto que o `has_perm` devolveria — em vez de "todos os admins".
+
+    >>> QUALQUER NOVO CAMINHO DE CONCESSÃO PRECISA ENTRAR NOS DOIS LADOS: <<<
+    >>> num backend em accounts/auth_backends.py (para o `has_perm`) E aqui   <<<
+    >>> (para o "quem pode?"). Mexer só em um deles é criar divergência.      <<<
+
+    `is_active=True` não é um recorte a mais, é parte da equivalência: todos os
+    backends (e o próprio `PermissionsMixin`) checam `is_active` antes de
+    conceder, então conta desativada tem `has_perm` False para tudo.
+
+    `distinct()` porque quem casa em mais de um critério (permissão individual E
+    cargo, por exemplo) voltaria duplicado pelos joins de `user_permissions` e
+    `groups`.
+    """
+    from django.contrib.auth import get_user_model
+
+    User = get_user_model()
+
+    criterios = (
+        Q(
+            user_permissions__codename=codename,
+            user_permissions__content_type__app_label='accounts',
+        )
+        | Q(
+            groups__permissions__codename=codename,
+            groups__permissions__content_type__app_label='accounts',
+        )
+        | Q(is_superuser=True)
+    )
+
+    if codename in CODENAMES_DO_CATALOGO:
+        criterios |= Q(role=Role.ADMIN)
+        cargos = cargos_que_concedem(codename)
+        if cargos:
+            criterios |= Q(role__in=cargos)
+
+    return User.objects.filter(criterios, is_active=True).distinct()
+
+
+def ids_que_participam_do_trabalho():
+    """Ids de quem tem `view_content` — o PISO de leitura do trabalho.
+
+    Existe como função nomeada (em vez de `usuarios_com_perm_qs('view_content')`
+    espalhado por aí) porque "participa do trabalho" é um conceito de produto:
+    quem não enxerga sprint, projeto nem card não deve aparecer em lista de
+    "pessoas sem card" nem entrar no denominador de métrica nenhuma. O dia em
+    que a definição desse piso mudar, muda aqui.
+
+    Devolve um `set` de ids, e não um queryset, porque o uso é sempre de
+    pertinência (`pk in ...`) ou de filtro (`pk__in=...`) — resolver uma vez e
+    reusar é o que evita o N+1 na serialização de uma página inteira.
+    """
+    return set(usuarios_com_perm_qs('view_content').values_list('id', flat=True))
 
 
 def permissoes_concediveis_por(user):

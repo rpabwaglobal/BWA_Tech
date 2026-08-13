@@ -17,6 +17,7 @@ from .permissions import (
     CanManageUserPermissions,
     CanManageUsers,
     CanViewPermissionCatalog,
+    ids_que_participam_do_trabalho,
     permissoes_concediveis_por,
 )
 from .permission_catalog import PERMISSION_CATALOG
@@ -211,6 +212,7 @@ class UserViewSet(viewsets.ModelViewSet):
         role = self.request.query_params.get('role', None)
         if role:
             queryset = queryset.filter(role=role)
+        queryset = self._filtrar_participantes(queryset)
         # Escopo por setor (seletores de responsável etc. mostram só quem
         # compartilha setor). Fail-open enquanto flag OFF. A tela de gestão usa
         # a action `all_users` (queryset próprio), não afetada por isto.
@@ -219,6 +221,50 @@ class UserViewSet(viewsets.ModelViewSet):
         # prefetch declarado aqui vale para o queryset final (o de listagem, que
         # é o que serializa User em lote).
         return scope_users(queryset, self.request.user).prefetch_related(PREFETCH_SETORES)
+
+    def _filtrar_participantes(self, queryset):
+        """`?participa_do_trabalho=true` deixa na listagem só quem tem
+        `view_content` — o piso de leitura de sprint/projeto/card.
+
+        Para que serve: as telas de Dashboard e Métricas listam "quem está sem
+        card". Quem não enxerga card nenhum não está sem card — está fora do
+        trabalho, e aparecer ali é ruído que a tela nunca vai conseguir explicar
+        (é o caso do cargo Visitante, e de qualquer cargo novo criado sem essa
+        permissão).
+
+        Filtra por PERMISSÃO, nunca por nome de cargo: um cargo criado amanhã
+        sem `view_content` já sai da lista, sem ninguém mexer em código.
+
+        Três cuidados que este método existe para garantir:
+          - SEM o parâmetro, nada muda: a listagem devolve exatamente o que
+            devolvia antes. O padrão continua sendo "todo mundo";
+          - roda dentro do `get_queryset`, portanto ANTES da paginação — filtrar
+            depois devolveria páginas de tamanho irregular e uma contagem
+            mentirosa;
+          - é um único `pk__in` sobre o conjunto já resolvido, não um `has_perm`
+            por linha: uma consulta a mais no total, não uma por usuário.
+        """
+        if self.action != 'list':
+            # Só a LISTAGEM. Numa rota de detalhe o mesmo parâmetro viraria um
+            # 404 para quem não participa — o filtro serve para recortar uma
+            # lista, não para esconder um usuário de quem pediu por id.
+            return queryset
+        valor = (self.request.query_params.get('participa_do_trabalho') or '').strip().lower()
+        if valor not in ('1', 'true'):
+            # Qualquer outro valor (inclusive ausente, vazio ou 'false') mantém
+            # a listagem completa. Filtro de listagem é opt-in explícito: errar
+            # o valor não pode esconder gente sem avisar.
+            return queryset
+        # `is_active=True` é recorte DESTE método, e não um detalhe herdado.
+        # Conta desativada não é linha de lista de trabalho: ninguém cobra card
+        # de quem saiu da empresa. Hoje `ids_que_participam_do_trabalho()`
+        # também exclui inativo, mas por outro motivo — lá o `is_active` é parte
+        # da equivalência com `has_perm` (permissions.py), ou seja, é uma
+        # afirmação sobre PERMISSÃO. Um refactor daquela função reintroduziria
+        # inativo nesta lista em silêncio. Espelha o corte explícito que
+        # `_usuarios_que_executam` (projects/views.py) já faz para as telas de
+        # Prioridades.
+        return queryset.filter(is_active=True, pk__in=ids_que_participam_do_trabalho())
 
     @action(detail=False, methods=['get'], permission_classes=[CanManageUsers], url_path='all')
     def all_users(self, request):
@@ -276,18 +322,39 @@ class UserViewSet(viewsets.ModelViewSet):
     def set_active(self, request, pk=None):
         """Ativa/desativa o usuário-alvo. Ao desativar, revoga explicitamente
         todos os tokens (reforço — o bloqueio automático via is_active já
-        cobre requests futuras, ver authentication.py)."""
+        cobre requests futuras, ver authentication.py) e solta os cards ABERTOS
+        que a pessoa segurava.
+
+        >>> ESTE PONTO É PAREADO COM `User.delete()` (accounts/models.py), que <<<
+        >>> desativa em vez de apagar. Os dois chamam                          <<<
+        >>> `desatribuir_cards_de_usuario_desativado`, e qualquer PORTA NOVA   <<<
+        >>> de desativação precisa chamá-lo também — a regra mora no serviço,  <<<
+        >>> não aqui.                                                          <<<
+        """
         instance = self.get_object()
         is_active = request.data.get('is_active')
         if not isinstance(is_active, bool):
             return Response({'is_active': ['Valor booleano obrigatório.']}, status=status.HTTP_400_BAD_REQUEST)
-        instance.is_active = is_active
-        instance.save(update_fields=['is_active'])
-        if not is_active:
-            Token.objects.filter(user=instance).delete()
-            notify_account_deactivated(instance.pk)
-        else:
-            notify_permissions_changed(instance.pk)
+        # Import TARDIO: `accounts` não pode depender de `projects` em tempo de
+        # módulo (o inverso já existe — projects importa accounts.permissions).
+        from apps.projects.services import desatribuir_cards_de_usuario_desativado
+
+        # Tudo ou nada: ou a conta desativa E os cards soltam, ou nada
+        # acontece. Sem a transação, uma falha na desatribuição deixaria a conta
+        # desativada segurando cards abertos — exatamente o estado que esta
+        # mudança existe para eliminar.
+        with transaction.atomic():
+            instance.is_active = is_active
+            instance.save(update_fields=['is_active'])
+            if not is_active:
+                Token.objects.filter(user=instance).delete()
+                desatribuir_cards_de_usuario_desativado(instance, operador=request.user)
+                # Broadcast depois do COMMIT: o contrato do realtime é "cliente
+                # recebe o evento e refaz o GET" (ver realtime.py), então evento
+                # emitido dentro da transação faz o cliente ler estado velho.
+                transaction.on_commit(lambda: notify_account_deactivated(instance.pk))
+            else:
+                transaction.on_commit(lambda: notify_permissions_changed(instance.pk))
         serializer = self.get_serializer(instance)
         return Response(serializer.data)
 
@@ -754,10 +821,25 @@ class SetorViewSet(viewsets.ModelViewSet):
         # dono. Sem esta checagem, arrastar uma sprint ativa para um setor que
         # já tem a dele criaria, por outro caminho, o estado que o cadastro
         # recusa — e sem ninguém perceber.
+        # FLUXO SISTÊMICO FORA DE QUALQUER MOVIMENTAÇÃO. A sprint sistêmica
+        # (âncora do "Monitoramento de Feedbacks") e o que está dentro dela
+        # moram num setor TÉCNICO justamente para que ninguém seja dono deles:
+        # é isso que impede `scope_cards` de entregar o feedback — e a
+        # `url_publica`, que é a credencial da rota anônima — a um setor inteiro
+        # de uma vez. Dar-lhes um setor real desfaria essa decisão em um clique,
+        # sem aviso e sem log. Ela também não aparece na listagem de sprints,
+        # então o operador nem saberia que a moveu.
+        # Recorte por `sprint__is_system`, e não por `Project.is_system`:
+        # Suporte/Sugestões/Descartados continuam movíveis, como sempre foram.
+        sprints_moviveis = Sprint.objects.filter(is_system=False)
+        projetos_moviveis = Project.objects.exclude(sprint__is_system=True)
+        cards_moviveis = Card.objects.exclude(projeto__sprint__is_system=True)
+
         from apps.projects.services import conflitos_ao_mover_sprints
         ids_movendo = list(sprint_ids or [])
         if todos:
-            ids_movendo = list(Sprint.objects.filter(setor=padrao).values_list('id', flat=True))
+            ids_movendo = list(
+                sprints_moviveis.filter(setor=padrao).values_list('id', flat=True))
         if ids_movendo:
             conflitos = conflitos_ao_mover_sprints(ids_movendo, setor.pk)
             if conflitos:
@@ -769,20 +851,20 @@ class SetorViewSet(viewsets.ModelViewSet):
 
         with transaction.atomic():
             if todos:
-                result['sprints'] = Sprint.objects.filter(setor=padrao).update(setor=setor)
-                result['projetos'] = Project.objects.filter(setor=padrao).update(setor=setor)
-                result['cards'] = Card.objects.filter(setor=padrao).update(setor=setor)
+                result['sprints'] = sprints_moviveis.filter(setor=padrao).update(setor=setor)
+                result['projetos'] = projetos_moviveis.filter(setor=padrao).update(setor=setor)
+                result['cards'] = cards_moviveis.filter(setor=padrao).update(setor=setor)
             else:
                 if sprint_ids:
-                    result['sprints'] = Sprint.objects.filter(id__in=sprint_ids).update(setor=setor)
+                    result['sprints'] = sprints_moviveis.filter(id__in=sprint_ids).update(setor=setor)
                     # propaga em árvore: projetos e cards seguem a sprint
-                    result['projetos'] = Project.objects.filter(sprint_id__in=sprint_ids).update(setor=setor)
-                    result['cards'] = Card.objects.filter(projeto__sprint_id__in=sprint_ids).update(setor=setor)
+                    result['projetos'] = projetos_moviveis.filter(sprint_id__in=sprint_ids).update(setor=setor)
+                    result['cards'] = cards_moviveis.filter(projeto__sprint_id__in=sprint_ids).update(setor=setor)
                 if project_ids:
-                    result['projetos'] = result.get('projetos', 0) + Project.objects.filter(
+                    result['projetos'] = result.get('projetos', 0) + projetos_moviveis.filter(
                         id__in=project_ids).update(setor=setor)
                     # espelha nos cards desses projetos
-                    result['cards'] = result.get('cards', 0) + Card.objects.filter(
+                    result['cards'] = result.get('cards', 0) + cards_moviveis.filter(
                         projeto_id__in=project_ids).update(setor=setor)
             # Um item não se compartilha com o próprio dono. O que era
             # empréstimo para este setor virou propriedade dele; deixar o

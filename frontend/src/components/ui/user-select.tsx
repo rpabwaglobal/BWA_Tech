@@ -2,7 +2,7 @@ import { useState, useRef, useEffect } from 'react';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Search, ChevronDown, X } from 'lucide-react';
-import type { User } from '@/services/userService';
+import { participaDoTrabalho, type User } from '@/services/userService';
 
 type UserSelectProps = {
   users: User[];
@@ -90,10 +90,22 @@ export function UserSelect({ users, value, onChange, disabled = false, placehold
   const containerRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
 
-  // Filtrar usuários admin
-  const availableUsers = users.filter(user => user.role !== 'admin');
-  
-  const selectedUser = availableUsers.find(u => String(u.id) === String(value));
+  // OPÇÕES atribuíveis: só quem participa do trabalho (tem `view_content`).
+  // Atribuir um card a quem não enxerga sprint/projeto/card cria trabalho que
+  // o destinatário não consegue nem abrir — e grava isso na FK do card.
+  // A exclusão de admin é comportamento ANTIGO, mantido de propósito: admin é
+  // conta de administração, não de execução (a rota /users/ do backend já o
+  // omite; a comparação sobrevive para quem passar uma lista de outra origem).
+  // Nenhum critério novo aqui é por nome de cargo.
+  const availableUsers = users.filter(
+    (user) => user.role !== 'admin' && participaDoTrabalho(user),
+  );
+
+  // O valor JÁ GRAVADO é resolvido na lista COMPLETA, não nas opções: um card
+  // antigo cujo responsável virou Visitante (ou admin) precisa continuar
+  // mostrando o nome dele. Resolver pelas opções deixaria o campo em branco e
+  // faria o usuário achar que o card perdeu o dono.
+  const selectedUser = users.find(u => String(u.id) === String(value));
 
   const filteredUsers = availableUsers.filter(user => {
     if (!searchQuery.trim()) return true;

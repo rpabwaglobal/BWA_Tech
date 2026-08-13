@@ -1,6 +1,6 @@
 from django.contrib.auth.models import AbstractUser
 from django.core.cache import cache
-from django.db import models
+from django.db import models, transaction
 from django.db.utils import DatabaseError
 
 from .permission_catalog import PermissaoPlataforma  # noqa: F401 — registra Meta.permissions
@@ -218,12 +218,31 @@ class User(AbstractUser):
         Sobrescrito no model (e não só na API) porque o `delete()` também é
         alcançável pelo admin do Django e pelo shell — o offboarding tem que
         ser o mesmo caminho independentemente de por onde se chega.
+
+        Pelo mesmo motivo, aqui também soltam os cards ABERTOS da pessoa.
+
+        >>> ESTE PONTO É PAREADO COM `UserViewSet.set_active` (accounts/     <<<
+        >>> views.py). Os dois chamam                                         <<<
+        >>> `desatribuir_cards_de_usuario_desativado`, e qualquer PORTA NOVA  <<<
+        >>> de desativação precisa chamá-lo também.                           <<<
+
+        `operador=None`: vindo de shell/admin não há ator humano identificado,
+        e o `CardLog.usuario` é `null=True` justamente para não obrigar a
+        inventar um.
         """
         from rest_framework.authtoken.models import Token
 
-        self.is_active = False
-        self.save(update_fields=['is_active', 'updated_at'])
-        Token.objects.filter(user=self).delete()
+        # Import TARDIO: `accounts` não pode depender de `projects` em tempo de
+        # módulo (o inverso já existe).
+        from apps.projects.services import desatribuir_cards_de_usuario_desativado
+
+        # Tudo ou nada — mesma razão do `set_active`: conta desativada não pode
+        # ficar segurando card aberto por causa de uma falha no meio.
+        with transaction.atomic():
+            self.is_active = False
+            self.save(update_fields=['is_active', 'updated_at'])
+            Token.objects.filter(user=self).delete()
+            desatribuir_cards_de_usuario_desativado(self, operador=None)
 
     @property
     def is_admin(self):

@@ -16,6 +16,13 @@ PERMISSION_CATALOG = [
     ('manage_others_cards', 'Editar/excluir cards de outros usuários', 'Cards'),
     ('manage_locked_cards', 'Editar/excluir cards finalizados, inviabilizados ou em sprint fechada', 'Cards'),
     ('manage_locked_card_attachments', 'Anexar/remover anexos em cards travados', 'Cards'),
+    # Separada de `approve_due_date_requests` de propósito: são decisões
+    # diferentes. Mudar prazo reorganiza trabalho que já está em andamento;
+    # reabrir card desfaz uma ENTREGA — devolve ao quadro algo que a sprint já
+    # contou como concluído e mexe nas métricas de entrega. Quem delega uma não
+    # necessariamente delega a outra, e com uma permissão só não haveria como
+    # dar a primeira sem a segunda.
+    ('approve_card_reopen', 'Aprovar/rejeitar solicitações de reabertura de card', 'Cards'),
     ('manage_weekly_priorities', 'Gerenciar prioridades semanais (criar/editar/excluir/fechar semana)', 'Prioridades'),
     ('approve_due_date_requests', 'Aprovar/rejeitar solicitações de mudança de data', 'Prioridades'),
     ('manage_others_due_date_requests', 'Editar/excluir solicitações de data de outros usuários', 'Prioridades'),

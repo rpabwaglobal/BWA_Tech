@@ -330,7 +330,8 @@ def scope_card_logs(qs, user):
 
 
 # --- Satélites do card ------------------------------------------------------
-# Event, CardAnexo, CardPin e CardDueDateChangeRequest não têm setor próprio:
+# Event, CardAnexo, CardPin, CardDueDateChangeRequest e CardReopenRequest não
+# têm setor próprio:
 # nenhum deles existe fora de um card, então quem responde pela visibilidade é
 # sempre o CARD dono. Escopar pelo autor (quem comentou, quem anexou, quem
 # pediu o prazo) seria errado por dois lados: esconderia do resto do setor um
@@ -410,6 +411,33 @@ def scope_card_date_change_requests(qs, user):
     sensível quanto o card. Escopar aqui também fecha o lado da escrita sem
     código extra: `approve`, `reject` e `destroy` saem todos de `get_object()`,
     que passa a dar 404 fora do escopo.
+    """
+    if _sem_escopo(user):
+        return qs
+    setores = setores_ids_do_usuario(user)
+    if not setores:
+        return qs.none()
+    return qs.filter(
+        Q(card__setor_id__in=setores)
+        | Q(card_id__in=_cards_compartilhados(setores))
+        | Q(card__projeto_id__in=_projetos_visiveis_ids(setores))
+    )
+
+
+def scope_card_reopen_requests(qs, user):
+    """Solicitações de reabertura visíveis onde o card é visível.
+
+    Mesma expressão do irmão `scope_card_date_change_requests`, e pela mesma
+    razão: a fila devolve o `card_detail` inteiro e um `reason` em texto livre
+    (por que aquele trabalho encerrado precisa voltar), então ela é tão sensível
+    quanto o card — quem responde pela visibilidade é sempre o CARD dono, nunca
+    o autor do pedido.
+
+    Escopar aqui fecha o lado da VISIBILIDADE de uma vez: `approve`, `reject`,
+    `update` e `destroy` saem todos de `get_object()`, que passa a dar 404 fora
+    do escopo em vez de ressuscitar o card de outro setor. NÃO fecha o lado da
+    ESCRITA — card emprestado em nível 'leitura' continua VISÍVEL —, e por isso
+    o `approve` chama `checar_escrita_no_pai` explicitamente.
     """
     if _sem_escopo(user):
         return qs

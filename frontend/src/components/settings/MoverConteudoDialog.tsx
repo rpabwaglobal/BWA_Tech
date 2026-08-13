@@ -17,6 +17,7 @@ import {
 } from '@/services/userService';
 import { sprintService, type Sprint } from '@/services/sprintService';
 import { projectService, type Project } from '@/services/projectService';
+import { isProjetoMonitoramento } from '@/lib/monitoramentoFeedback';
 
 /** Espelha `SETOR_PADRAO_CODENAME` do backend: o destino de tudo que ainda não
  * foi classificado. É o único setor que o atalho `todos` esvazia. */
@@ -169,6 +170,13 @@ export function MoverConteudoDialog({ destino, setores, open, onOpenChange, onMo
   );
   const projetosMoviveis = useMemo(
     () => projetos
+      // O projeto de Monitoramento de Feedbacks fica FORA da lista, e não por
+      // ser sistêmico (Suporte e Sugestões continuam movíveis): ele mora em
+      // `sem_setor` DE PROPÓSITO. Os cards dele são de setores diferentes e
+      // ficam visíveis só para quem entregou, via compartilhamento por card;
+      // dar a ele um setor real entregaria o feedback de TODA a empresa ao time
+      // daquele setor. Como é irreversível na prática, é melhor não oferecer.
+      .filter((p) => !isProjetoMonitoramento(p))
       .filter((p) => p.setor !== destino.codename)
       .sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR')),
     [projetos, destino.codename],

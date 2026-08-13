@@ -35,11 +35,37 @@ export type User = {
   setores?: SetorDoUsuario[];
   /** Somente leitura — editar via `userService.setActive`. */
   is_active?: boolean;
-  /** Codenames das permissões granulares atribuídas ao usuário. */
+  /** Codenames das permissões granulares atribuídas ao usuário.
+   *
+   * ATENÇÃO: vem `[]` para quem NÃO gerencia usuários (o backend só revela o
+   * mapa de permissões para admin/gestor e para o próprio usuário). Por isso
+   * NÃO dá para decidir "esta pessoa trabalha?" olhando este campo — use
+   * `participa_do_trabalho`. */
   permissions?: string[];
+  /** `true` quando a pessoa tem a permissão `view_content`, o piso de leitura
+   * de sprint/projeto/card. Quem tem `false` (Visitante, cargo criado sem essa
+   * permissão, conta desativada) não enxerga trabalho nenhum — logo não faz
+   * sentido listá-la em ranking, carga ou seletor de responsável.
+   *
+   * Read-only e visível para TODOS os autenticados, diferente de `permissions`.
+   *
+   * Opcional de propósito: o backend sempre manda, mas payloads guardados em
+   * cache local ANTES deste campo existir voltam sem ele. Não teste com
+   * `=== true`; use o helper `participaDoTrabalho`, que falha em aberto. */
+  participa_do_trabalho?: boolean;
   profile_picture_url?: string | null;
   date_joined?: string;
 };
+
+/** A pessoa participa do trabalho (tem o piso de leitura `view_content`)?
+ *
+ * Falha em ABERTO: quando o campo não veio (cache local gravado antes do
+ * backend passar a enviá-lo), devolve `true`. O pior caso vira "a tela volta
+ * a se comportar como antes até o cache virar", que é melhor que "a tela some
+ * com todo mundo e o usuário acha que quebrou". */
+export function participaDoTrabalho(user: Pick<User, 'participa_do_trabalho'>): boolean {
+  return user.participa_do_trabalho !== false;
+}
 
 export type PermissionCatalogEntry = {
   codename: string;
@@ -95,12 +121,32 @@ export type CatalogItemInput = {
 };
 
 export const userService = {
+  /** TODAS as pessoas visíveis (o backend já exclui admin desta rota).
+   *
+   * Continua trazendo quem NÃO participa do trabalho — é o que as telas de
+   * consulta precisam: diretório da equipe (Pessoas), tabela nome→foto do
+   * Suporte e, principalmente, resolver o responsável HISTÓRICO de um card
+   * cuja pessoa perdeu o acesso depois. Para montar lista de trabalho
+   * (ranking, carga, seletor de responsável) use `getParticipantes`. */
   async getAll(): Promise<User[]> {
     return fetchAllPaginated<User>('/users/');
   },
 
-  async getDevelopers(): Promise<User[]> {
-    return fetchAllPaginated<User>('/users/?role=desenvolvedor');
+  /** Só quem participa do trabalho — o backend recorta por `view_content`,
+   * o piso de leitura de sprint/projeto/card.
+   *
+   * O corte é por PERMISSÃO, não por nome de cargo: um cargo novo criado sem
+   * `view_content` some da lista sem ninguém mexer em código. Use quando a
+   * lista responde "quem executa/pode executar trabalho"; nunca quando ela
+   * responde "quem é essa pessoa que aparece num dado antigo".
+   *
+   * Existiu aqui um `getDevelopers()` (`/users/?role=desenvolvedor`) que fazia
+   * o mesmo papel recortando por NOME DE CARGO. Foi REMOVIDO, não consertado:
+   * um cargo novo com `view_content` (ex. "Analista") ficava de fora e a lista
+   * morria em silêncio se o cargo fosse renomeado. Se precisar de "quem
+   * trabalha", é esta função — não recrie a variante por cargo. */
+  async getParticipantes(): Promise<User[]> {
+    return fetchAllPaginated<User>('/users/?participa_do_trabalho=true');
   },
 
   async getById(id: string): Promise<User> {
