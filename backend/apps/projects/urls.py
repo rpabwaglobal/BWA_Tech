@@ -5,6 +5,7 @@ from .views import (
     EventViewSet, CardLogViewSet,
     NotificationViewSet, NotificationPreferenceView,
     WeeklyPriorityViewSet, WeeklyPriorityConfigViewSet, CardDueDateChangeRequestViewSet,
+    CardReopenRequestViewSet,
     KanbanStageViewSet,
     ScoreCriterionViewSet, CardScoreViewSet,
     CardAnexoViewSet,
@@ -22,6 +23,7 @@ router.register(r'notifications', NotificationViewSet, basename='notification')
 router.register(r'weekly-priorities', WeeklyPriorityViewSet, basename='weeklypriority')
 router.register(r'weekly-priority-config', WeeklyPriorityConfigViewSet, basename='weeklypriorityconfig')
 router.register(r'card-date-change-requests', CardDueDateChangeRequestViewSet, basename='carddatechangerequest')
+router.register(r'card-reopen-requests', CardReopenRequestViewSet, basename='cardreopenrequest')
 router.register(r'kanban-stages', KanbanStageViewSet, basename='kanbanstage')
 router.register(r'score-criterios', ScoreCriterionViewSet, basename='scorecriterion')
 router.register(r'card-scores', CardScoreViewSet, basename='cardscore')

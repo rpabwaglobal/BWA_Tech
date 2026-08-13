@@ -6,6 +6,8 @@ import { useSprintKanbanWebSocket } from '@/hooks/useSprintKanbanWebSocket';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { CardAnexosSection } from '@/components/CardAnexosSection';
+import { CardFeedbackSection } from '@/components/CardFeedbackSection';
+import { isProjetoMonitoramento } from '@/lib/monitoramentoFeedback';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
@@ -14,6 +16,7 @@ import { DateTimePicker } from '@/components/ui/datetime-picker';
 import { Textarea } from '@/components/ui/textarea';
 import { UserSelect } from '@/components/ui/user-select';
 import { RequestDueDateChangeModal } from '@/components/RequestDueDateChangeModal';
+import { RequestCardReopenModal } from '@/components/RequestCardReopenModal';
 import { SprintPeriodHelpNote } from '@/components/SprintPeriodHelpNote';
 import {
   Dialog,
@@ -31,7 +34,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { sprintService, type SprintBundle } from '@/services/sprintService';
-import { cachedFetch, invalidateCache } from '@/lib/cachedFetch';
+import { cachedFetch, invalidateCache, METRICS_BUNDLE_CACHE_KEY } from '@/lib/cachedFetch';
 import { projectService } from '@/services/projectService';
 import { cardService, CARD_AREAS, CARD_TYPES, CARD_PRIORITIES, CARD_STATUSES } from '@/services/cardService';
 import { userService } from '@/services/userService';
@@ -49,6 +52,7 @@ import {
   Clock,
   FolderKanban,
   Loader2,
+  MessageCircle,
   Pencil,
   Pin,
   PinOff,
@@ -169,7 +173,9 @@ export default function SprintDetails() {
    * via WebSocket). Evita que a próxima visita à página mostre dados velhos. */
   const invalidateCardCaches = useCallback(() => {
     if (sprintId) invalidateCache(`sprint-bundle:${sprintId}`);
-    invalidateCache('metrics:bundle:v1');
+    // Constante compartilhada, não string solta: a chave é versionada e
+    // repetir o literal aqui já fez a invalidação divergir da gravação.
+    invalidateCache(METRICS_BUNDLE_CACHE_KEY);
   }, [sprintId]);
 
   // Real-time: outros usuários movendo cards aparecem aqui sem F5.
@@ -278,6 +284,12 @@ export default function SprintDetails() {
   const [cardFormLoading, setCardFormLoading] = useState(false);
   const [cardFormError, setCardFormError] = useState('');
   const [dueDateRequestOpen, setDueDateRequestOpen] = useState(false);
+  // Reabertura é o espelho invertido do pedido de data: só existe para card
+  // FECHADO, então mora ao lado dele mas nunca aparece junto.
+  const [reopenRequestOpen, setReopenRequestOpen] = useState(false);
+  // Guarda o CARD INTEIRO, não o id: o modal de reabertura trabalha sobre um
+  // card só e recebe o objeto pronto, então abre sem nenhuma requisição.
+  const [reopenCard, setReopenCard] = useState<CardType | null>(null);
   const [selectedProjectForCard, setSelectedProjectForCard] = useState<string | null>(null);
   const [cardFormData, setCardFormData] = useState({
     nome: '',
@@ -290,6 +302,10 @@ export default function SprintDetails() {
     responsavel: '',
     data_inicio: '',
     data_fim: '',
+    // Checkbox "Gerar formulário de feedback": opcional e DESMARCADA por
+    // padrão. Precisa existir nas duas telas que criam card — senão o campo
+    // sumiria dependendo de onde a pessoa clicou em "Novo Card".
+    gerar_formulario_feedback: false,
   });
   const [cardLinks, setCardLinks] = useState<CardLink[]>([]);
   const [newLinkUrl, setNewLinkUrl] = useState('');
@@ -767,6 +783,7 @@ export default function SprintDetails() {
       responsavel: '',
       data_inicio: '',
       data_fim: '',
+      gerar_formulario_feedback: false,
     });
     setCardLinks([]);
     setNewLinkUrl('');
@@ -832,6 +849,7 @@ export default function SprintDetails() {
         responsavel: fullCard.responsavel || '',
         data_inicio: dataInicio,
         data_fim: fullCard.data_fim || '',
+        gerar_formulario_feedback: !!fullCard.gerar_formulario_feedback,
       });
       setCardLinks(fullCard.links ?? []);
       setNewLinkUrl('');
@@ -987,6 +1005,19 @@ export default function SprintDetails() {
     return changes;
   };
 
+  /**
+   * O card aberto pertence ao fluxo de monitoramento de feedbacks?
+   *
+   * Na prática isto é sempre falso NESTA tela — a sprint sistêmica não aparece
+   * na listagem, então não se chega aqui pelo caminho normal. Existe porque
+   * alguém pode abrir a URL da sprint direto, e nesse caso a checkbox precisa
+   * sumir pelo mesmo motivo do ProjectDetails: pedir feedback de um card que já
+   * É o acompanhamento do feedback não significa nada.
+   */
+  const cardEhDeMonitoramento = isProjetoMonitoramento(
+    projects.find((p) => String(p.id) === String(selectedProjectForCard || '')),
+  );
+
   // Função para capitalizar a primeira letra
   const capitalizeFirst = (str: string): string => {
     return str.charAt(0).toUpperCase() + str.slice(1);
@@ -1110,6 +1141,7 @@ export default function SprintDetails() {
         data_fim: dataFim,
         projeto: selectedProjectForCard!,
         links: cardLinks,
+        gerar_formulario_feedback: cardFormData.gerar_formulario_feedback,
       };
 
       if (editingCard) {
@@ -1499,6 +1531,22 @@ export default function SprintDetails() {
   const sprintProjects = getProjectsForSprint(sprint.id);
   const status = getSprintStatus(sprint);
 
+  /** Duração da sprint — o mesmo texto que ficava na linha de baixo, agora
+   *  dentro da tag ao lado do título. Sai dos helpers já usados na página, para
+   *  a tag nunca discordar do resto da tela. */
+  const duracaoSprint = `${calcularDiasTotais(
+    sprintInicioDiaParaCalendario(sprint),
+    sprintFimDiaParaCalendario(sprint),
+  )} dias (${calcularDiasUteis(
+    sprintInicioDiaParaCalendario(sprint),
+    sprintFimDiaParaCalendario(sprint),
+  )} úteis)`;
+
+  /* O fluxo de feedback NÃO é mais desenhado aqui: ele passou para a aba
+     "Feedbacks" da página de Relatórios. Continua sendo um projeto por
+     dentro, mas some do quadro da sprint — que volta a mostrar só o
+     trabalho daquela sprint. */
+
   const sprintProjectsNoSuggestions = sprintProjects.filter((p) => {
     const normalizedName = normalizeProjectName(p.nome || '');
     return normalizedName !== 'sugestoes' && normalizedName !== 'suporte';
@@ -1824,64 +1872,88 @@ export default function SprintDetails() {
               <h1 className="text-2xl font-bold text-[var(--color-foreground)]">
                 {sprint.nome}
               </h1>
+              {/* A duração entra na própria tag, separada por "|". Antes ela era
+                  uma terceira linha abaixo do título; ali competia por atenção
+                  com o período, que é a informação que muda. */}
               {sprint.finalizada ? (
-                <Badge variant="secondary">Finalizada</Badge>
+                <Badge variant="secondary">Finalizada | {duracaoSprint}</Badge>
               ) : (
-                <Badge variant={status.variant}>{status.label}</Badge>
+                <Badge variant={status.variant}>{status.label} | {duracaoSprint}</Badge>
+              )}
+              {/* Editar/excluir ficam COLADOS na sprint que eles afetam. Antes
+                  moravam no canto direito do header, longe do nome — o que numa
+                  tela cheia de outros botões deixava ambíguo o que seria
+                  editado ou apagado. */}
+              {canCreate && sprint && !isSprintFinished(sprint) && (
+                <div className="flex items-center gap-[4px]">
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={openEditSprintDialog}
+                    className="h-[32px] w-[32px]"
+                    title="Editar sprint"
+                  >
+                    <Pencil className="h-[16px] w-[16px]" />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={handleDeleteSprint}
+                    className="h-[32px] w-[32px]"
+                    title="Excluir sprint"
+                  >
+                    <Trash2 className="h-[16px] w-[16px] text-red-500" />
+                  </Button>
+                </div>
               )}
             </div>
             <div className="flex items-center gap-[16px] mt-[4px] text-sm text-[var(--color-muted-foreground)]">
               <span className="flex items-center gap-[4px]">
-                <User className="h-[14px] w-[14px]" />
-                {sprint.supervisor_name || 'N/A'}
-              </span>
-              <span className="flex items-center gap-[4px]">
                 <Calendar className="h-[14px] w-[14px]" />
                 {formatDateTime(sprint.data_inicio)} → {formatDateTime(sprint.fechamento_em)}
-              </span>
-              <span className="flex items-center gap-[4px]">
-                <Clock className="h-[14px] w-[14px]" />
-                {calcularDiasTotais(sprintInicioDiaParaCalendario(sprint), sprintFimDiaParaCalendario(sprint))} dias ({calcularDiasUteis(sprintInicioDiaParaCalendario(sprint), sprintFimDiaParaCalendario(sprint))} úteis)
               </span>
             </div>
           </div>
         </div>
         <div className="flex gap-[8px]">
-          {canCreate && (
-            <Button 
-              onClick={openCreateProjectDialog}
-              disabled={sprint && isSprintFinished(sprint)}
-              className={sprint && isSprintFinished(sprint) ? 'opacity-50 cursor-not-allowed' : ''}
-            >
-              {sprint && isSprintFinished(sprint) ? (
-                <>
-                  <Lock className="mr-[8px] h-[16px] w-[16px]" />
-                  Novo Projeto
-                </>
-              ) : (
-                <>
-                  <Plus className="mr-[8px] h-[16px] w-[16px]" />
-                  Novo Projeto
-                </>
-              )}
-            </Button>
-          )}
           {/* Atalhos Rápidos — bloco idêntico ao do Dashboard (rótulo em cima,
-              botões numa linha abaixo), dimensionado só ao conteúdo (shrink-0),
-              no lugar onde antes ficava o botão avulso "Gerenciar Sprints". */}
+              botões numa linha abaixo), dimensionado só ao conteúdo (shrink-0).
+              "Projeto" veio para cá do canto direito do header: é uma ação de
+              criação como as outras, e mantê-la avulsa duplicava o mesmo tipo de
+              botão em dois cantos da mesma tela. */}
           <div className="shrink-0 rounded-lg border border-[var(--color-border)] bg-[var(--color-card)]/40 px-3 py-2.5">
             <div className="text-[10px] uppercase tracking-wider font-medium text-[var(--color-muted-foreground)] mb-2">
               Atalhos Rápidos
             </div>
             <div className="flex gap-2">
+              {canCreate && (
+                <Button
+                  type="button"
+                  variant="default"
+                  onClick={openCreateProjectDialog}
+                  disabled={sprint && isSprintFinished(sprint)}
+                  className="gap-2"
+                  title={sprint && isSprintFinished(sprint)
+                    ? 'Sprint finalizada — não é possível criar projeto'
+                    : 'Novo projeto'}
+                >
+                  {sprint && isSprintFinished(sprint) ? (
+                    <Lock className="h-4 w-4" />
+                  ) : (
+                    <Plus className="h-4 w-4" />
+                  )}
+                  Projeto
+                </Button>
+              )}
               <Button
                 type="button"
                 variant="default"
                 onClick={() => setQuickCreateOpen(true)}
                 className="gap-2"
+                title="Novo card"
               >
                 <Plus className="h-4 w-4" />
-                Criar Card
+                Card
               </Button>
               <Button
                 type="button"
@@ -1918,26 +1990,6 @@ export default function SprintDetails() {
               )}
             </div>
           </div>
-          {canCreate && sprint && !isSprintFinished(sprint) && (
-            <>
-              <Button
-                variant="outline"
-                size="icon"
-                onClick={openEditSprintDialog}
-                className="h-[40px] w-[40px]"
-              >
-                <Pencil className="h-[16px] w-[16px]" />
-              </Button>
-              <Button
-                variant="outline"
-                size="icon"
-                onClick={handleDeleteSprint}
-                className="h-[40px] w-[40px]"
-              >
-                <Trash2 className="h-[16px] w-[16px] text-red-500" />
-              </Button>
-            </>
-          )}
         </div>
       </div>
 
@@ -1973,7 +2025,14 @@ export default function SprintDetails() {
                     <ChevronDown className="h-[16px] w-[16px] shrink-0 opacity-60" />
                   </Button>
                 </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" className="w-[min(100vw-24px,300px)] overflow-hidden p-0">
+                {/* A altura máxima e a rolagem são do próprio DropdownMenuContent,
+                    que MEDE o espaço até a borda da janela. Não cravar `max-h`
+                    aqui é o ponto: o menu abre em alturas diferentes conforme a
+                    página, e um valor fixo ou sobra espaço ou volta a cortar. */}
+                <DropdownMenuContent
+                  align="end"
+                  className="w-[min(100vw-24px,300px)] p-0"
+                >
                   <div className="border-b border-[var(--color-border)] bg-[var(--color-muted)]/25 px-3 py-2.5">
                     <p className="text-sm font-semibold text-[var(--color-foreground)]">Sprint</p>
                     <p className="mt-0.5 text-[11px] leading-tight text-[var(--color-muted-foreground)]">
@@ -1999,11 +2058,15 @@ export default function SprintDetails() {
                       </>
                     )}
                     <p className="mb-1 px-2 pt-1 text-[10px] font-semibold uppercase tracking-wider text-[var(--color-muted-foreground)]">
+                      Exibição
+                    </p>
+                    <p className="mb-1 px-2 pt-1 text-[10px] font-semibold uppercase tracking-wider text-[var(--color-muted-foreground)]">
                       Modo de visualização
                     </p>
                     <DropdownMenuItem
                       className="gap-2 rounded-md py-2.5"
                       onClick={() => setViewMode('kanban')}
+                      closeOnSelect={false}
                     >
                       <LayoutGrid className="h-4 w-4 shrink-0 text-[var(--color-primary)]" />
                       <span className="flex-1 text-left font-medium">Kanban</span>
@@ -2016,6 +2079,7 @@ export default function SprintDetails() {
                     <DropdownMenuItem
                       className="gap-2 rounded-md py-2.5"
                       onClick={() => setViewMode('lista')}
+                      closeOnSelect={false}
                     >
                       <List className="h-4 w-4 shrink-0 text-[var(--color-primary)]" />
                       <span className="flex-1 text-left font-medium">Lista</span>
@@ -2175,8 +2239,11 @@ export default function SprintDetails() {
             </div>
           {/* 4. Desenvolvedores */}
             <div className="min-w-0 w-full shrink-0 sm:w-[220px] sm:max-w-full lg:w-[220px] lg:max-w-[220px]">
+              {/* Lista completa: o UserSelect recorta as OPÇÕES por permissão
+                  (quem participa do trabalho) e mantém resolvível o
+                  responsável já gravado que ficou fora do recorte. */}
               <UserSelect
-                users={users.filter((u) => u.role !== 'admin')}
+                users={users}
                 value={projectDeveloperFilter}
                 onChange={setProjectDeveloperFilter}
                 placeholder="Todos os responsáveis"
@@ -2286,7 +2353,7 @@ export default function SprintDetails() {
               </p>
               <p className="text-[var(--color-muted-foreground)] mb-[16px]">
                 {canCreate 
-                  ? 'Clique em "Novo Projeto" para criar o primeiro.' 
+                  ? 'Use o botão "Projeto" em Atalhos Rápidos para criar o primeiro.' 
                   : 'Os projetos aparecerão aqui.'}
               </p>
               {canCreate && (
@@ -2362,20 +2429,32 @@ export default function SprintDetails() {
                   ? projectKanbanStagesByProjectId[String(project.id)]
                   : DEFAULT_SPRINT_STAGE_CONFIGS;
 
+              const ehMonitoramento = isProjetoMonitoramento(project);
+
               return (
                 <div
                   key={project.id}
-                  className="flex-shrink-0 w-[320px] bg-[var(--color-muted)]/30 rounded-[12px] border border-[var(--color-border)] flex flex-col h-full"
+                  className={cn(
+                    'flex-shrink-0 w-[320px] rounded-[12px] border flex flex-col h-full',
+                    'bg-[var(--color-muted)]/30 border-[var(--color-border)]',
+                  )}
                 >
                   {/* Header da Coluna (Projeto) */}
-                  <div 
+                  <div
                     className="p-[16px] border-b border-[var(--color-border)] cursor-pointer hover:bg-[var(--color-muted)]/50 transition-colors"
                     onClick={() => navigate(ROUTES.projeto(String(project.id)))}
                   >
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-[12px] flex-1">
                         <div className="flex h-[32px] w-[32px] items-center justify-center rounded-[8px] bg-[var(--color-primary)]/10">
-                          <FolderKanban className="h-[16px] w-[16px] text-[var(--color-primary)]" />
+                          {/* Balão de fala no fluxo de feedback: o ícone é o que
+                              diferencia a coluna à distância, já que a estrutura
+                              é a mesma dos projetos comuns. */}
+                          {ehMonitoramento ? (
+                            <MessageCircle className="h-[16px] w-[16px] text-[var(--color-primary)]" />
+                          ) : (
+                            <FolderKanban className="h-[16px] w-[16px] text-[var(--color-primary)]" />
+                          )}
                         </div>
                         <div className="flex-1">
                           <h3 className="font-semibold text-[var(--color-foreground)]">
@@ -2388,8 +2467,12 @@ export default function SprintDetails() {
                           </span>
                         </div>
                       </div>
+                      {/* O fluxo de feedback é mantido pelo sistema: nada de
+                          criar, editar ou excluir. O backend recusa os três
+                          verbos (CardViewSet e kanban-config/move-cards); aqui
+                          os botões somem para não oferecer o que a API nega. */}
                       <div className="flex gap-[4px]" onClick={(e) => e.stopPropagation()}>
-                        {canCreate && !isProjectFromFinishedSprint(project) && (
+                        {canCreate && !ehMonitoramento && !isProjectFromFinishedSprint(project) && (
                           <>
                             <Button
                               variant="ghost"
@@ -2409,7 +2492,7 @@ export default function SprintDetails() {
                             </Button>
                           </>
                         )}
-                        {canCreateCard && !isProjectFromFinishedSprint(project) && (
+                        {canCreateCard && !ehMonitoramento && !isProjectFromFinishedSprint(project) && (
                           <Button
                             variant="default"
                             size="sm"
@@ -2473,7 +2556,7 @@ export default function SprintDetails() {
                 </p>
                 <p className="text-[var(--color-muted-foreground)] mb-[16px] text-center">
                   {canCreate
-                    ? 'Clique em "Novo Projeto" para criar o primeiro.'
+                    ? 'Use o botão "Projeto" em Atalhos Rápidos para criar o primeiro.'
                     : 'Os projetos aparecerão aqui.'}
                 </p>
                 {canCreate && (
@@ -2875,8 +2958,14 @@ export default function SprintDetails() {
       </Dialog>
 
       {/* Card Dialog */}
+      {/* O card some da tela enquanto a solicitação de reabertura está aberta,
+          mas `cardDialogOpen` continua TRUE de propósito: o efeito de deep link
+          (que observa `cardDialogOpen` e a URL) reabriria o card na hora se o
+          estado virasse false, engolindo o modal — era essa a piscada. Derivar
+          a visibilidade aqui mantém aquele efeito quieto e faz o card
+          reaparecer sozinho quando a solicitação fecha, sem restaurar nada. */}
       <Dialog
-        open={cardDialogOpen}
+        open={cardDialogOpen && !reopenRequestOpen}
         reserveRightPx={editingCard && logsModalOpen ? CARD_TIMELINE_LAYOUT_RESERVE_PX : undefined}
         onOpenChange={(open) => {
           if (open) {
@@ -3096,6 +3185,29 @@ export default function SprintDetails() {
 
               <div className="border-t border-[var(--color-border)]" />
 
+              {/* MESMO bloco de feedback do ProjectDetails, pelo mesmo
+                  componente. Cards nascem pelas DUAS telas; se o campo só
+                  existisse lá, marcar ou não a opção dependeria de onde a
+                  pessoa clicou em "Novo Card". */}
+              <CardFeedbackSection
+                cardId={editingCard?.id ?? null}
+                marcado={cardFormData.gerar_formulario_feedback}
+                onMarcadoChange={(marcado) =>
+                  setCardFormData({ ...cardFormData, gerar_formulario_feedback: marcado })
+                }
+                disabled={!!(editingCard && (editingCard.status === 'finalizado' || editingCard.status === 'inviabilizado'))}
+                mostrarCheckbox={!cardEhDeMonitoramento}
+                // Valor SALVO, não o do formulário — ver o mesmo ponto no
+                // ProjectDetails.
+                podeTerLink={cardEhDeMonitoramento || !!editingCard?.gerar_formulario_feedback}
+                onFalhaAoCopiar={(mensagem) => {
+                  setAlertMessage(mensagem);
+                  setAlertDialogOpen(true);
+                }}
+              />
+
+              <div className="border-t border-[var(--color-border)]" />
+
               <CardAnexosSection
                 cardId={editingCard?.id ?? null}
                 disabled={!!(editingCard && (editingCard.status === 'finalizado' || editingCard.status === 'inviabilizado'))}
@@ -3238,7 +3350,10 @@ export default function SprintDetails() {
                     !hasPermission(user, 'approve_due_date_requests')
                   )}
                 />
-                {editingCard?.responsavel && String(editingCard.responsavel) === String(user?.id) && editingCard?.data_fim && (
+                {editingCard?.responsavel &&
+                  String(editingCard.responsavel) === String(user?.id) &&
+                  editingCard?.data_fim &&
+                  !['finalizado', 'inviabilizado'].includes(editingCard.status) && (
                   <div className="flex items-center justify-end">
                     <Button
                       type="button"
@@ -3299,6 +3414,36 @@ export default function SprintDetails() {
             />
 
             <DialogFooter>
+              {/* Card fechado: o pedido de REABERTURA fica ao lado do "Fechar",
+                  que é o único outro botão que sobra no rodapé de um card
+                  encerrado. Solto no meio do formulário ele passava
+                  despercebido — é a ação principal disponível ali. */}
+              {['finalizado', 'inviabilizado'].includes(editingCard?.status ?? '') &&
+                (String(editingCard?.responsavel ?? '') === String(user?.id) ||
+                  hasPermission(user, 'manage_others_cards') ||
+                  hasPermission(user, 'approve_card_reopen')) && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => {
+                    // Some com o card e põe a solicitação no lugar dele — um
+                    // por vez, sem empilhar. Levantar `reopenRequestOpen` basta:
+                    // o diálogo do card é `cardDialogOpen && !reopenRequestOpen`
+                    // (ver o comentário lá), então o card se esconde agora e
+                    // volta sozinho quando a solicitação fechar. NÃO chamamos
+                    // `closeCardDialog()` de propósito: aquele navega para fora
+                    // do card, e daí não haveria para onde voltar.
+                    //
+                    // Passa o CARD INTEIRO, não o id: é o que faz a solicitação
+                    // abrir sem nenhuma requisição. A guarda acima já garante
+                    // `editingCard` não-nulo (status vazio não é card fechado).
+                    setReopenCard(editingCard);
+                    setReopenRequestOpen(true);
+                  }}
+                >
+                  Solicitar reabertura
+                </Button>
+              )}
               <Button type="button" variant="outline" onClick={closeCardDialog}>
                 {(editingCard && (editingCard.status === 'finalizado' || editingCard.status === 'inviabilizado')) || (editingCard && isCardFromFinishedSprint(editingCard)) ? 'Fechar' : 'Cancelar'}
               </Button>
@@ -3536,6 +3681,24 @@ export default function SprintDetails() {
         isOpen={logsModalOpen}
         onClose={() => setLogsModalOpen(false)}
         refreshTrigger={logsRefreshTrigger}
+      />
+
+      {/* Fica FORA do diálogo do card de propósito: renderizado dentro dele, o
+          modal empilhava por cima em vez de substituí-lo, e desmontaria junto
+          quando o card fechasse — o que impediria justamente o vai-e-volta
+          entre os dois. `reopenCard` serve a duas coisas: é o próprio card
+          sobre o qual a solicitação é feita (por isso o modal abre sem baixar
+          nada) e o sinal de que existe um card para reabrir atrás. */}
+      <RequestCardReopenModal
+        open={reopenRequestOpen}
+        onOpenChange={(aberto) => {
+          setReopenRequestOpen(aberto);
+          if (!aberto) setReopenCard(null);
+        }}
+        card={reopenCard}
+        onCreated={() => {
+          void loadData({ force: true });
+        }}
       />
 
       <QuickCreateCardModal isOpen={quickCreateOpen} onClose={() => setQuickCreateOpen(false)} />

@@ -160,6 +160,140 @@
   background: linear-gradient(180deg, #3a2557 0%, #2f3a5e 50%, #1f4a4e 100%);
 }
 
+/* Card de PROJETO SISTÊMICO (Monitoramento de feedbacks, Sugestões, Suporte,
+   Projetos Descartados). Mesmo degradê roxo→ciano do sistema, bem apagado:
+   o card precisa ficar LEVEMENTE diferente dos projetos de trabalho, não virar
+   um banner. Em cima do gradiente vai a cor de superfície do tema, então ele
+   continua legível em claro e escuro e o texto não perde contraste. */
+.bg-projeto-sistema {
+  /* A cor de superfície do tema fica por BAIXO e o degradê translúcido por
+     cima: é o que mantém o texto legível e o card coerente em claro/escuro. */
+  background-color: var(--color-card);
+  background-image: linear-gradient(
+    135deg,
+    rgba(117, 76, 153, 0.12) 0%,
+    rgba(143, 208, 215, 0.12) 100%
+  );
+}
+.dark .bg-projeto-sistema {
+  /* No escuro o mesmo alfa desaparece contra o fundo — sobe um pouco. */
+  background-image: linear-gradient(
+    135deg,
+    rgba(117, 76, 153, 0.28) 0%,
+    rgba(143, 208, 215, 0.20) 100%
+  );
+}
+
+/* Entrada/saída dos FLUXOS AUTOMÁTICOS ao ligar/desligar a opção.
+   Anima `max-width` junto com opacidade e deslocamento: sem isso o vizinho
+   salta na hora, e a transição de opacidade sozinha pareceria um piscar.
+   `overflow: hidden` impede o conteúdo de vazar enquanto a largura encolhe. */
+@keyframes fluxo-sistema-entra {
+  from { opacity: 0; transform: translateX(-12px); max-width: 0; margin-right: 0; }
+  to   { opacity: 1; transform: none;              max-width: 320px; }
+}
+@keyframes fluxo-sistema-sai {
+  from { opacity: 1; transform: none;              max-width: 320px; }
+  to   { opacity: 0; transform: translateX(-12px); max-width: 0; margin-right: 0; }
+}
+.fluxo-sistema-entra {
+  overflow: hidden;
+  animation: fluxo-sistema-entra 240ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+.fluxo-sistema-sai {
+  overflow: hidden;
+  /* `forwards`: sem isso o elemento pisca de volta ao estado inicial no último
+     quadro, antes de o React desmontá-lo. */
+  animation: fluxo-sistema-sai 200ms cubic-bezier(0.4, 0, 1, 1) forwards;
+  pointer-events: none;
+}
+/* Quem pediu menos movimento no sistema recebe o corte seco, sem deslizamento. */
+@media (prefers-reduced-motion: reduce) {
+  .fluxo-sistema-entra,
+  .fluxo-sistema-sai {
+    animation-duration: 1ms;
+  }
+}
+
+/* Fundo da PÁGINA PÚBLICA de feedback.
+   Mesmas cores do `bg-app-mesh`, porém bem mais presentes: aqui não há sidebar
+   com o degradê da marca, então é o fundo que carrega sozinho a identidade.
+   Três manchas em vez de duas, opacidade maior e alcance mais largo. */
+.bg-feedback-mesh {
+  background-color: var(--color-background);
+  background-image:
+    radial-gradient(circle at 12% -5%, rgba(117, 76, 153, 0.34) 0%, transparent 55%),
+    radial-gradient(circle at 92% 8%, rgba(143, 208, 215, 0.30) 0%, transparent 50%),
+    radial-gradient(circle at 50% 108%, rgba(117, 76, 153, 0.22) 0%, transparent 60%);
+  background-attachment: fixed;
+}
+.dark .bg-feedback-mesh {
+  background-color: var(--color-background);
+  background-image:
+    radial-gradient(circle at 12% -5%, rgba(117, 76, 153, 0.40) 0%, transparent 55%),
+    radial-gradient(circle at 92% 8%, rgba(143, 208, 215, 0.22) 0%, transparent 50%),
+    radial-gradient(circle at 50% 108%, rgba(117, 76, 153, 0.26) 0%, transparent 60%);
+  background-attachment: fixed;
+}
+
+/* Troca de tela do formulário público (apresentação → perguntas).
+   A saída não é animada de propósito: as duas telas ocupam o mesmo espaço no
+   cartão, então animar as duas exigiria posicionamento absoluto e um salto de
+   altura. A entrada sozinha já dá a leitura de "avançou um passo". */
+@keyframes feedback-tela-entra {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: none; }
+}
+.feedback-tela {
+  animation: feedback-tela-entra 260ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+@media (prefers-reduced-motion: reduce) {
+  .feedback-tela { animation-duration: 1ms; }
+}
+
+/* Bloco de feedback do card (link / contagem de dias / tags) aparecendo.
+   Existe porque o conteúdo TROCA ao mover o card de etapa: sem transição, o
+   link some e a contagem surge no mesmo quadro, o que lê como falha de render
+   em vez de mudança de estado. */
+@keyframes feedback-bloco-entra {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: none; }
+}
+.feedback-bloco-entra {
+  animation: feedback-bloco-entra 220ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+@media (prefers-reduced-motion: reduce) {
+  .feedback-bloco-entra { animation-duration: 1ms; }
+}
+
+/* Painel de vidro do formulário público.
+   `backdrop-filter` sobre um fundo semi-transparente: é o desfoque do que está
+   ATRÁS que faz o vidro — sem ele seria só um cartão claro. O `saturate` evita
+   que o desfoque lave as cores das manchas. */
+.painel-vidro {
+  background-color: color-mix(in srgb, var(--color-card) 72%, transparent);
+  backdrop-filter: blur(14px) saturate(1.3);
+  -webkit-backdrop-filter: blur(14px) saturate(1.3);
+  border-color: color-mix(in srgb, var(--color-border) 60%, transparent);
+  box-shadow:
+    0 1px 0 0 rgba(255, 255, 255, 0.35) inset,
+    0 18px 48px -24px rgba(117, 76, 153, 0.45);
+}
+.dark .painel-vidro {
+  background-color: color-mix(in srgb, var(--color-card) 62%, transparent);
+  box-shadow:
+    0 1px 0 0 rgba(255, 255, 255, 0.06) inset,
+    0 18px 48px -24px rgba(0, 0, 0, 0.7);
+}
+/* Sem suporte a backdrop-filter (Firefox com a flag desligada, navegador
+   antigo): cai num cartão sólido em vez de um retângulo semitransparente
+   ilegível por cima das manchas. */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .painel-vidro {
+    background-color: var(--color-card);
+  }
+}
+
 /* Fundo "mesh" — duas manchas radiais bem suaves */
 .bg-app-mesh {
   background-color: var(--color-background);

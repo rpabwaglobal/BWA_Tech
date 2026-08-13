@@ -56,6 +56,12 @@ class Command(BaseCommand):
             sprint = (
                 Sprint.objects.filter(
                     finalizada=False,
+                    # `is_system=False`: a sprint sistêmica satisfaz "em
+                    # andamento" por construção (nunca finaliza, fechamento ~100
+                    # anos à frente) e seria eleita alvo quando não houvesse
+                    # sprint real aberta. Ela não é ciclo de trabalho e não tem
+                    # projeto duplicado para consolidar.
+                    is_system=False,
                     data_inicio__lte=agora,
                     fechamento_em__gt=agora,
                 )

@@ -25,6 +25,7 @@ from .models import (
     WeeklyPriorityConfig,
     CardArea,
     CardDueDateChangeRequest,
+    CardReopenRequest,
     ScoreCriterion,
     ScoreCriterionOption,
     CardScore,
@@ -330,13 +331,20 @@ class SprintSerializer(serializers.ModelSerializer):
                  'cards_em_andamento', 'cards_em_atraso',
                  'cards_entregues_atrasados', 'cards_abertos_atrasados',
                  'setor', 'setores_compartilhados',
-                 'finalizada', 'created_at', 'updated_at']
+                 'finalizada', 'is_system', 'created_at', 'updated_at']
         read_only_fields = [
             'created_at',
             'updated_at',
             'finalizada',
             'data_fim',
             'duracao_dias',  # calculado em create/update a partir de data_inicio e fechamento_em
+            # `is_system` é gerenciado pelo backend (data migration + seed do
+            # fluxo de monitoramento) — nunca editável via API, pela mesma razão
+            # de `Project.is_system`: marcar uma sprint arbitrária a tiraria das
+            # métricas e do fechamento automático. Exposto porque o frontend
+            # precisa dele para achar a sprint do atalho e para cortá-la das
+            # listas de "sprint em andamento".
+            'is_system',
         ]
 
 
@@ -678,20 +686,69 @@ class CardSerializer(DevTimeFormattedMixin, serializers.ModelSerializer):
         return value
 
     def validate_status(self, value):
-        # Quando o campo não vem no payload, não validamos aqui.
-        if value is None:
-            return value
-
-        # Aceitar tanto etapas globais cadastradas quanto status legados.
-        legacy_statuses = {choice for choice, _ in CardStatus.choices}
-        if value in legacy_statuses:
-            return value
-
-        if not KanbanStage.objects.filter(key=value).exists():
-            raise serializers.ValidationError('Status inválido.')
+        # A checagem REAL mudou para `validate()` (ver `_validar_status_no_board`):
+        # aqui não existe o PROJETO do card, e "este status é válido?" só tem
+        # resposta certa em função do board dele. Antes esta função aprovava
+        # qualquer key que existisse em `KanbanStage` GLOBALMENTE, sem olhar o
+        # projeto — o que deixava um card comum parar numa coluna que o board
+        # dele não desenha.
         return value
 
+    def _etapas_do_projeto(self, projeto):
+        """Keys que o BOARD deste projeto realmente desenha.
+
+        `ProjectKanbanStageConfig` é quem decide as colunas de um projeto (é dela
+        que saem `kanban-config` e o `bundle` da sprint), então é ela — e não o
+        catálogo global — a lista de status legítimos.
+
+        ESCAPE PARA PROJETO LEGADO: quando o projeto não tem NENHUMA config, cai
+        na lista de status legados. Projetos normais já receberam as 6 keys pela
+        migration 0028, então nada regride; o escape existe só para o projeto
+        criado direto no banco/shell que ainda não passou por
+        `_ensure_project_default_kanban_config`.
+        """
+        keys = set(
+            ProjectKanbanStageConfig.objects.filter(project=projeto)
+            .values_list('stage__key', flat=True)
+        )
+        return keys or {choice for choice, _ in CardStatus.choices}
+
+    def _validar_status_no_board(self, attrs):
+        novo_status = attrs.get('status')
+        if novo_status is None:
+            return
+
+        # 1) O card de MONITORAMENTO é uma PROJEÇÃO do PedidoFeedback: quem manda
+        #    na coluna dele é o estado do pedido (a promoção dos 30 dias é uma
+        #    varredura do Celery e a resposta chega de um anônimo — nenhuma das
+        #    duas é "alguém arrastou o card"). Arrastar à mão criaria divergência
+        #    que a varredura seguinte desfaria em silêncio.
+        #    `pedido_exibido` é o related_name do OneToOne de `apps.feedbacks`, o
+        #    que permite perguntar isso a partir do Card SEM importar aquele app.
+        if (
+            self.instance is not None
+            and novo_status != self.instance.status
+            and Card.objects.filter(
+                pk=self.instance.pk, pedido_exibido__isnull=False).exists()
+        ):
+            raise serializers.ValidationError({'status': [
+                'A coluna deste card é definida pelo pedido de feedback e não pode '
+                'ser alterada à mão.'
+            ]})
+
+        # 2) O status tem de ser uma etapa CONFIGURADA NO PROJETO do card. Uma
+        #    regra só fecha os dois lados: card comum não entra em coluna de
+        #    feedback E card de feedback não vai parar em 'finalizado'.
+        projeto = attrs.get('projeto') or (self.instance.projeto if self.instance else None)
+        if projeto is None:
+            return
+        if novo_status not in self._etapas_do_projeto(projeto):
+            # Sempre sob a chave 'status': virar `non_field_errors` mudaria a
+            # forma do payload de erro que o frontend já trata.
+            raise serializers.ValidationError({'status': ['Status inválido.']})
+
     def validate(self, attrs):
+        self._validar_status_no_board(attrs)
         status = attrs.get('status')
         if status is None and self.instance is not None:
             status = self.instance.status
@@ -730,11 +787,33 @@ class CardSerializer(DevTimeFormattedMixin, serializers.ModelSerializer):
             pass
         
         instance = super().create(validated_data)
-        
+
+        # LIMPA O THREAD-LOCAL assim que ele cumpriu o papel: o valor existe SÓ
+        # para atravessar o `post_save` que acabou de rodar dentro do `create()`
+        # acima.
+        #
+        # `threading.local` vive na THREAD, não na requisição, e o servidor
+        # reaproveita threads entre requisições — um valor deixado aqui é lido
+        # pela PRÓXIMA criação de card que NÃO passe por este serializer
+        # (replicação de sprint, aprovação de sugestão, shell, task) e o CardLog
+        # sai assinado por quem não fez nada. Pior: o usuário pode nem existir
+        # mais quando o log for gravado.
+        #
+        # `_request_user` logo abaixo continua sendo o portador para o resto
+        # DESTA requisição, e o signal já o consulta primeiro — ele mora na
+        # instância, que ninguém compartilha.
+        try:
+            from apps.projects import signals as _signals
+
+            if hasattr(_signals._thread_locals, 'user'):
+                del _signals._thread_locals.user
+        except (ImportError, AttributeError):
+            pass
+
         # Também passar como atributo da instância (fallback)
         if usuario:
             instance._request_user = usuario
-        
+
         # Criar log diretamente aqui como garantia (o signal pode não estar sendo executado)
         try:
             from apps.projects.models import CardLog, CardLogEventType
@@ -1060,6 +1139,7 @@ class CardSerializer(DevTimeFormattedMixin, serializers.ModelSerializer):
                  'minutos_uteis_desenvolvimento', 'horas_uteis_desenvolvimento',
                  'complexidade_selected_items', 'complexidade_selected_development', 'complexidade_custom_items',
                  'card_comment', 'links', 'events_count', 'score_final',
+                 'gerar_formulario_feedback',
                  'setor', 'setores_compartilhados', 'created_at', 'updated_at']
         read_only_fields = [
             'created_at', 'updated_at', 'criado_por', 'finalizado_em',
@@ -1134,6 +1214,10 @@ class CardKanbanSerializer(DevTimeFormattedMixin, serializers.ModelSerializer):
             'complexidade_selected_items', 'complexidade_selected_development',
             'complexidade_custom_items',
             'card_comment', 'links', 'events_count', 'score_final',
+            # Só LEITURA aqui: o kanban da SprintDetails precisa saber se o
+            # checkbox está marcado para exibi-lo no diálogo; a escrita continua
+            # sendo a do `CardSerializer`.
+            'gerar_formulario_feedback',
             'created_at', 'updated_at',
         ]
         read_only_fields = fields
@@ -1439,6 +1523,56 @@ class CardDueDateChangeRequestSerializer(serializers.ModelSerializer):
             'created_at', 'updated_at',
         ]
         # requested_by deve ser preenchido pelo backend (perform_create).
+        read_only_fields = ['requested_by', 'status', 'reviewed_by', 'reviewed_at', 'created_at', 'updated_at']
+
+
+class CardReopenRequestSerializer(serializers.ModelSerializer):
+    """Solicitação de reabertura de card fechado.
+
+    Espelha `CardDueDateChangeRequestSerializer` (leia aquele primeiro): mesma
+    forma de resposta para que a fila de pendências renderize as duas abas com
+    o mesmo componente. A diferença de contrato é o campo obrigatório
+    `nova_data_entrega` no lugar de `requested_date`.
+    """
+    card_detail = CardSerializer(source='card', read_only=True)
+    requested_by_name = serializers.SerializerMethodField()
+    reviewed_by_name = serializers.SerializerMethodField()
+    status_display = serializers.CharField(source='get_status_display', read_only=True)
+
+    def get_requested_by_name(self, obj):
+        return format_user_name(obj.requested_by)
+
+    def get_reviewed_by_name(self, obj):
+        return format_user_name(obj.reviewed_by) if obj.reviewed_by else None
+
+    def validate_card(self, card):
+        """Pedido de reabertura só para card do escopo de quem pede.
+
+        Mesmas duas razões do irmão de prazo: a resposta do POST devolve o
+        `card_detail` completo (criar o pedido sobre card alheio já vazaria o
+        card), e o registro entra na FILA do setor dono — aprovado, ele MUDA O
+        STATUS de um card que o solicitante nem deveria enxergar.
+        """
+        return _checar_destino_do_setor(
+            self, card, 'card_id', scope_cards, cards_editaveis,
+            'Card não encontrado.',
+            'Este card pertence a outro setor e foi compartilhado apenas para '
+            'visualização — não é possível solicitar a reabertura dele.')
+
+    class Meta:
+        model = CardReopenRequest
+        fields = [
+            'id',
+            'card', 'card_detail',
+            'requested_by', 'requested_by_name',
+            'nova_data_entrega',
+            'reason',
+            'status', 'status_display',
+            'reviewed_by', 'reviewed_by_name', 'reviewed_at',
+            'created_at', 'updated_at',
+        ]
+        # requested_by é preenchido pelo backend (perform_create); status e a
+        # avaliação só mudam pelas actions approve/reject.
         read_only_fields = ['requested_by', 'status', 'reviewed_by', 'reviewed_at', 'created_at', 'updated_at']
 
 

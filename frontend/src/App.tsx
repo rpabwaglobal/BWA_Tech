@@ -21,6 +21,7 @@ import Metrics from './pages/Metrics';
 import Reports from './pages/Reports';
 import Support from './pages/Support';
 import Score from './pages/Score';
+import FeedbackPublico from './pages/FeedbackPublico';
 import Layout from './components/layout/Layout';
 import { Loader2, ShieldAlert } from 'lucide-react';
 import { ROUTES } from './routes';
@@ -122,6 +123,15 @@ function SemAcesso() {
 function AppRoutes() {
   return (
     <Routes>
+      {/* Formulário público de feedback — a única rota ANÔNIMA de conteúdo.
+          Fica FORA de `PublicRoute` (que mandaria um funcionário logado para o
+          painel, e quem abre o link pode estar logado no mesmo navegador) e FORA
+          do bloco `path="/"` com PrivateRoute/Layout (que carregaria sidebar,
+          notificações e WebSocket para um estranho). Caminho literal porque
+          `routes.ts` é da navegação interna, e este link nunca é navegado de
+          dentro do sistema: ele é copiado e enviado à mão. */}
+      <Route path="/feedback/:token" element={<FeedbackPublico />} />
+
       {/* Rotas públicas (português) */}
       <Route
         path={ROUTES.entrar}

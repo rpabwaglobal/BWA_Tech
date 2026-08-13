@@ -23,9 +23,26 @@ export type Project = {
   data_adiamento_solicitada?: string | null;
   nova_data_prevista?: string | null;
   adiamento_aprovado?: boolean;
-  /** Projeto sistêmico (Suporte, Sugestões, Projetos Descartados).
+  /** Projeto sistêmico (Suporte, Sugestões, Projetos Descartados,
+   * Monitoramento de Feedbacks).
    * Read-only; excluído de métricas e operações em massa. */
   is_system?: boolean;
+  /**
+   * Recorte do `sprint_detail` que a API já devolve (SprintSerializer inteiro).
+   * Só o que o produto pergunta a partir do projeto — tipar o objeto todo aqui
+   * duplicaria `Sprint` e sairia do ar na primeira mudança do serializer.
+   *
+   * `sprint_detail.is_system` é como se ACHA o projeto de monitoramento sem
+   * casar por nome: ele é o único projeto sistêmico pendurado na sprint
+   * sistêmica (`GET /sprints/` não devolve essa sprint, então perguntar pela
+   * lista de sprints não acharia nada). Ver `isProjetoMonitoramento`.
+   */
+  sprint_detail?: {
+    id: string;
+    nome?: string;
+    is_system?: boolean;
+    finalizada?: boolean;
+  } | null;
   /** Arquivamento (soft delete reversível). Default false. Backend filtra
    * automaticamente arquivados em todos endpoints exceto quando `?arquivado=true`
    * é passado explicitamente. */

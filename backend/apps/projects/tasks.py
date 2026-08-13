@@ -213,6 +213,12 @@ def fechar_sprint_em_hora(sprint_id: int, expected_close_at_iso: str):
     if sprint.finalizada:
         return 'already finalized'
 
+    # Sprint sistêmica não fecha, nunca. Isto é cinto: `Sprint.save()` já não
+    # agenda ETA para ela, mas um ETA publicado ANTES deste deploy (ou por uma
+    # sprint que só depois virou sistêmica) ainda pode chegar ao worker.
+    if sprint.is_system:
+        return 'systemic'
+
     expected_dt = datetime.fromisoformat(expected_close_at_iso)
     if expected_dt.tzinfo is None:
         expected_dt = timezone.make_aware(expected_dt, timezone.get_current_timezone())
@@ -246,7 +252,13 @@ def finalizar_sprints_por_data():
     """
     agora = timezone.now()
 
-    sprints = Sprint.objects.filter(finalizada=False, fechamento_em__lte=agora).order_by('fechamento_em')
+    # `is_system=False`: este é o FALLBACK por data, e a sprint sistêmica tem
+    # `fechamento_em` no futuro só por causa do NOT NULL — o dia em que essa
+    # data for encurtada por engano, esta varredura a fecharia e todo card de
+    # feedback viraria "edição restrita" de uma vez.
+    sprints = Sprint.objects.filter(
+        finalizada=False, is_system=False, fechamento_em__lte=agora,
+    ).order_by('fechamento_em')
 
     processadas = 0
     sem_destino = 0

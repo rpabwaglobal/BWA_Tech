@@ -3,7 +3,6 @@ from django.db.models.signals import pre_save, post_save, post_delete
 from django.dispatch import receiver
 from django.contrib.auth import get_user_model
 from django.db import transaction
-from django.db.models import Q
 from django.utils import timezone
 
 from .models import (
@@ -23,7 +22,10 @@ from .models import (
     CardCompartilhamento,
 )
 from .notification_utils import send_notification, send_notification_to_multiple_users
-from apps.accounts.models import Role, UserSetor
+from apps.accounts.models import UserSetor
+# `Role` deixou de ser importado aqui: a comparação com role='admin' era parte
+# da consulta feita à mão que agora vive em `usuarios_com_perm_qs`.
+from apps.accounts.permissions import usuarios_com_perm_qs
 
 User = get_user_model()
 
@@ -33,14 +35,21 @@ _thread_locals = threading.local()
 
 
 def usuarios_com_permissao(codename, alcancando=None):
-    """Usuários ativos que têm `accounts.<codename>`.
+    """Destinatários de notificação: usuários ativos que têm `accounts.<codename>`,
+    opcionalmente recortados pelo setor.
 
-    Destinatário de notificação é escolhido em massa, então precisa sair numa
-    consulta em vez de `has_perm` num laço — e a consulta tem que reproduzir os
-    três caminhos que o `has_perm` enxerga: concessão direta em
-    `user_permissions`, cargo Admin (que recebe o catálogo inteiro em
-    accounts/auth_backends.py) e superusuário. `distinct()` porque quem casa em
-    mais de um critério voltaria duplicado.
+    Quem resolve o "quem tem a permissão" é `usuarios_com_perm_qs`
+    (apps/accounts/permissions.py) — a autorização mora no app de contas, e é lá
+    que o resolvedor precisa acompanhar os backends de `has_perm`. Esta função
+    ficou sendo só a camada de NOTIFICAÇÃO: permissão vinda de lá, recorte de
+    setor aplicado aqui.
+
+    Antes da delegação, a consulta era escrita à mão neste arquivo e reproduzia
+    apenas dois dos três caminhos de concessão — faltava o CARGO. Como
+    `Cargo.permissoes_padrao` virou fonte de autoridade
+    (`CargoPermissionBackend`), quem tinha a permissão só pelo cargo passava no
+    `has_perm` e mesmo assim NÃO era notificado. Falha silenciosa por
+    definição: ninguém reclama de um aviso que não sabia que existia.
 
     `alcancando` (opcional, uma Sprint/Project/Card): recorta o resultado para
     quem o SETOR alcança esse objeto. Permissão e setor respondem perguntas
@@ -49,15 +58,7 @@ def usuarios_com_permissao(codename, alcancando=None):
     do setor A para todo portador da permissão na empresa, justamente a
     informação que `scope_cards` esconde dele em `/api/cards/`.
     """
-    qs = User.objects.filter(
-        Q(
-            user_permissions__codename=codename,
-            user_permissions__content_type__app_label='accounts',
-        )
-        | Q(role=Role.ADMIN)
-        | Q(is_superuser=True),
-        is_active=True,
-    ).distinct()
+    qs = usuarios_com_perm_qs(codename)
     if alcancando is None:
         return qs
     return usuarios_que_alcancam(qs, alcancando)  # fail-open enquanto flag OFF

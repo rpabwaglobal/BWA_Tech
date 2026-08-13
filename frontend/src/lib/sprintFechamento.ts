@@ -52,10 +52,23 @@ export function sprintInicioDiaParaCalendario(s: { data_inicio?: string | null }
 /**
  * Sprints com janela ativa (mesma regra do Dashboard): não finalizada,
  * o dia de hoje já é em ou após o início (meia-noite local) e o instante atual ainda não passou de `fechamento_em`.
+ *
+ * A SPRINT SISTÊMICA NUNCA ENTRA. Ela é a âncora do fluxo "Monitoramento de
+ * feedbacks": nasce com `finalizada=false` e `fechamento_em` daqui a ~100 anos,
+ * então passaria em todos os testes de data acima e viraria "a sprint em
+ * andamento" — no menu lateral, no Dashboard, no redirect de entrada e na tela
+ * de Sprints, que é justamente onde ela não pode aparecer como sprint. Não
+ * existe valor de `fechamento_em` que resolva os dois lados (ele precisa estar
+ * no futuro para o board não virar somente-leitura), e é por isso que o corte é
+ * pela flag.
+ *
+ * Este é o ponto de MAIOR ALAVANCA do frontend: as quatro telas acima chegam
+ * aqui por esta função ou pela `getSprintEmAndamentoPrincipal`, que a reusa.
  */
 export function getSprintsEmAndamentoJanela(sprints: Sprint[]): Sprint[] {
   const now = new Date();
   return sprints.filter((sprint) => {
+    if (sprint.is_system) return false;
     if (sprint.finalizada) return false;
     const start = new Date(sprint.data_inicio);
     start.setHours(0, 0, 0, 0);

@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from 'react';
+import { useCallback, useEffect, useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
 import { hasPermission } from '@/lib/permissions';
@@ -19,10 +19,10 @@ import {
 import { projectService, type Project, type BulkDeletePreview } from '@/services/projectService';
 import { cardService, CARD_AREAS, CARD_TYPES, CARD_PRIORITIES, CARD_STATUSES, type Card as CardType } from '@/services/cardService';
 import { sprintService, type Sprint } from '@/services/sprintService';
-import { userService, type User } from '@/services/userService';
 import { kanbanStageService, type KanbanStage } from '@/services/kanbanStageService';
 import { formatDate, formatDateTime } from '@/lib/dateUtils';
 import { sprintFimDiaParaCalendario } from '@/lib/sprintFechamento';
+import { isProjetoMonitoramento } from '@/lib/monitoramentoFeedback';
 import {
   Plus,
   FolderKanban,
@@ -42,13 +42,36 @@ import {
   ArchiveRestore,
   Search,
   AlertTriangle,
+  RotateCcw,
 } from 'lucide-react';
 import { cn, normalizeExternalUrl } from '@/lib/utils';
 import { Avatar, AvatarImage, AvatarFallback } from '@/components/ui/avatar';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { RequestDueDateChangeModal } from '@/components/RequestDueDateChangeModal';
+import { RequestCardReopenModal, SelectCardToReopenDialog } from '@/components/RequestCardReopenModal';
 import { cardDateChangeRequestService, type CardDueDateChangeRequest } from '@/services/cardDateChangeRequestService';
+import { cardReopenRequestService, type CardReopenRequest } from '@/services/cardReopenRequestService';
 import { ROUTES } from '@/routes';
+
+/** Abas do painel de Pendências. Fora do useState para o cast do
+ *  `onValueChange` do Radix (que entrega `string`) ter um alvo tipado. */
+type PendingTab = 'demandas' | 'datas' | 'reaberturas';
+
+/**
+ * Visual das abas de Pendências, copiado das abas da página de Prioridades
+ * (`Priorities.tsx`): sublinhado na cor primária para a ativa, texto apagado
+ * para as demais. Ficou numa constante porque são três abas com exatamente o
+ * mesmo estilo — repetir a string tripla convidaria as três a divergirem.
+ * O `hover:bg-accent` vem do `variant="ghost"` que as abas de Prioridades usam:
+ * sem ele o realce de passagem do mouse não existiria e o visual só ficaria
+ * "parecido".
+ */
+const PENDING_TAB_TRIGGER_CLASS =
+  'shrink-0 rounded-none border-b-2 border-transparent bg-transparent px-[16px] py-[8px] h-auto text-sm ' +
+  'text-[var(--color-muted-foreground)] shadow-none transition-colors ' +
+  'hover:bg-[var(--color-accent)] hover:text-[var(--color-foreground)] ' +
+  'data-[state=active]:border-[var(--color-primary)] data-[state=active]:bg-transparent ' +
+  'data-[state=active]:text-[var(--color-primary)] data-[state=active]:font-semibold data-[state=active]:shadow-none';
 
 export default function Projects() {
   const { user } = useAuth();
@@ -57,7 +80,6 @@ export default function Projects() {
   const [archivedProjects, setArchivedProjects] = useState<Project[]>([]);
   const [sprints, setSprints] = useState<Sprint[]>([]);
   const [cards, setCards] = useState<CardType[]>([]);
-  const [users, setUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
 
   // Sistema de tabs (Em desenvolvimento / Arquivados) + busca persistente.
@@ -128,19 +150,31 @@ export default function Projects() {
   const [discardLoading, setDiscardLoading] = useState(false);
   const [createDemandChoiceOpen, setCreateDemandChoiceOpen] = useState(false);
   const [dateChangeRequestModalOpen, setDateChangeRequestModalOpen] = useState(false);
-  const [pendingTab, setPendingTab] = useState<'demandas' | 'datas'>('demandas');
+  // Esta é a ÚNICA porta de entrada da reabertura sem card em mãos, e por isso
+  // a única que precisa escolher um: primeiro o seletor, depois o formulário
+  // sobre o card escolhido. Separar os dois é o que mantém o caminho principal
+  // (abrir a solicitação de dentro do card) livre de qualquer lista.
+  const [reopenPickerOpen, setReopenPickerOpen] = useState(false);
+  const [reopenCard, setReopenCard] = useState<CardType | null>(null);
+  const [pendingTab, setPendingTab] = useState<PendingTab>('demandas');
   const [dateChangeRequests, setDateChangeRequests] = useState<CardDueDateChangeRequest[]>([]);
   const [loadingDateChangeRequests, setLoadingDateChangeRequests] = useState(false);
+  const [reopenRequests, setReopenRequests] = useState<CardReopenRequest[]>([]);
+  const [loadingReopenRequests, setLoadingReopenRequests] = useState(false);
 
-  // Regra diferente para "demandas" vs "solicitações de reajuste de data".
-  // Demandas: somente supervisor/admin.
-  // Solicitação de data: somente supervisor/admin.
+  // Regra diferente para cada fila de pendência.
+  // Demandas: quem gerencia projetos.
+  // Solicitação de data: quem aprova mudança de prazo.
+  // Reabertura: permissão PRÓPRIA (`approve_card_reopen`) — reabrir um card
+  // fechado devolve trabalho ao quadro e refaz métricas, decisão diferente de
+  // apenas empurrar um prazo, então as duas podem ser concedidas separadamente.
   const canEvaluateDemands = hasPermission(user, 'manage_projects');
   const canEvaluateDateRequests = hasPermission(user, 'approve_due_date_requests');
+  const canEvaluateReopenRequests = hasPermission(user, 'approve_card_reopen');
 
-  // As duas tabs (Demandas e Solicitações de data) devem aparecer para todos.
+  // As três tabs devem aparecer para todos.
   // Apenas aprovar/recusar continua restrito.
-  
+
   const [alertDialogOpen, setAlertDialogOpen] = useState(false);
   const [alertMessage, setAlertMessage] = useState('');
   const [editingProject, setEditingProject] = useState<Project | null>(null);
@@ -169,24 +203,41 @@ export default function Projects() {
   const planejamentoScrollRef = useRef<HTMLDivElement>(null);
   const concluidosScrollRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    loadData();
-  }, []);
+  /** Número da carga mais recente. Cada execução de `loadData` guarda o seu e
+   *  só aplica os `setState` enquanto continuar sendo a última — sem isso duas
+   *  cargas concorrentes venceriam por "última resposta a chegar", e uma carga
+   *  lenta iniciada ANTES de uma aprovação poderia ressuscitar na tela a linha
+   *  que acabou de ser aprovada. */
+  const cargaSeqRef = useRef(0);
+  /** Timer do debounce dos eventos de tempo real (ver o efeito mais abaixo). */
+  const recargaTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const loadData = async () => {
+  /** `silent`: recarrega sem acender o `loading`. O render tem early-return em
+   *  `if (loading)`, então uma recarga vinda de evento com o loading ligado
+   *  faria o painel inteiro sumir e voltar — o oposto literal de "atualizar sem
+   *  recarregar a página". Molde: Priorities.tsx. */
+  const loadData = useCallback(async (options?: { silent?: boolean }) => {
+    const silent = options?.silent === true;
+    const seq = ++cargaSeqRef.current;
+    const aindaEACargaAtual = () => seq === cargaSeqRef.current;
     try {
-      setLoading(true);
-      const [projectsData, archivedData, sprintsData, usersData] = await Promise.all([
+      if (!silent) setLoading(true);
+      // Esta tela NÃO lista pessoas: não há seletor de responsável nem filtro
+      // por pessoa aqui, então nenhuma lista de usuários é buscada (havia uma,
+      // carregada a cada recarga e nunca renderizada). Se um dia entrar um
+      // seletor de responsável neste arquivo, a fonte é
+      // `userService.getParticipantes()` — nunca `getAll()`, que traz também
+      // quem só visualiza e não pode receber trabalho.
+      const [projectsData, archivedData, sprintsData] = await Promise.all([
         projectService.getAll(),
         projectService.getArchived().catch(() => []), // não bloqueia se falhar
         sprintService.getAll(),
-        userService.getAll(),
       ]);
+      if (!aindaEACargaAtual()) return;
       // Garantir que os dados são arrays
       setProjects(Array.isArray(projectsData) ? projectsData : []);
       setArchivedProjects(Array.isArray(archivedData) ? archivedData : []);
       setSprints(Array.isArray(sprintsData) ? sprintsData : []);
-      setUsers(Array.isArray(usersData) ? usersData : []);
 
       // Carregar apenas as "Demandas a avaliar" (cards do projeto "Sugestões" com status a_desenvolver)
       const normalizedProjects = Array.isArray(projectsData) ? projectsData : [];
@@ -197,6 +248,7 @@ export default function Projects() {
           'a_desenvolver',
           { includeSuggestions: true }
         );
+        if (!aindaEACargaAtual()) return;
         setCards(Array.isArray(sugestoesCardsData) ? sugestoesCardsData : []);
       } else {
         setCards([]);
@@ -204,22 +256,67 @@ export default function Projects() {
 
       // Carregar solicitações pendentes para exibir a lista a todos os usuários.
       // Aprovar/Recusar continua restrito no front (e no backend).
-      setLoadingDateChangeRequests(true);
+      if (!silent) {
+        // Numa recarga silenciosa o esqueleto das filas também não deve
+        // aparecer: quem está olhando o painel veria a lista piscar.
+        setLoadingDateChangeRequests(true);
+        setLoadingReopenRequests(true);
+      }
       try {
-        const reqs = await cardDateChangeRequestService.list({ status: 'pending' });
-        setDateChangeRequests(Array.isArray(reqs) ? reqs : []);
+        const [dateReqs, reopenReqs] = await Promise.all([
+          cardDateChangeRequestService.list({ status: 'pending' }).catch(() => []),
+          // Mesma regra da fila de datas: a lista é visível a todos, a ação é
+          // que exige permissão. Uma falha aqui não pode derrubar a outra fila.
+          cardReopenRequestService
+            .list({ status: 'pending', ordering: '-created_at' })
+            .catch(() => [] as CardReopenRequest[]),
+        ]);
+        if (!aindaEACargaAtual()) return;
+        setDateChangeRequests(Array.isArray(dateReqs) ? dateReqs : []);
+        setReopenRequests(Array.isArray(reopenReqs) ? reopenReqs : []);
       } catch {
+        if (!aindaEACargaAtual()) return;
         setDateChangeRequests([]);
+        setReopenRequests([]);
       } finally {
         setLoadingDateChangeRequests(false);
+        setLoadingReopenRequests(false);
       }
-      
+
     } catch (error) {
       console.error('Erro ao carregar dados:', error);
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
+
+  // Tempo real do painel de Demandas/Solicitações. O backend empurra
+  // `solicitacoes_changed` (SEM payload) pelo socket global, o
+  // NotificationContext re-emite como CustomEvent de `window` e a página refaz
+  // os GETs — quem decide o que cada um vê continua sendo o servidor.
+  // Debounce de 250ms (molde do Dashboard) porque `loadData` são ~7 chamadas de
+  // serviço, várias delas percorrendo TODAS as páginas da DRF: uma rajada de
+  // solicitações não pode virar dezenas de GETs.
+  useEffect(() => {
+    const agendarRecarga = () => {
+      if (recargaTimerRef.current) clearTimeout(recargaTimerRef.current);
+      recargaTimerRef.current = setTimeout(() => {
+        void loadData({ silent: true });
+      }, 250);
+    };
+    window.addEventListener('solicitacoesChanged', agendarRecarga);
+    return () => {
+      window.removeEventListener('solicitacoesChanged', agendarRecarga);
+      if (recargaTimerRef.current) {
+        clearTimeout(recargaTimerRef.current);
+        recargaTimerRef.current = null;
+      }
+    };
+  }, [loadData]);
 
   const openSuggestionDialog = () => {
     setSuggestionFormData({
@@ -244,8 +341,10 @@ export default function Projects() {
       // Recarregar lista
       const reqs = await cardDateChangeRequestService.list({ status: 'pending' });
       setDateChangeRequests(Array.isArray(reqs) ? reqs : []);
-      // Recarregar cards/projetos para refletir nova data no resto do sistema
-      loadData();
+      // Recarregar cards/projetos para refletir nova data no resto do sistema.
+      // `silent`: quem acabou de aprovar não deve ver a tela virar
+      // "Carregando projetos..." por causa do próprio clique.
+      loadData({ silent: true });
     } catch (e) {
       setAlertMessage('Erro ao aprovar solicitação.');
       setAlertDialogOpen(true);
@@ -260,6 +359,49 @@ export default function Projects() {
     } catch (e) {
       setAlertMessage('Erro ao recusar solicitação.');
       setAlertDialogOpen(true);
+    }
+  };
+
+  /** Mensagem do backend (regra de sprint fechada, corrida de duplo clique,
+   *  card já reaberto na mão) diz muito mais do que um texto genérico. */
+  const mensagemDeErroDoBackend = (e: unknown, fallback: string): string => {
+    const detail = (e as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail;
+    if (typeof detail === 'string' && detail.trim()) return detail;
+    return fallback;
+  };
+
+  const recarregarReaberturas = async () => {
+    const reqs = await cardReopenRequestService
+      .list({ status: 'pending', ordering: '-created_at' })
+      .catch(() => [] as CardReopenRequest[]);
+    setReopenRequests(Array.isArray(reqs) ? reqs : []);
+  };
+
+  const handleApproveReopen = async (id: number) => {
+    try {
+      await cardReopenRequestService.approve(id);
+      await recarregarReaberturas();
+      // O card volta para "A Desenvolver" com nova data: recarregar para que os
+      // contadores de projeto/sprint desta tela reflitam a mudança — silencioso
+      // pelo mesmo motivo do aprovar de datas logo acima.
+      loadData({ silent: true });
+    } catch (e) {
+      setAlertMessage(mensagemDeErroDoBackend(e, 'Erro ao aprovar solicitação de reabertura.'));
+      setAlertDialogOpen(true);
+      // Pode ter sido recusa por estado (card já reaberto, pedido já avaliado):
+      // ressincroniza a fila para não deixar na tela um item que já morreu.
+      await recarregarReaberturas();
+    }
+  };
+
+  const handleRejectReopen = async (id: number) => {
+    try {
+      await cardReopenRequestService.reject(id);
+      await recarregarReaberturas();
+    } catch (e) {
+      setAlertMessage(mensagemDeErroDoBackend(e, 'Erro ao recusar solicitação de reabertura.'));
+      setAlertDialogOpen(true);
+      await recarregarReaberturas();
     }
   };
 
@@ -723,8 +865,18 @@ export default function Projects() {
 
   // A busca textual é aplicada aqui no topo. Os projetos "Sugestões" /
   // "Projetos Descartados" são especiais e ficam fora das tabs.
+  //
+  // O `!p.is_system` foi ACRESCENTADO ao corte por nome, não o substituiu.
+  // Motivo: os dois nomes acima ainda são procurados por nome em vários pontos
+  // desta tela (criar sugestão, descartar demanda), então trocar o critério aqui
+  // só criaria duas verdades. Para eles o comportamento é idêntico — já estão
+  // marcados como sistêmicos desde a migration 0042.
+  // O que a flag ACRESCENTA é o projeto "Monitoramento de Feedbacks": ele é
+  // sistêmico, não tem nome cravado em lugar nenhum e apareceria na listagem
+  // principal como um projeto qualquer. É literalmente o que o comentário de
+  // `Project.is_system` no backend diz que a flag existe para fazer.
   const projetosNormais = projectListForTab
-    .filter(p => p.nome !== 'Sugestões' && p.nome !== 'Projetos Descartados')
+    .filter(p => !p.is_system && p.nome !== 'Sugestões' && p.nome !== 'Projetos Descartados')
     .filter(matchesSearch);
   
   // Projetos descartados (projeto especial "Projetos Descartados")
@@ -769,10 +921,10 @@ export default function Projects() {
     return hoje < sprintInicio;
   });
   
-  const projetosEmSprint = projetosNaoConcluidos.filter((project) => {
+  const projetosEmSprintNormais = projetosNaoConcluidos.filter((project) => {
     const projectSprint = sprints.find(s => String(s.id || '') === String(project.sprint || ''));
     if (!projectSprint) return false;
-    
+
     const sprintInicio = new Date(projectSprint.data_inicio);
     sprintInicio.setHours(0, 0, 0, 0);
     const fechamento = new Date(projectSprint.fechamento_em);
@@ -780,6 +932,27 @@ export default function Projects() {
 
     return hoje >= sprintInicio && agora <= fechamento;
   });
+
+  /**
+   * "Monitoramento de Feedbacks" FIXADO em primeiro, antes dos projetos reais.
+   *
+   * Ele não entra por `projetosNormais`, e não é esquecimento: aquele filtro
+   * corta `is_system` de propósito (Suporte, Sugestões, Projetos Descartados
+   * não são trabalho de sprint). O monitoramento é sistêmico pelo mesmo motivo
+   * — fica fora de métrica e de ação em massa —, mas, ao contrário dos outros,
+   * é um lugar que se VISITA todo dia para copiar link de feedback. Por isso
+   * ele volta aqui pela porta da frente, e só ele.
+   *
+   * Vem de `projects` (a lista completa), NÃO de `projetosNormais`: passar pelo
+   * filtro de `is_system` só para desfazê-lo depois seria dar a volta.
+   *
+   * A busca por texto continua valendo — quem digita no campo de busca espera
+   * filtrar tudo, inclusive o item fixado.
+   */
+  /* O fluxo de feedback NÃO aparece mais aqui. Ele passou a viver na página
+     de Relatórios, na aba "Feedbacks" — continua sendo um projeto por dentro,
+     mas deixou de se misturar aos projetos de trabalho na listagem. */
+  const projetosEmSprint = projetosEmSprintNormais;
 
   // Configurar IntersectionObserver para cada subseção (após calcular as variáveis)
   useEffect(() => {
@@ -849,7 +1022,7 @@ export default function Projects() {
 
   // Contadores das tabs (visíveis nos rótulos "Em desenvolvimento (N) / Arquivados (M)").
   const activeCount = projects.filter(
-    (p) => p.nome !== 'Sugestões' && p.nome !== 'Projetos Descartados',
+    (p) => !p.is_system && p.nome !== 'Sugestões' && p.nome !== 'Projetos Descartados',
   ).length;
   const archivedCount = archivedProjects.length;
 
@@ -1007,33 +1180,35 @@ export default function Projects() {
 
       {/* Painel de Pendências (Demandas vs Solicitações) - visível para todos; ações restritas */}
       <Card className="mb-[24px]">
-          <Tabs value={pendingTab} onValueChange={(v) => setPendingTab(v as any)}>
-            <CardHeader>
-              <div className="flex items-start justify-between gap-4">
-                <div className="min-w-0">
-                  <CardTitle>Pendências</CardTitle>
-                  <CardDescription>Demandas a avaliar e solicitações de alteração de datas</CardDescription>
-                </div>
-                <div className="rounded-[12px] border border-[var(--color-border)] bg-transparent p-[6px]">
-                  <TabsList className="w-full flex gap-[6px] bg-transparent p-0 h-auto">
-                    <TabsTrigger
-                      value="demandas"
-                      className="flex-1 rounded-[10px] border border-transparent bg-transparent px-3 py-2 text-sm text-[var(--color-muted-foreground)] transition-colors hover:bg-[var(--color-accent)] hover:text-[var(--color-foreground)] data-[state=active]:border-[var(--color-border)] data-[state=active]:bg-[var(--color-background)] data-[state=active]:text-[var(--color-foreground)] data-[state=active]:font-semibold"
-                    >
-                      Demandas a avaliar ({sugestoesCards.length})
-                    </TabsTrigger>
-                    <TabsTrigger
-                      value="datas"
-                      className="flex-1 rounded-[10px] border border-transparent bg-transparent px-3 py-2 text-sm text-[var(--color-muted-foreground)] transition-colors hover:bg-[var(--color-accent)] hover:text-[var(--color-foreground)] data-[state=active]:border-[var(--color-border)] data-[state=active]:bg-[var(--color-background)] data-[state=active]:text-[var(--color-foreground)] data-[state=active]:font-semibold"
-                    >
-                      Solicitações de data ({dateChangeRequests.length})
-                    </TabsTrigger>
-                  </TabsList>
-                </div>
-              </div>
-            </CardHeader>
+          <Tabs value={pendingTab} onValueChange={(v) => setPendingTab(v as PendingTab)}>
+            {/* Sem título nem subtítulo: os rótulos das abas já dizem o que há
+                aqui, e a dupla "Pendências / Demandas a avaliar, solicitações
+                de..." repetia em prosa o que a linha de baixo mostra em três
+                palavras.
 
-            <CardContent>
+                Abas no visual da página de Prioridades: linha com border-b e a
+                ativa marcada por border-b-2 na cor primária. Mantive o
+                componente Tabs (Radix) e só re-estilizei List/Trigger — trocar
+                por botões soltos custaria o role="tablist" e a navegação por
+                seta que o Radix já entrega de graça.
+                O `pt` substitui o espaço que o CardHeader dava; o `px` repete o
+                padding horizontal do Card para a linha do border-b acompanhar a
+                largura do conteúdo. */}
+            <div className="px-[24px] pt-[24px]">
+              <TabsList className="h-auto w-full justify-end gap-[8px] overflow-x-auto rounded-none border-b border-[var(--color-border)] bg-transparent p-0 text-[var(--color-muted-foreground)]">
+                <TabsTrigger value="demandas" className={PENDING_TAB_TRIGGER_CLASS}>
+                  Demandas a avaliar ({sugestoesCards.length})
+                </TabsTrigger>
+                <TabsTrigger value="datas" className={PENDING_TAB_TRIGGER_CLASS}>
+                  Solicitações de data ({dateChangeRequests.length})
+                </TabsTrigger>
+                <TabsTrigger value="reaberturas" className={PENDING_TAB_TRIGGER_CLASS}>
+                  Reabertura de cards ({reopenRequests.length})
+                </TabsTrigger>
+              </TabsList>
+            </div>
+
+            <CardContent className="pt-[16px]">
               <TabsContent value="demandas" className="mt-0">
                 {sugestoesCards.length === 0 ? (
                   <p className="text-center py-[32px] text-[var(--color-muted-foreground)]">
@@ -1169,10 +1344,82 @@ export default function Projects() {
                     </div>
                   )}
                 </TabsContent>
+
+              <TabsContent value="reaberturas" className="mt-0">
+                {loadingReopenRequests ? (
+                  <div className="flex items-center justify-center py-8 text-[var(--color-muted-foreground)]">
+                    <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                    Carregando solicitações...
+                  </div>
+                ) : reopenRequests.length === 0 ? (
+                  <p className="text-center py-[32px] text-[var(--color-muted-foreground)]">
+                    Não há solicitações de reabertura pendentes no momento.
+                  </p>
+                ) : (
+                  <div className="space-y-[8px] max-h-[400px] overflow-y-auto pr-2">
+                    {reopenRequests.map((req) => {
+                      // Quem avalia precisa saber que o card ESTÁ fechado e
+                      // desde quando: é o fato que justifica (ou não) reabrir.
+                      const etapaFechada =
+                        req.card_detail?.status_display || req.card_detail?.status || 'Fechado';
+                      const fechadoEm = req.card_detail?.finalizado_em || null;
+                      return (
+                        <div
+                          key={req.id}
+                          className="flex items-center justify-between gap-3 p-[12px] border border-[var(--color-border)] rounded-[8px] hover:bg-[var(--color-accent)] transition-colors min-w-0"
+                        >
+                          <div className="flex-1 min-w-0">
+                            <div className="font-medium text-[var(--color-foreground)] truncate">
+                              {req.card_detail?.nome || `Card #${req.card}`}
+                            </div>
+                            <div className="text-sm text-[var(--color-muted-foreground)] mt-1">
+                              Solicitante: {req.requested_by_name || req.requested_by}
+                              {req.card_detail?.projeto_detail?.nome
+                                ? ` · Projeto: ${req.card_detail.projeto_detail.nome}`
+                                : ''}
+                            </div>
+                            <div className="flex flex-wrap items-center gap-2 mt-2">
+                              <Badge variant="outline">{etapaFechada}</Badge>
+                              <span className="text-sm text-[var(--color-muted-foreground)]">
+                                {fechadoEm
+                                  ? `Fechado em ${formatDateTime(fechadoEm)}`
+                                  : 'Data de fechamento não registrada'}
+                              </span>
+                            </div>
+                            <div className="text-sm text-[var(--color-muted-foreground)] mt-1 flex items-center gap-2">
+                              <RotateCcw className="h-4 w-4 shrink-0" />
+                              <span className="whitespace-nowrap">
+                                Volta para “A Desenvolver” com entrega em {formatDateTime(req.nova_data_entrega)}
+                              </span>
+                            </div>
+                            {req.reason && (
+                              <div className="text-sm text-[var(--color-muted-foreground)] mt-1 line-clamp-2">
+                                Motivo: {req.reason}
+                              </div>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-2 shrink-0">
+                            {canEvaluateReopenRequests ? (
+                              <>
+                                <Button variant="outline" onClick={() => handleRejectReopen(req.id)}>
+                                  Recusar
+                                </Button>
+                                <Button onClick={() => handleApproveReopen(req.id)}>Aprovar</Button>
+                              </>
+                            ) : (
+                              <Badge variant="secondary">Somente avaliadores</Badge>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </TabsContent>
             </CardContent>
           </Tabs>
         </Card>
-      
+
 
       {/* Lista de Projetos */}
       <div className="space-y-[24px]">
@@ -1358,7 +1605,8 @@ export default function Projects() {
                   const cardsEntregues = project.cards_entregues_count ?? 0;
                   const cardsEmDesenvolvimento = project.cards_em_desenvolvimento_count ?? 0;
                   const projectSprint = sprints.find(s => String(s.id || '') === String(project.sprint || ''));
-                  
+                  const ehMonitoramento = isProjetoMonitoramento(project);
+
                   return (
                     <Card
                       key={project.id}
@@ -1366,9 +1614,17 @@ export default function Projects() {
                         'cursor-pointer hover:shadow-md transition-shadow',
                         projectSelectionMode && selectedProjectIds.includes(String(project.id)) &&
                           'ring-2 ring-[var(--color-primary)] border-[var(--color-primary)]',
+                        // Projeto SISTÊMICO: degradê do sistema bem apagado, para
+                        // o card ficar levemente diferente sem virar banner. A
+                        // posição sozinha não bastaria — o primeiro item de uma
+                        // lista longa não parece fixo, parece o mais recente.
+                        project.is_system && 'bg-projeto-sistema border-[var(--color-primary)]/30',
                       )}
                       onClick={() => {
-                        if (projectSelectionMode) {
+                        // O fluxo fixado não participa de seleção em massa:
+                        // arquivar/excluir em lote não pode alcançar um projeto
+                        // sistêmico. Clicar sempre abre.
+                        if (projectSelectionMode && !ehMonitoramento) {
                           toggleProjectSelected(String(project.id));
                         } else {
                           navigate(ROUTES.projeto(String(project.id)));
@@ -1378,20 +1634,34 @@ export default function Projects() {
                       <CardHeader>
                         <div className="flex items-start justify-between">
                           <CardTitle className="text-lg">{project.nome}</CardTitle>
-                          <Badge className={getStatusColor(project.status)}>
-                            <div className="flex items-center gap-1">
-                              {getStatusIcon(project.status)}
-                              <span>{project.status_display || project.status}</span>
-                            </div>
-                          </Badge>
+                          {ehMonitoramento ? (
+                            <Badge variant="secondary" className="text-[10px] uppercase tracking-wide">
+                              Sistema
+                            </Badge>
+                          ) : (
+                            <Badge className={getStatusColor(project.status)}>
+                              <div className="flex items-center gap-1">
+                                {getStatusIcon(project.status)}
+                                <span>{project.status_display || project.status}</span>
+                              </div>
+                            </Badge>
+                          )}
                         </div>
-                        {project.descricao && (
+                        {ehMonitoramento ? (
+                          <CardDescription className="mt-2">
+                            Os formulários de feedback dos projetos entregues chegam aqui sozinhos —
+                            é onde se copia o link para enviar.
+                          </CardDescription>
+                        ) : project.descricao ? (
                           <CardDescription className="mt-2">{project.descricao}</CardDescription>
-                        )}
+                        ) : null}
                       </CardHeader>
                       <CardContent>
                         <div className="space-y-2 text-sm text-[var(--color-muted-foreground)]">
-                          {projectSprint && (
+                          {/* Sem linha de sprint no fixado: ele não pertence a
+                              nenhuma sprint de trabalho, e mostrar a sistêmica
+                              seria expor encanamento. */}
+                          {projectSprint && !ehMonitoramento && (
                             <div className="flex items-center gap-2">
                               <Calendar className="h-4 w-4" />
                               <span>Em Sprint: {projectSprint.nome}</span>
@@ -1643,7 +1913,11 @@ export default function Projects() {
                 return (
                   <Card
                     key={project.id}
-                    className="cursor-pointer hover:shadow-md transition-shadow"
+                    className={cn(
+                      'cursor-pointer hover:shadow-md transition-shadow',
+                      // "Projetos Descartados" é sistêmico: mesmo fundo dos demais.
+                      project.is_system && 'bg-projeto-sistema',
+                    )}
                     onClick={() => navigate(ROUTES.projeto(String(project.id)))}
                   >
                     <CardHeader>
@@ -2067,7 +2341,7 @@ export default function Projects() {
             <DialogTitle>O que você quer criar?</DialogTitle>
             <DialogDescription>Escolha uma opção</DialogDescription>
           </DialogHeader>
-          <div className="grid grid-cols-2 gap-4 mt-4">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mt-4">
             <Button
               className="h-28 w-full rounded-[12px] px-4 py-3 text-sm"
               onClick={() => {
@@ -2087,6 +2361,18 @@ export default function Projects() {
             >
               Solicitar ajuste de data
             </Button>
+            {/* Terceira porta de entrada: pedir reabertura sem precisar abrir o
+                card fechado no kanban, do mesmo jeito que o ajuste de data. */}
+            <Button
+              variant="outline"
+              className="h-28 w-full rounded-[12px] px-4 py-3 text-sm"
+              onClick={() => {
+                setCreateDemandChoiceOpen(false);
+                setReopenPickerOpen(true);
+              }}
+            >
+              Solicitar reabertura de card
+            </Button>
           </div>
         </DialogContent>
       </Dialog>
@@ -2094,7 +2380,42 @@ export default function Projects() {
       <RequestDueDateChangeModal
         open={dateChangeRequestModalOpen}
         onOpenChange={setDateChangeRequestModalOpen}
-        onCreated={() => loadData()}
+        // `silent` pela MESMA razão do irmão de reabertura logo abaixo: o
+        // render tem early-return em `if (loading)`, então uma recarga não
+        // silenciosa faria o painel inteiro sumir e voltar por causa do próprio
+        // clique de quem acabou de criar a solicitação. A recarga completa que
+        // chega pelo evento de tempo real já é silenciosa — deixar esta ruidosa
+        // fazia a MESMA ação piscar ou não dependendo da porta de entrada.
+        onCreated={() => loadData({ silent: true })}
+      />
+
+      <SelectCardToReopenDialog
+        open={reopenPickerOpen}
+        onOpenChange={setReopenPickerOpen}
+        onSelect={(card) => {
+          // Um diálogo por vez: o seletor sai e o formulário entra já com o
+          // card escolhido, então ele também não busca nada.
+          setReopenPickerOpen(false);
+          setReopenCard(card);
+        }}
+      />
+
+      <RequestCardReopenModal
+        open={!!reopenCard}
+        onOpenChange={(aberto) => {
+          if (!aberto) setReopenCard(null);
+        }}
+        card={reopenCard}
+        onCreated={() => {
+          // Resposta imediata ao próprio clique: 1 requisição em vez das ~7 de
+          // `loadData`, e sem piscar. A recarga completa vem pelo evento de
+          // tempo real (que o autor também recebe), já coalescida pelo debounce
+          // — é assim que o eco fica barato, em vez de filtrado por autor no
+          // payload (o grupo é `user_{id}` e filtrar calaria as OUTRAS abas
+          // desta mesma pessoa, que são o caso de uso do pedido).
+          setPendingTab('reaberturas');
+          void recarregarReaberturas();
+        }}
       />
 
       {/* Dialog de Avaliação */}
@@ -2142,7 +2463,9 @@ export default function Projects() {
                 {evaluationFormData.sprint &&
                   projects
                     .filter((p) => String(p.sprint || '') === String(evaluationFormData.sprint || ''))
-                    .filter((p) => p.nome !== 'Sugestões')
+                    // Nenhum projeto sistêmico é destino de avaliação — inclusive
+                    // o de Monitoramento, cujos cards são gerados pelo backend.
+                    .filter((p) => !p.is_system && p.nome !== 'Sugestões')
                     .map((project) => (
                       <option key={project.id} value={project.id}>
                         {project.nome}

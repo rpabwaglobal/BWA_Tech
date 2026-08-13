@@ -13,7 +13,7 @@ import { cn } from '@/lib/utils';
 import { readIncludeHeader, writeIncludeHeader } from '@/lib/reportSettings';
 import {
   reportService,
-  type ReportFormat, type ReportJob,
+  type ReportFormat, type ReportJob, type ReportType,
 } from '@/services/reportService';
 import ReportTablePreviewDialog from '@/components/reports/ReportTablePreviewDialog';
 import { sprintService, type Sprint } from '@/services/sprintService';
@@ -38,7 +38,9 @@ export type ReportFilterKey =
   | 'period';
 
 export type ReportConfigPanelProps = {
-  report: ReportDef;
+  /** Só relatório GERÁVEL: o painel dispara download, e 'feedbacks' não gera
+   *  arquivo nenhum (ele tem painel próprio). */
+  report: ReportDef & { id: ReportType };
   icon: LucideIcon;
   categoryColor: string;
   categoryLabel: string;
@@ -125,7 +127,12 @@ export default function ReportConfigPanel({
         }));
       }
       if (report.filters.some((f) => f === 'responsavel' || f === 'user')) {
-        tasks.push(userService.getAll().then((u) => { if (!cancelled) setUsers(u); }));
+        // Só quem participa do trabalho: gerar o relatório "Por Usuário" de
+        // quem não enxerga sprint/projeto/card produz um PDF com zero
+        // entregas, 0% no prazo e distribuição por área vazia — documento que
+        // só serve para confundir. O gerador continua aceitando qualquer id,
+        // então relatório histórico de quem perdeu o acesso segue possível.
+        tasks.push(userService.getParticipantes().then((u) => { if (!cancelled) setUsers(u); }));
       }
       await Promise.allSettled(tasks);
     })();

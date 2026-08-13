@@ -85,7 +85,11 @@ class BaseReport:
     def sprints_visiveis(self):
         from apps.accounts.scoping import scope_sprints
         from apps.projects.models import Sprint
-        return scope_sprints(Sprint.objects.all(), self.user)
+        # `is_system=False` aqui, e não em cada gerador: os SEIS call-sites
+        # (executive, metrics, cards, sprint) herdam o recorte de graça. Sprint
+        # sistêmica ancora fluxo interno — não é ciclo de trabalho e não pode
+        # virar "sprint ativa" de relatório executivo nem linha de comparativo.
+        return scope_sprints(Sprint.objects.filter(is_system=False), self.user)
 
     # ─────────────────── métodos que subclasses sobrescrevem ───────────────────
 

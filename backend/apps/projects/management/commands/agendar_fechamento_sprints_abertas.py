@@ -10,7 +10,16 @@ class Command(BaseCommand):
 
     def handle(self, *args, **options):
         now = timezone.now()
-        sprints = Sprint.objects.filter(finalizada=False).order_by('fechamento_em')
+        # `is_system=False`: a sprint sistêmica (âncora do "Monitoramento de
+        # feedbacks") NUNCA fecha, e o `fechamento_em` dela fica ~100 anos no
+        # futuro só porque a coluna é NOT NULL. Agendar um ETA para ela deixaria
+        # uma mensagem parada no broker — e na memória do worker, que segura
+        # tarefas com ETA até a hora — por um século, para uma task que só
+        # responde 'systemic'. `Sprint.save()` já a exclui do agendamento; este
+        # comando roda no deploy e era o outro caminho até o mesmo lugar.
+        sprints = Sprint.objects.filter(
+            finalizada=False, is_system=False,
+        ).order_by('fechamento_em')
 
         total = sprints.count()
         agendadas = 0

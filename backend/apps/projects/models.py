@@ -27,6 +27,26 @@ class Sprint(models.Model):
         verbose_name='Supervisor'
     )
     finalizada = models.BooleanField(default=False, verbose_name='Finalizada')
+    # Sprint "sistêmica": âncora de um fluxo interno (hoje só o "Monitoramento de
+    # feedbacks"), NUNCA um ciclo de trabalho. Fica fora da lista de sprints, das
+    # métricas, do fechamento automático e da replicação.
+    # Substitui o hardcoding por nome, exatamente como `Project.is_system`.
+    #
+    # O campo era INEVITÁVEL: os dois discriminadores que já existiam
+    # (`finalizada` e a janela `data_inicio`/`fechamento_em`) puxam para lados
+    # opostos. Com `fechamento_em` no PASSADO, `_sprint_efetivamente_fechada`
+    # (views.py) trancaria todo card de feedback e `finalizar_sprints_por_data`
+    # fecharia a sprint sozinha; com ele no FUTURO — que é o valor que usamos —
+    # a sprint apareceria como "em andamento" no menu, no Dashboard e como
+    # destino de replicação. Nenhum valor resolve os dois lados; a flag resolve.
+    is_system = models.BooleanField(
+        default=False,
+        db_index=True,
+        verbose_name='Sprint Sistêmica',
+        help_text='Sprints sistêmicas ancoram fluxos internos (ex.: Monitoramento de '
+                  'feedbacks) e são excluídas de listagens, métricas, fechamento '
+                  'automático e replicação.',
+    )
     # Segmentação por setor (Fase 4+): Sprint é a autoridade; Project/Card herdam.
     # `setor` = setor dono; `setores_compartilhados` = outros setores que também
     # enxergam esta sprint. null=True durante a migração (backfill preenche tudo).
@@ -56,7 +76,12 @@ class Sprint(models.Model):
 
         super().save(*args, **kwargs)
 
-        if self.finalizada or not self.fechamento_em:
+        # `is_system` entra no early-return junto com `finalizada`: a sprint
+        # sistêmica nunca fecha, e `fechamento_em` dela é NOT NULL e fica ~100
+        # anos no futuro. Sem esta condição, TODA gravação dela publicaria um
+        # `fechar_sprint_em_hora` no broker apontando para a sprint que não deve
+        # fechar — lixo permanente na fila.
+        if self.finalizada or self.is_system or not self.fechamento_em:
             return
 
         prev_f = previous.get('fechamento_em') if previous else None
@@ -207,6 +232,21 @@ class CardStatus(models.TextChoices):
     INVIABILIZADO = 'inviabilizado', 'Inviabilizado'
 
 
+# Status que encerram o card. "ABERTO" é sempre definido pela NEGATIVA
+# (`.exclude(status__in=CARD_STATUS_FECHADOS)`) — é a forma que o projeto já usa
+# nos ~9 lugares onde a pergunta aparece, e é o lado seguro: um status que não
+# esteja nesta dupla cai em "aberto", ou seja, continua sendo trabalho vivo.
+#
+# `KanbanStage.is_terminal` NÃO governa esta decisão, de propósito: aquele flag
+# hoje é só decoração de UI e `KanbanStageViewSet` só exige
+# `manage_global_kanban_stages` no `perform_create` (views.py) — qualquer um com
+# `view_content` consegue virá-lo. Amarrar regra de negócio nele deixaria um
+# não-privilegiado escolher, por exemplo, de quais cards o responsável some.
+# Hoje as duas definições coincidem por causa do seed da migration 0028; se
+# alguém criar uma etapa terminal customizada, ela é tratada como aberta.
+CARD_STATUS_FECHADOS = (CardStatus.FINALIZADO, CardStatus.INVIABILIZADO)
+
+
 class KanbanStage(models.Model):
     """
     Etapa/coluna global do Kanban.
@@ -221,6 +261,23 @@ class KanbanStage(models.Model):
     # Comportamento (usado na UI para lógica terminal e campos obrigatórios)
     is_terminal = models.BooleanField(default=False, verbose_name='Etapa Terminal')
     requires_required_data = models.BooleanField(default=False, verbose_name='Requer Dados Obrigatórios')
+
+    # Etapa que NÃO aparece no catálogo global (`GET /api/kanban-stages/`), que é
+    # de onde a UI de "adicionar coluna" se alimenta.
+    #
+    # POR QUE UM CAMPO, e não um `if key in (...)`: o board de um projeto já é
+    # recortado por `ProjectKanbanStageConfig`, então criar uma etapa nova não
+    # adiciona coluna a ninguém. O furo que sobra é o SELETOR: sem isto, um
+    # supervisor com `manage_kanban_config` poderia adicionar "Aguardando 30
+    # dias" a um projeto comum. Uma lista de keys cravada aqui colocaria
+    # conhecimento do app de feedbacks dentro de `projects` — é justamente o que
+    # o flag evita, e é o mesmo raciocínio de `Project.is_system`.
+    oculta_no_catalogo = models.BooleanField(
+        default=False,
+        verbose_name='Oculta no catálogo global',
+        help_text='Etapas de fluxos internos (ex.: monitoramento de feedbacks) não '
+                  'podem ser adicionadas a projetos comuns pela tela de etapas.',
+    )
 
     created_at = models.DateTimeField(auto_now_add=True, verbose_name='Data de Criação')
     updated_at = models.DateTimeField(auto_now=True, verbose_name='Data de Atualização')
@@ -414,6 +471,22 @@ class Card(models.Model):
         verbose_name='Links adicionais',
         help_text='Lista de links extras: [{"url": "...", "label": "..."}]'
     )
+    # O checkbox do pedido original: "Gerar Formulário de Feedback".
+    # Marcado aqui, no CARD, e não no projeto, porque a regra é UM formulário e
+    # UM link POR CARD MARCADO — cinco marcados no mesmo projeto viram cinco
+    # links distintos. O gatilho é o PROJETO virar "entregue"; quem decide QUAIS
+    # cards geram é este campo.
+    #
+    # ATENÇÃO ao marcar: o NOME DESTE CARD é copiado para
+    # `PedidoFeedback.referencia_publica` e é o que a pessoa de fora vê na página
+    # anônima. É cópia congelada — renomear o card depois não muda o link já
+    # enviado.
+    gerar_formulario_feedback = models.BooleanField(
+        default=False,
+        verbose_name='Gerar formulário de feedback',
+        help_text='Quando o projeto for marcado como Entregue, este card gera um pedido '
+                  'de feedback com link público próprio.',
+    )
     created_at = models.DateTimeField(auto_now_add=True, verbose_name='Data de Criação')
     updated_at = models.DateTimeField(auto_now=True, verbose_name='Data de Atualização')
 
@@ -577,6 +650,12 @@ class CardLogEventType(models.TextChoices):
     ALTERACAO = 'alteracao', 'Alteração no Card'
     RESPONSAVEL_ALTERADO = 'responsavel_alterado', 'Responsável Alterado'
     COMENTARIO = 'comentario', 'Comentário'
+    # Reabertura é evento PRÓPRIO, e não um `atualizado`/`movimentado` qualquer:
+    # ressuscitar trabalho já encerrado é a exceção que alguém vai querer achar
+    # no histórico meses depois ("por que este card entregue voltou ao quadro?").
+    # Enterrado dentro de 'atualizado' ele viraria mais uma linha de diff de
+    # campos, indistinguível de uma troca de prioridade.
+    REABERTO = 'reaberto', 'Card Reaberto'
 
 
 class CardLog(models.Model):
@@ -747,6 +826,85 @@ class CardDueDateChangeRequest(models.Model):
 
     def __str__(self):
         return f"{self.card.nome} -> {self.requested_date} ({self.get_status_display()})"
+
+
+class CardReopenRequest(models.Model):
+    """
+    Solicitação de REABERTURA de um card fechado (finalizado ou inviabilizado).
+
+    Irmão de `CardDueDateChangeRequest` de propósito: mesma anatomia (card,
+    quem pediu, motivo, status, quem avaliou, quando), mesma fila na página de
+    Projetos, mesma disciplina de escopo por setor. O que muda é o EFEITO da
+    aprovação — lá o card só troca de prazo, aqui ele volta a existir como
+    trabalho: status volta para "A Desenvolver" e o `data_fim` passa a ser a
+    nova data informada.
+
+    POR QUE a nova data é OBRIGATÓRIA (e não opcional como o `reason`):
+    reabrir sem prazo devolveria ao quadro um card sem previsão de entrega —
+    exatamente o estado que o resto da plataforma combate (alerta de atraso,
+    vencimento em 24h/1h/10min, métricas de entrega no prazo, tudo depende de
+    `data_fim`). Um card reaberto sem data seria invisível para todos esses
+    mecanismos. Como o pedido é feito justamente porque a data anterior não
+    valeu, é quem pede que precisa dizer a nova.
+
+    Reaproveita `CardDateChangeRequestStatus`: são os mesmos três estados
+    (pendente/aprovado/recusado), com o mesmo significado e os mesmos valores
+    gravados. Um enum próprio seria uma cópia idêntica e obrigaria o frontend a
+    aprender dois vocabulários para a mesma coluna de status.
+    """
+    card = models.ForeignKey(
+        Card,
+        on_delete=models.CASCADE,
+        related_name='reopen_requests',
+        verbose_name='Card'
+    )
+    # Autoria, não objeto do registro: a solicitação faz parte do histórico do
+    # card e sobrevive anônima à saída da pessoa — mesma regra do irmão acima.
+    requested_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        related_name='reopen_requests_created',
+        null=True,
+        blank=True,
+        verbose_name='Solicitado Por'
+    )
+    nova_data_entrega = models.DateTimeField(
+        verbose_name='Nova data de entrega solicitada',
+        help_text='Prazo que o card passa a ter quando a reabertura for aprovada.',
+    )
+    reason = models.TextField(blank=True, null=True, verbose_name='Motivo')
+    status = models.CharField(
+        max_length=20,
+        choices=CardDateChangeRequestStatus.choices,
+        default=CardDateChangeRequestStatus.PENDING,
+        verbose_name='Status'
+    )
+    reviewed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        related_name='reopen_requests_reviewed',
+        null=True,
+        blank=True,
+        verbose_name='Avaliado Por'
+    )
+    reviewed_at = models.DateTimeField(null=True, blank=True, verbose_name='Data de Avaliação')
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name='Data de Criação')
+    updated_at = models.DateTimeField(auto_now=True, verbose_name='Data de Atualização')
+
+    class Meta:
+        verbose_name = 'Solicitação de Reabertura de Card'
+        verbose_name_plural = 'Solicitações de Reabertura de Card'
+        ordering = ['-created_at']
+        indexes = [
+            # A fila de pendências lê por status em ordem cronológica; a aba do
+            # card lê por card; "meus pedidos" lê por solicitante.
+            models.Index(fields=['status', '-created_at']),
+            models.Index(fields=['card', 'status']),
+            models.Index(fields=['requested_by', '-created_at']),
+        ]
+
+    def __str__(self):
+        return f"Reabertura de {self.card.nome} -> {self.nova_data_entrega} ({self.get_status_display()})"
 
 
 class WeeklyPriority(models.Model):

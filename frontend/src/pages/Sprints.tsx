@@ -123,7 +123,11 @@ export default function Sprints() {
           return [];
         }),
       ]);
-      setSprints(Array.isArray(sprintsData) ? sprintsData : []);
+      // `.filter(!is_system)` é a SEGUNDA camada: o backend já corta a sprint
+      // sistêmica do `GET /sprints/`. Cortar aqui também mantém esta tela certa
+      // se alguém abrir a listagem por outro caminho — e é um filtro só que
+      // limpa a lista, o `categorizeSprints` e o aviso de "múltiplas ativas".
+      setSprints((Array.isArray(sprintsData) ? sprintsData : []).filter((s) => !s.is_system));
       setProjects(Array.isArray(projectsData) ? projectsData : []);
     } catch (error) {
       console.error('Erro ao carregar dados:', error);
@@ -554,6 +558,12 @@ export default function Sprints() {
           )}
         </div>
       </div>
+
+      {/* O atalho do Monitoramento de Feedbacks NÃO fica mais aqui, na LISTAGEM
+          de sprints. Ele agora é a primeira coluna DENTRO da página da sprint
+          (SprintDetails), no mesmo formato de um projeto comum — que é onde se
+          está quando se procura o quadro de trabalho. Como não é atrelado a
+          nenhuma sprint, reaparece sozinho na sprint seguinte. */}
 
       {sprintsEmAndamentoJanela.length > 1 && (
         <div className="flex items-start gap-[12px] rounded-[8px] border border-amber-500/40 bg-amber-500/10 p-[16px] text-sm text-[var(--color-foreground)]">

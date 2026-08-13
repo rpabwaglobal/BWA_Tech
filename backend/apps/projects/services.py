@@ -7,7 +7,7 @@ from django.db import models, transaction
 from django.utils import timezone
 
 from .models import (Sprint, Project, ProjectCompartilhamento, Card, CardStatus, ProjectStatus,
-                     ProjectKanbanStageConfig, CardLog, CardLogEventType)
+                     ProjectKanbanStageConfig, CardLog, CardLogEventType, CARD_STATUS_FECHADOS)
 
 
 def _norm_nome_projeto(nome: str) -> str:
@@ -176,7 +176,9 @@ def get_sprint_ids_atribuiveis() -> set:
     receber score no seletor. Sprints são poucas, então iterar em Python é
     barato e mantém a MESMA semântica de `sprint_esta_em_andamento_ou_planejada`."""
     ids = set()
-    for s in Sprint.objects.filter(finalizada=False).only('id', 'finalizada', 'fechamento_em'):
+    # `is_system=False`: a sprint sistêmica não é ciclo de trabalho, então os
+    # cards de feedback pendurados nela não podem aparecer no seletor do Score.
+    for s in Sprint.objects.filter(finalizada=False, is_system=False).only('id', 'finalizada', 'fechamento_em'):
         if sprint_esta_em_andamento_ou_planejada(s):
             ids.add(s.id)
     return ids
@@ -208,8 +210,13 @@ def sprint_conflitante_na_janela(setor_id, data_inicio, fechamento_em, exclude_p
     if di is None or fe is None:
         return None
     # Dois intervalos se cruzam quando cada um começa antes do outro terminar.
+    #
+    # `is_system=False` é OBRIGATÓRIO aqui: a sprint sistêmica tem janela de ~100
+    # anos, logo cruza QUALQUER janela. Sem este recorte, nenhuma sprint nova
+    # poderia mais ser criada no setor onde ela mora.
     qs = Sprint.objects.filter(
         finalizada=False,
+        is_system=False,
         setor_id=setor_id,
         data_inicio__lte=fe,
         fechamento_em__gte=di,
@@ -230,7 +237,9 @@ def conflitos_ao_mover_sprints(sprint_ids, setor_destino_id):
     que o cadastro recusa.
     """
     candidatas = list(
-        Sprint.objects.filter(finalizada=False)
+        # Mesma razão de `sprint_conflitante_na_janela`: a janela da sprint
+        # sistêmica cruza tudo e ela viraria conflito com qualquer movimentação.
+        Sprint.objects.filter(finalizada=False, is_system=False)
         .filter(models.Q(pk__in=sprint_ids) | models.Q(setor_id=setor_destino_id))
         .only('id', 'nome', 'data_inicio', 'fechamento_em')
     )
@@ -249,7 +258,10 @@ def outra_sprint_em_andamento(setor_id, exclude_pk=None):
     plataforma segmentada, o ciclo de Tecnologia não tem por que impedir
     Comercial de abrir o dele.
     """
-    qs = Sprint.objects.filter(finalizada=False, setor_id=setor_id)
+    # `is_system=False`: a sprint sistêmica satisfaz o predicado "em andamento"
+    # por construção (não finalizada, fechamento no futuro) e seria devolvida
+    # como "a sprint em andamento do setor" para sempre.
+    qs = Sprint.objects.filter(finalizada=False, is_system=False, setor_id=setor_id)
     if exclude_pk is not None:
         qs = qs.exclude(pk=exclude_pk)
     for other in qs.order_by('-data_inicio'):
@@ -267,7 +279,11 @@ def get_proxima_sprint(sprint):
     """
     agora = timezone.now()
     fim_dia = timezone.localtime(sprint.fechamento_em).date()
-    mesmo_setor = Sprint.objects.filter(setor_id=sprint.setor_id)
+    # `is_system=False` é o recorte CRÍTICO desta função: a sprint sistêmica
+    # nunca é finalizada e tem fechamento no futuro, então seria eleita destino
+    # de replicação de toda sprint real do setor — e `finalizar_sprint_replicacao`
+    # despejaria projetos e cards pendentes dentro do fluxo de monitoramento.
+    mesmo_setor = Sprint.objects.filter(setor_id=sprint.setor_id, is_system=False)
     # 1) Outra sprint na janela ativa (mesma regra do dashboard / menu Sprints)
     for candidata in mesmo_setor.filter(finalizada=False).exclude(pk=sprint.pk).order_by('data_inicio'):
         if sprint_esta_em_andamento_janela(candidata):
@@ -376,3 +392,202 @@ def finalizar_sprint_replicacao(sprint, criado_por_user=None):
         'projetos_reutilizados': projetos_reutilizados,
         'cards_copiados': cards_copiados,
     }
+
+
+def sprint_em_andamento_do_setor(setor_id):
+    """A sprint que está na janela ativa HOJE naquele setor, ou None.
+
+    Reabertura só existe se houver para onde reabrir: é a mesma pergunta que
+    `outra_sprint_em_andamento` responde, exposta com um nome que diz a
+    intenção de quem chama.
+    """
+    return outra_sprint_em_andamento(setor_id=setor_id)
+
+
+def reancorar_card_na_sprint(card, sprint_destino):
+    """Move o card para `sprint_destino`, casando o projeto pelo nome.
+
+    Card não aponta para sprint: ele pertence a um Project, e o Project é que
+    pertence à Sprint. Mover um card de sprint é, portanto, reancorá-lo num
+    projeto de mesmo nome na sprint destino — exatamente o que
+    `finalizar_sprint_replicacao` já faz ao virar a sprint, e por isso a regra
+    de casamento é a MESMA (`_norm_nome_projeto`): duas implementações do mesmo
+    pareamento acabariam divergindo, e aí o mesmo projeto viraria dois.
+
+    Diferente da replicação, aqui o card é MOVIDO e não copiado: a decisão do
+    dono do produto é que a métrica conte na sprint em que o card foi reaberto.
+    A sprint de origem perde a entrega, o que está correto — se o trabalho
+    voltou, ele não estava concluído.
+
+    Devolve (projeto_destino, criou_projeto). Se o card já está na sprint
+    destino, não faz nada.
+    """
+    projeto_atual = card.projeto
+    if projeto_atual and projeto_atual.sprint_id == sprint_destino.pk:
+        return projeto_atual, False
+
+    nome_norm = _norm_nome_projeto(projeto_atual.nome) if projeto_atual else ''
+    destino = next(
+        (p for p in Project.objects.filter(sprint=sprint_destino)
+         if _norm_nome_projeto(p.nome) == nome_norm),
+        None,
+    )
+    criou = False
+    if destino is None:
+        destino = Project.objects.create(
+            nome=projeto_atual.nome,
+            descricao=projeto_atual.descricao or '',
+            sprint=sprint_destino,
+            gerente_atribuido=projeto_atual.gerente_atribuido,
+            desenvolvedor=projeto_atual.desenvolvedor,
+            status=ProjectStatus.CRIADO,
+            setor=sprint_destino.setor,
+        )
+        criou = True
+        # O empréstimo entre setores acompanha o trabalho, COM o nível — quem
+        # tinha o projeto só para leitura não ganha edição na mudança de sprint.
+        ProjectCompartilhamento.objects.bulk_create([
+            ProjectCompartilhamento(
+                project=destino, setor_id=c.setor_id, nivel=c.nivel,
+                compartilhado_por=c.compartilhado_por)
+            for c in projeto_atual.compartilhamentos.all()
+        ])
+
+    card.projeto = destino
+    return destino, criou
+
+
+# Texto do histórico da desatribuição. A primeira linha usa DELIBERADAMENTE o
+# mesmo vocabulário de diff do log automático de troca de responsável
+# (`signals.py`: 'Responsável: {antigo} → {novo}', com 'Ninguém' sendo
+# literalmente a palavra usada para ausência), para a timeline do card ler de
+# forma contínua. O `Motivo:` é o que diferencia este evento de uma
+# reatribuição comum — e é o padrão da casa para justificativa.
+DESCRICAO_DESATRIBUICAO_CONTA_DESATIVADA = (
+    'Responsável: {nome_anterior} → Ninguém.\n\nMotivo: conta desativada.'
+)
+
+
+def desatribuir_cards_de_usuario_desativado(user, operador=None) -> int:
+    """Solta os cards ABERTOS de quem acabou de ser desativado. Devolve quantos.
+
+    Regra de produto: conta desativada não segura trabalho vivo. O card volta
+    para "sem usuário atribuído" e alguém precisa reassumi-lo.
+
+    O que NÃO é tocado: cards FINALIZADOS e INVIABILIZADOS mantêm o
+    responsável. Apagar ali reescreveria a métrica de entrega de sprints
+    passadas — trabalho entregue continua sendo de quem entregou, mesmo que a
+    pessoa tenha saído. Por isso o recorte vem de `CARD_STATUS_FECHADOS`, pela
+    negativa (ver o comentário da constante em models.py).
+
+    >>> ESTE SERVIÇO É O ÚNICO DONO DA REGRA E PRECISA SER CHAMADO POR TODO <<<
+    >>> CAMINHO QUE DESATIVA UMA CONTA. Hoje são dois, pareados:            <<<
+    >>>   - `UserViewSet.set_active` (accounts/views.py) — porta HTTP;       <<<
+    >>>   - `User.delete()` (accounts/models.py), que desativa em vez de     <<<
+    >>>     apagar — porta de shell/admin.                                   <<<
+
+    Por que serviço e não um `post_save` de User: (i) dentro do signal não há
+    `request.user`, então todo CardLog sairia sem autor; (ii) `post_save`
+    dispara com `raw=True` em `loaddata`, e um restore do dump de produção
+    desatribuiria cards em massa; (iii) data migration usa modelo histórico e
+    não dispara signal nenhum, então o tratamento do estado legado não herdaria
+    a regra de qualquer forma.
+
+    `operador` é quem puxou o gatilho (vai para `CardLog.usuario`). Fica None
+    quando não há ator humano (shell, migration) — inventar um autor seria
+    mentira no histórico, e o campo é `null=True` justamente por isso.
+
+    Idempotente: a segunda chamada não encontra mais nada (o filtro exige o
+    usuário como responsável), então não duplica log.
+    """
+    if user is None or not getattr(user, 'pk', None):
+        return 0
+
+    # `atomic` AQUI, e não só nos chamadores: esta função apaga vínculo e
+    # escreve o histórico desse apagamento em DOIS statements. Se um caller
+    # futuro esquecer a transação (e o docstring acima convida a criar novos
+    # callers), o `.update()` comita sozinho e uma falha no `bulk_create`
+    # deixaria os cards soltos SEM nenhuma linha de histórico dizendo para
+    # onde o responsável foi — dano silencioso e irreversível. Aninhado nos
+    # dois callers atuais isto é só um savepoint, custo desprezível.
+    with transaction.atomic():
+        # Materializa ANTES do update: depois dele o vínculo já era, e o log
+        # precisa dizer de quem o card saiu. `select_related` para o broadcast
+        # alcançar a sprint sem uma consulta por card.
+        #
+        # `select_for_update(of=('self',))` trava só as linhas de Card até o
+        # commit. Sem isso há JANELA entre este SELECT e o UPDATE abaixo: uma
+        # reatribuição concorrente (PATCH no card) poderia passar o card para
+        # outra pessoa ATIVA no meio, e o UPDATE apagaria o responsável DELA.
+        # O `of=('self',)` existe para não travar também as linhas de
+        # Project/Sprint trazidas pelo `select_related`.
+        cards = list(
+            Card.objects.filter(responsavel=user)
+            .exclude(status__in=CARD_STATUS_FECHADOS)
+            .select_related('projeto__sprint')
+            .select_for_update(of=('self',))
+        )
+        if not cards:
+            return 0
+
+        # Import TARDIO (idioma do arquivo vizinho: `signals.py` importa
+        # `.realtime` dentro das funções) para não inverter o grafo de imports.
+        from .signals import format_user_name
+
+        nome_anterior = format_user_name(user) or 'Ninguém'
+
+        # `.update()` em massa em vez de `card.save()` em laço, de propósito: o
+        # `post_save` do Card escreveria SOZINHO um segundo log dizendo o mesmo
+        # fato ('Responsável: Fulano → Ninguém'), e ainda dispararia uma
+        # notificação por card para o gerente de cada projeto. É a mesma receita
+        # de `kanban_move_cards` (lista → `.update()` → `bulk_create` dos logs).
+        #
+        # Pular o `Card.save()` é seguro aqui: ele só zera `data_inicio` quando
+        # o status é 'a_desenvolver' e espelha o `setor_id` do projeto — e não
+        # mexemos em status nem em projeto.
+        #
+        # O `responsavel=user` no filtro NÃO é redundante com o `pk__in`: ele
+        # reafirma no momento da ESCRITA a condição que autorizou o apagamento.
+        # É a mesma proteção que a migration 0060 ganha de graça por reusar o
+        # queryset filtrado. Sem ela, o `pk__in` sozinho apagaria o vínculo de
+        # quem tivesse recebido o card no intervalo.
+        Card.objects.filter(
+            pk__in=[c.pk for c in cards], responsavel=user,
+        ).update(responsavel=None)
+
+        CardLog.objects.bulk_create([
+            CardLog(
+                card_id=c.pk,
+                tipo_evento=CardLogEventType.RESPONSAVEL_ALTERADO,
+                descricao=DESCRICAO_DESATRIBUICAO_CONTA_DESATIVADA.format(
+                    nome_anterior=nome_anterior),
+                usuario=operador,
+            )
+            for c in cards
+        ])
+
+        # Um broadcast por SPRINT afetada, não por card: o payload é só o id do
+        # card + o ator, e o cliente responde recarregando o widget. N eventos
+        # na mesma sprint seriam N recargas da mesma coisa.
+        representativos = {}
+        for c in cards:
+            projeto = getattr(c, 'projeto', None)
+            sprint_id = getattr(projeto, 'sprint_id', None) if projeto else None
+            if sprint_id is not None:
+                representativos.setdefault(sprint_id, c)
+
+        if representativos:
+            cards_por_sprint = list(representativos.values())
+            operador_id = getattr(operador, 'pk', None)
+
+            def _avisar_kanban():
+                # `on_commit`: o contrato do realtime é "cliente recebe o evento
+                # e refaz o GET". Emitir dentro da transação faria o cliente ler
+                # o estado anterior ao commit.
+                from .realtime import broadcast_kanban_changed
+                for card in cards_por_sprint:
+                    broadcast_kanban_changed(card, actor_user_id=operador_id)
+
+            transaction.on_commit(_avisar_kanban)
+
+        return len(cards)

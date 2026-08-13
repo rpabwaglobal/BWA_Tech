@@ -2,6 +2,7 @@ import logging
 import os
 
 from rest_framework import viewsets, filters, status
+from rest_framework.exceptions import PermissionDenied
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -26,10 +27,13 @@ from .models import (
     Event,
     CardLog,
     Notification,
+    NotificationType,
     UserNotificationPreference,
     WeeklyPriority,
     WeeklyPriorityConfig,
     CardDueDateChangeRequest,
+    CardReopenRequest,
+    CardDateChangeRequestStatus,
     CardLogEventType,
     ScoreCriterion,
     CardScore,
@@ -38,7 +42,8 @@ from .models import (
     ScoreHistoryAction,
     SetorSolicitante,
 )
-from .services import finalizar_sprint_replicacao, get_sprint_ids_atribuiveis
+from .services import (finalizar_sprint_replicacao, get_sprint_ids_atribuiveis,
+                       reancorar_card_na_sprint, sprint_em_andamento_do_setor)
 from apps.accounts.profile_picture_utils import get_profile_picture_url
 from apps.accounts.models import Role
 from apps.accounts.permissions import PodeVerConteudo, HasPerm, NaoVisitanteEscreve
@@ -49,6 +54,7 @@ from apps.accounts.scoping import (scope_sprints, scope_projects, scope_cards,
                                    scope_weekly_priorities, scope_events,
                                    scope_card_anexos, scope_card_pins,
                                    scope_card_date_change_requests,
+                                   scope_card_reopen_requests,
                                    projetos_editaveis)
 from .serializers import (
     SprintSerializer, ProjectSerializer, CardSerializer, CardKanbanSerializer,
@@ -57,6 +63,7 @@ from .serializers import (
     CardLogSerializer, NotificationSerializer, NotificationPreferenceSerializer,
     WeeklyPrioritySerializer, WeeklyPriorityConfigSerializer,
     CardDueDateChangeRequestSerializer,
+    CardReopenRequestSerializer,
     KanbanStageSerializer,
     ScoreCriterionSerializer, CardScoreSerializer, CardPickerSerializer,
     CardAnexoSerializer,
@@ -67,6 +74,15 @@ def _move_project_cards_status(project, from_stage_key, to_stage_key, user=None)
     """
     Move cards entre etapas do Kanban.
     Quando envolve finalizado, salva um a um para disparar signals (finalizado_em + métricas).
+
+    NÃO passa pelo `CardSerializer`, então o bloqueio de arrasto manual dos cards
+    de feedback (serializers.py, `_validar_status_no_board`) não vale aqui. Os
+    dois chamadores já validam `to_stage_key` contra as etapas configuradas DO
+    PROJETO, então nenhum card sai para uma coluna que o board dele não desenha;
+    o que sobra é um supervisor com `manage_kanban_config` reorganizando o board
+    OCULTO de monitoramento — e a reconciliação diária
+    (`feedbacks.tasks._reconciliar_colunas_do_kanban`) devolve o card à coluna
+    que o pedido manda. É divergência de no máximo um dia, não permanente.
     """
     cards_qs = Card.objects.filter(projeto=project, status=from_stage_key)
     involves_finalizado = (
@@ -104,28 +120,96 @@ def _card_edicao_restrita(card):
     return _sprint_efetivamente_fechada(sprint)
 
 
+#: Mensagem única do bloqueio do fluxo de feedback — a mesma nos três verbos,
+#: para o usuário ler sempre a mesma explicação venha de onde vier.
+FEEDBACK_SOMENTE_LEITURA = (
+    'O fluxo "Monitoramento de Feedbacks" é mantido pelo sistema: seus cards '
+    'nascem quando um projeto é entregue e mudam de etapa sozinhos. Não é '
+    'possível criar, editar nem excluir cards aqui — só arrastá-los entre as '
+    'etapas do próprio fluxo.'
+)
+
+#: Recusa do arraste para uma etapa que não é do fluxo de feedback.
+#:
+#: Nasce de uma CONTRADIÇÃO real entre dois pedidos do usuário: "o fluxo não deve
+#: ter a opção de criar, editar ou excluir card" (que virou 403 no `update`
+#: inteiro, e `update` é por onde passa o arraste) e "se um card de feedback
+#: encerrado voltar para 'aguardando feedback' ou 'feedback colhido' o link deve
+#: voltar a funcionar" (que EXIGE arrastar).
+#:
+#: A resolução é recortar o verbo em vez de escolher um dos dois pedidos: MOVER
+#: entre as etapas do fluxo passa; EDITAR (nome, responsável, prazo, projeto),
+#: CRIAR e EXCLUIR continuam bloqueados; e sair do fluxo para 'finalizado',
+#: 'em_desenvolvimento' ou qualquer outra etapa do catálogo continua bloqueado —
+#: o `status` desses cards é espelho de `PedidoFeedback.estado`, que só conhece
+#: os quatro valores do fluxo.
+FEEDBACK_ETAPA_FORA_DO_FLUXO = (
+    'Cards do fluxo "Monitoramento de Feedbacks" só podem ser movidos entre as '
+    'etapas do próprio fluxo.'
+)
+
+#: O card está no board de feedback mas não tem pedido — não há fonte da verdade
+#: para mover. Só acontece com card criado à mão no banco.
+FEEDBACK_SEM_PEDIDO = (
+    'Este card não tem um pedido de feedback associado e por isso não pode ser '
+    'movido.'
+)
+
+
+def _projeto_do_fluxo_de_feedback(projeto) -> bool:
+    """True quando `projeto` é o "Monitoramento de Feedbacks".
+
+    O par de flags (`is_system` no projeto E na sprint dele) é a MESMA
+    identificação usada no frontend (`isProjetoMonitoramento`) e no `bundle`.
+    Casar por NOME seria frágil e é o que o `Project.is_system` existe para
+    substituir — renomear o projeto na tela não pode reabrir a escrita.
+
+    Recebe o PROJETO, e não o card, porque na criação o card ainda não existe:
+    o que se tem é o destino escolhido no payload.
+    """
+    if projeto is None:
+        return False
+    sprint = getattr(projeto, 'sprint', None)
+    return bool(getattr(projeto, 'is_system', False) and getattr(sprint, 'is_system', False))
+
+
 def _ids_supervisao_prioridades():
     """IDs de quem supervisiona as prioridades em vez de executá-las.
 
     A página de Prioridades é uma lista de quem toca o trabalho: quem define e
     cobra as prioridades entra ali como leitor, não como linha da lista. Esse
-    papel é justamente o de `manage_weekly_priorities` — direto no usuário,
-    herdado pelo cargo Admin (accounts/auth_backends.py) ou implícito no
-    superusuário, os três caminhos que `has_perm` reconhece.
+    papel é o de `manage_weekly_priorities`.
 
-    Retorna queryset de ids (subconsulta) para ser usado com `__in` sem trazer
-    a lista para a memória.
+    Delega a `usuarios_com_perm_qs` em vez de montar a consulta à mão. A versão
+    artesanal que existia aqui reproduzia só três dos caminhos de concessão e
+    ignorava `Cargo.permissoes_padrao` — desde que o cargo virou fonte de
+    autoridade, quem tinha a permissão SÓ pelo cargo não era reconhecido como
+    supervisor e voltava a aparecer como linha da própria lista que ele
+    coordena. Resolvedor em massa e `has_perm` têm que concordar, e ter duas
+    implementações da mesma pergunta é o que fazia elas divergirem.
+    """
+    from apps.accounts.permissions import usuarios_com_perm_qs
+
+    return usuarios_com_perm_qs('manage_weekly_priorities').values_list('id', flat=True)
+
+
+def _usuarios_que_executam(queryset=None):
+    """Quem aparece como LINHA nas telas de "quem está sem card".
+
+    Duas exclusões, e elas respondem a perguntas diferentes:
+      - quem SUPERVISIONA as prioridades é leitor da tela, não item dela;
+      - quem não tem `view_content` não enxerga sprint, projeto nem card, então
+        listá-lo como "sem card" é ruído: ele não está sem card, está sem
+        acesso. É o pedido "visitante não aparece", resolvido por PERMISSÃO —
+        assim um cargo novo sem a permissão também some, sem tocar em código.
     """
     from django.contrib.auth import get_user_model
+    from apps.accounts.permissions import ids_que_participam_do_trabalho
 
-    return get_user_model().objects.filter(
-        Q(
-            user_permissions__codename='manage_weekly_priorities',
-            user_permissions__content_type__app_label='accounts',
-        )
-        | Q(role=Role.ADMIN)
-        | Q(is_superuser=True)
-    ).values_list('id', flat=True)
+    qs = queryset if queryset is not None else get_user_model().objects.all()
+    return (qs.filter(is_active=True)
+              .exclude(id__in=_ids_supervisao_prioridades())
+              .filter(id__in=ids_que_participam_do_trabalho()))
 
 
 class SprintViewSet(CompartilhamentoSetorMixin, viewsets.ModelViewSet):
@@ -223,6 +307,13 @@ class SprintViewSet(CompartilhamentoSetorMixin, viewsets.ModelViewSet):
                 ),
             )
         )
+        # A sprint SISTÊMICA some da LISTAGEM, mas continua acessível no detail e
+        # no `bundle`. O recorte é por `action` de propósito: o atalho da tela de
+        # Sprints abre o projeto de monitoramento, e o ProjectDetails carrega
+        # `sprintService.getById(...)` da sprint dele — excluir no detail daria
+        # 404 e o atalho não abriria.
+        if getattr(self, 'action', None) == 'list':
+            qs = qs.filter(is_system=False)
         return scope_sprints(qs, self.request.user)  # fail-open enquanto flag OFF
 
     @action(detail=True, methods=['get'], url_path='bundle', permission_classes=[HasPerm('view_metrics')])
@@ -255,7 +346,24 @@ class SprintViewSet(CompartilhamentoSetorMixin, viewsets.ModelViewSet):
         # endpoint que a tela de sprint carrega, então é exatamente onde a
         # divergência apareceria para todo mundo.
         projects = scope_projects(  # fail-open enquanto flag OFF
-            Project.objects.filter(sprint=sprint, arquivado=False)
+            # Além dos projetos da sprint, vem TAMBÉM o fluxo de monitoramento
+            # de feedbacks (o projeto sistêmico da sprint sistêmica). A página da
+            # sprint o desenha FIXADO como primeira coluna, no mesmo formato de
+            # um projeto comum — e ele reaparece na sprint seguinte sozinho,
+            # justamente porque não pertence a sprint nenhuma.
+            #
+            # Trazê-lo AQUI, e não numa request separada, faz os cards dele e a
+            # `kanban_config` das 3 etapas virem de carona: `project_ids` é
+            # derivado deste queryset e alimenta os dois.
+            #
+            # NÃO contamina as métricas da sprint: no frontend quem monta o
+            # conjunto de cards da sprint é `getProjectsForSprint`, que filtra
+            # por `p.sprint === sprintId` — e a sprint dele é a sistêmica, então
+            # ele cai fora de contadores, filtros e da lista.
+            Project.objects.filter(
+                Q(sprint=sprint) | Q(is_system=True, sprint__is_system=True),
+                arquivado=False,
+            )
             .select_related('sprint')
             .annotate(
                 cards_entregues_count=Count(
@@ -560,6 +668,43 @@ class ProjectViewSet(CompartilhamentoSetorMixin, viewsets.ModelViewSet):
         except KanbanStage.DoesNotExist:
             return Response({'detail': 'Etapa global não encontrada.'}, status=status.HTTP_404_NOT_FOUND)
 
+        # QUADRO DE FLUXO AUTOMÁTICO NÃO SE MISTURA COM QUADRO DE TRABALHO, e o
+        # recorte tem de valer nos DOIS sentidos.
+        #
+        # `oculta_no_catalogo` marca as etapas que pertencem a um fluxo interno
+        # (hoje as 3 do "Monitoramento de Feedbacks"): quem as configura é o seed
+        # do fluxo, nunca esta rota. Tirá-las do `KanbanStageViewSet` só as
+        # escondeu do SELETOR da tela — um POST direto aqui ainda acrescentava
+        # "Aguardando 30 dias" a um projeto comum. E o estrago não pararia no
+        # desenho do quadro: a lista de status legítimos de um card sai
+        # justamente das configs do projeto (`_etapas_do_projeto`), então a
+        # coluna configurada passaria a ACEITAR um card comum — que ficaria lá
+        # para sempre, porque a reconciliação diária só toca em card que tem
+        # pedido de feedback.
+        if stage.oculta_no_catalogo:
+            return Response(
+                {'detail': 'Esta etapa pertence a um fluxo automático e é configurada '
+                           'pelo próprio fluxo — não pode ser adicionada a um projeto.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # O sentido oposto é o mesmo problema espelhado: uma coluna de trabalho
+        # no quadro de monitoramento seria um destino de arrasto que NENHUM
+        # estado de pedido produz — card parado lá não voltaria sozinho, porque
+        # a reconciliação escreve o estado do pedido e nunca esses valores.
+        # "Quadro de fluxo" é uma pergunta aos dados, não um nome cravado: é o
+        # projeto cujas colunas são TODAS ocultas.
+        etapas_configuradas = ProjectKanbanStageConfig.objects.filter(project=project)
+        if (
+            etapas_configuradas.exists()
+            and not etapas_configuradas.filter(stage__oculta_no_catalogo=False).exists()
+        ):
+            return Response(
+                {'detail': 'O quadro deste projeto é de um fluxo automático: as colunas '
+                           'dele são definidas pelo fluxo e não podem ser alteradas.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         last_order = (
             ProjectKanbanStageConfig.objects.filter(project=project).aggregate(Max('order'))['order__max']
             if ProjectKanbanStageConfig.objects.filter(project=project).exists()
@@ -644,6 +789,15 @@ class ProjectViewSet(CompartilhamentoSetorMixin, viewsets.ModelViewSet):
             )
 
         project = self.get_object()
+        # Mesma trava do PATCH de card: mover em massa também dessincronizaria
+        # a coluna do `PedidoFeedback`, que é a fonte da verdade. Sem esta
+        # guarda, o bloqueio card a card seria contornável por aqui.
+        if _projeto_do_fluxo_de_feedback(project):
+            return Response(
+                {'detail': FEEDBACK_SOMENTE_LEITURA},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
         from_stage_key = request.data.get('from_stage_key')
         to_stage_key = request.data.get('to_stage_key')
 
@@ -955,7 +1109,13 @@ class ProjectViewSet(CompartilhamentoSetorMixin, viewsets.ModelViewSet):
 
 
 class KanbanStageViewSet(viewsets.ModelViewSet):
-    queryset = KanbanStage.objects.all().order_by('key')
+    # CATÁLOGO GLOBAL — é daqui que a UI de "adicionar coluna" tira as opções
+    # (ProjectDetails/Projects). Etapas marcadas com `oculta_no_catalogo` ficam
+    # de fora: elas pertencem a um fluxo interno e só existem no board daquele
+    # projeto, via `ProjectKanbanStageConfig`. Sem este filtro, qualquer
+    # supervisor com `manage_kanban_config` poderia pendurar "Aguardando 30 dias"
+    # num projeto comum.
+    queryset = KanbanStage.objects.filter(oculta_no_catalogo=False).order_by('key')
     serializer_class = KanbanStageSerializer
     permission_classes = [IsAuthenticated, PodeVerConteudo, NaoVisitanteEscreve]
 
@@ -1002,7 +1162,16 @@ class CardViewSet(CompartilhamentoSetorMixin, viewsets.ModelViewSet):
     
     def perform_create(self, serializer):
         """Define o criado_por automaticamente ao criar um card"""
-        checar_escrita_no_pai(self.request.user, serializer.validated_data.get('projeto'))
+        projeto = serializer.validated_data.get('projeto')
+        # O fluxo de feedback é SOMENTE LEITURA pela API. Os cards dele são
+        # criados pelo gatilho de projeto entregue (apps.feedbacks.estrutura),
+        # que fala com o ORM direto e não passa por aqui — então esta trava não
+        # alcança o caminho legítimo. Vale para TODO MUNDO, inclusive admin:
+        # não é questão de permissão, é que um card criado à mão ali não teria
+        # pedido de feedback associado e ficaria órfão no quadro para sempre.
+        if _projeto_do_fluxo_de_feedback(projeto):
+            raise PermissionDenied(FEEDBACK_SOMENTE_LEITURA)
+        checar_escrita_no_pai(self.request.user, projeto)
         serializer.save(criado_por=self.request.user)
 
     @action(detail=False, methods=['get'], url_path='metrics', permission_classes=[HasPerm('view_metrics')])
@@ -1041,6 +1210,53 @@ class CardViewSet(CompartilhamentoSetorMixin, viewsets.ModelViewSet):
         response['Cache-Control'] = 'private, max-age=60'
         return response
 
+    def _mover_card_do_fluxo_de_feedback(self, request, card):
+        """O ÚNICO write permitido num card do fluxo de feedback: trocar de etapa.
+
+        O recorte é pelo CONJUNTO DE CHAVES do corpo, e é estrito de propósito:
+        só passa quem mandou EXATAMENTE `{"status": ...}`. Qualquer campo a mais
+        (nome, responsável, data_fim, projeto) faz a requisição inteira cair no
+        403 de sempre. Assim um PUT — que o DRF monta com o objeto completo —
+        continua barrado sem precisar de uma segunda regra, e não existe a brecha
+        de "arrastar e, de carona, renomear o card".
+
+        O destino tem de ser um dos QUATRO valores de `EstadoPedido`. É isso que
+        impede um card de feedback de ir parar em 'finalizado' — o que, além de
+        não ter estado correspondente no pedido, o tornaria imóvel para sempre
+        (`_card_edicao_restrita` trata 'finalizado' como card travado).
+
+        Quem escreve é `mover_pedido_do_card_kanban`: PEDIDO primeiro, coluna
+        depois. Ver a docstring dela para o porquê da ordem.
+        """
+        from apps.feedbacks.models import EstadoPedido
+        from apps.feedbacks.services import mover_pedido_do_card_kanban
+
+        dados = request.data if isinstance(request.data, dict) else {}
+        if set(dados.keys()) != {'status'}:
+            return Response(
+                {'detail': FEEDBACK_SOMENTE_LEITURA},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        novo_status = dados.get('status')
+        if not isinstance(novo_status, str) or novo_status not in EstadoPedido.values:
+            return Response(
+                {'detail': FEEDBACK_ETAPA_FORA_DO_FLUXO},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if not mover_pedido_do_card_kanban(card.pk, novo_status):
+            return Response(
+                {'detail': FEEDBACK_SEM_PEDIDO},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Recarrega do banco porque a escrita foi por `.update()` (sem `save()`,
+        # de propósito): a instância em memória ainda tem o status antigo e o
+        # frontend usa a resposta para confirmar o arraste.
+        card.refresh_from_db()
+        return Response(self.get_serializer(card).data)
+
     def update(self, request, *args, **kwargs):
         """Permite atualização apenas se o usuário for o criador ou tiver a
         permissão granular correspondente."""
@@ -1048,6 +1264,16 @@ class CardViewSet(CompartilhamentoSetorMixin, viewsets.ModelViewSet):
         user = request.user
         pode_locked = user.has_perm('accounts.manage_locked_cards')
         pode_others = user.has_perm('accounts.manage_others_cards')
+
+        # Fluxo de feedback: EDIÇÃO continua proibida, MOVIMENTO passa a ser
+        # permitido — e por um caminho próprio, que escreve no `PedidoFeedback`
+        # antes de tocar na coluna. O bloqueio anterior era total e cobria o
+        # arraste junto; ele existia porque um PATCH cru de `status` mexia SÓ no
+        # card, e a reconciliação diária desfazia a mudança em silêncio. O
+        # caminho abaixo remove essa causa em vez de continuar tratando o
+        # sintoma.
+        if _projeto_do_fluxo_de_feedback(getattr(instance, 'projeto', None)):
+            return self._mover_card_do_fluxo_de_feedback(request, instance)
 
         # Card finalizado/inviabilizado ou de sprint fechada: só quem tem
         # `manage_locked_cards` pode editar (cobre PATCH/PUT, inclusive mover
@@ -1089,6 +1315,15 @@ class CardViewSet(CompartilhamentoSetorMixin, viewsets.ModelViewSet):
         user = request.user
         pode_locked = user.has_perm('accounts.manage_locked_cards')
         pode_others = user.has_perm('accounts.manage_others_cards')
+
+        # Fluxo de feedback: somente leitura pela API, para todos. Excluir o
+        # card deixaria o `PedidoFeedback` vivo, com token válido, apontando
+        # para um card que não existe mais — o link continuaria abrindo.
+        if _projeto_do_fluxo_de_feedback(getattr(instance, 'projeto', None)):
+            return Response(
+                {'detail': FEEDBACK_SOMENTE_LEITURA},
+                status=status.HTTP_403_FORBIDDEN,
+            )
 
         # Card finalizado/inviabilizado ou de sprint fechada: só quem tem
         # `manage_locked_cards` exclui.
@@ -1139,14 +1374,11 @@ class CardViewSet(CompartilhamentoSetorMixin, viewsets.ModelViewSet):
         inicio_hoje = timezone.make_aware(datetime.combine(hoje, datetime.min.time()))
         fim_hoje = timezone.make_aware(datetime.combine(hoje, datetime.max.time()))
         
-        # Buscar TODOS os usuários que executam trabalho (sem quem supervisiona)
+        # Quem EXECUTA o trabalho: sem quem supervisiona as prioridades e sem
+        # quem não tem `view_content` (ver `_usuarios_que_executam`).
         supervisao_ids = _ids_supervisao_prioridades()
         usuarios_ativos = scope_users(
-            User.objects.filter(
-                is_active=True
-            ).exclude(
-                id__in=supervisao_ids
-            ),
+            _usuarios_que_executam(User.objects.all()),
             request.user,
         )  # fail-open enquanto flag OFF
 
@@ -1779,9 +2011,7 @@ class WeeklyPriorityViewSet(viewsets.ModelViewSet):
         limite_fechados = timezone.now() - timedelta(days=7)
 
         usuarios_ativos = scope_users(
-            User.objects.filter(is_active=True).exclude(
-                id__in=_ids_supervisao_prioridades()
-            ),
+            _usuarios_que_executam(User.objects.all()),
             request.user,
         )  # fail-open enquanto flag OFF
 
@@ -1871,6 +2101,50 @@ class WeeklyPriorityViewSet(viewsets.ModelViewSet):
         })
 
 
+def _avisar_painel_de_solicitacoes(card, sempre_ids=()):
+    """Agenda o aviso de "a fila mudou" para o painel de Demandas/Solicitações.
+
+    Chamado nos 10 pontos de ciclo de vida das DUAS filas (reabertura e data),
+    porque o painel é UM só: as três abas carregam juntas e o cliente reage com
+    a mesma recarga silenciosa. Fosse só uma das filas, seria visivelmente
+    incoerente a aba de reabertura atualizar sozinha e a irmã ao lado não.
+
+    `transaction.on_commit` SEMPRE, mesmo onde hoje não há bloco atômico aberto.
+    O evento manda o cliente REFAZER o GET, então um aviso pré-commit faria ele
+    ler o estado antigo — em `approve`, a fila voltaria com a linha que acabou
+    de ser aprovada. Hoje os pontos de chamada já estão fora dos blocos
+    atômicos, mas isso é frágil: basta alguém definir `ATOMIC_REQUESTS` (que não
+    existe em config/settings.py) ou embrulhar uma action num atomic para o
+    aviso virar evento fantasma. Fora de bloco atômico o `on_commit` executa
+    imediatamente — o custo de usá-lo em todos os pontos é zero.
+
+    Import tardio de `realtime` pelo mesmo motivo dos outros pontos deste
+    arquivo (ver `_sprint_is_active` mais acima): evita ciclo de import.
+    """
+    from .realtime import broadcast_solicitacoes_changed
+
+    ids = tuple(uid for uid in sempre_ids if uid)
+    transaction.on_commit(lambda: broadcast_solicitacoes_changed(card, sempre_ids=ids))
+
+
+def _avisar_painel_apos_update(resposta, card_antes, solicitante_id):
+    """Aviso do painel depois de um PATCH/PUT numa das duas filas.
+
+    O campo `card` é gravável nos dois serializers: trocá-lo tira a linha do
+    escopo de setor de um grupo e a coloca no de outro, então SAEM DOIS avisos —
+    um para o card antigo, um para o novo. Como é o caso raro, o id novo é lido
+    da própria resposta e o banco só é consultado quando ele realmente mudou.
+    """
+    _avisar_painel_de_solicitacoes(card_antes, sempre_ids=(solicitante_id,))
+
+    novo_id = (resposta.data or {}).get('card')
+    if novo_id is None or str(novo_id) == str(card_antes.pk):
+        return
+    card_depois = Card.objects.select_related('projeto').filter(pk=novo_id).first()
+    if card_depois is not None:
+        _avisar_painel_de_solicitacoes(card_depois, sempre_ids=(solicitante_id,))
+
+
 class CardDueDateChangeRequestViewSet(viewsets.ModelViewSet):
     """
     Solicitações de alteração de data de entrega do card.
@@ -1936,7 +2210,9 @@ class CardDueDateChangeRequestViewSet(viewsets.ModelViewSet):
         if not requested_date:
             raise ValidationError({'requested_date': 'requested_date é obrigatório.'})
 
-        serializer.save(requested_by=self.request.user)
+        obj = serializer.save(requested_by=self.request.user)
+        # +1 na fila: o painel de toda sessão aberta ganha a linha sem F5.
+        _avisar_painel_de_solicitacoes(card, sempre_ids=(obj.requested_by_id,))
 
     def update(self, request, *args, **kwargs):
         # A avaliação (status) muda pelas actions approve/reject. PATCH/PUT direto
@@ -1946,7 +2222,16 @@ class CardDueDateChangeRequestViewSet(viewsets.ModelViewSet):
                 {'detail': 'Apenas supervisor ou admin podem alterar solicitações.'},
                 status=status.HTTP_403_FORBIDDEN,
             )
-        return super().update(request, *args, **kwargs)
+        # `status` é read_only, então a CONTAGEM não muda aqui — mas
+        # `requested_date`/`reason` mudam o que o painel EXIBE. E o `card` é
+        # gravável: trocá-lo MOVE a linha entre escopos de setor, então avisamos
+        # os dois lados (quem via antes e quem passa a ver).
+        instancia = self.get_object()
+        card_antes = instancia.card
+        resposta = super().update(request, *args, **kwargs)
+        if resposta.status_code < 400:
+            _avisar_painel_apos_update(resposta, card_antes, instancia.requested_by_id)
+        return resposta
 
     def destroy(self, request, *args, **kwargs):
         instance = self.get_object()
@@ -1959,7 +2244,12 @@ class CardDueDateChangeRequestViewSet(viewsets.ModelViewSet):
                 {'detail': 'Sem permissão para excluir esta solicitação.'},
                 status=status.HTTP_403_FORBIDDEN,
             )
-        return super().destroy(request, *args, **kwargs)
+        # O card sai de `instance` ANTES do delete — depois a linha já não existe.
+        card = instance.card
+        solicitante_id = instance.requested_by_id
+        resposta = super().destroy(request, *args, **kwargs)
+        _avisar_painel_de_solicitacoes(card, sempre_ids=(solicitante_id,))
+        return resposta
 
     @action(detail=True, methods=['post'])
     def approve(self, request, pk=None):
@@ -2010,6 +2300,11 @@ class CardDueDateChangeRequestViewSet(viewsets.ModelViewSet):
             usuario=request.user,
         )
 
+        # -1 na fila. Fora do `with transaction.atomic()` de propósito (ver o
+        # helper): dentro dele o cliente refaria o GET e leria a linha ainda
+        # pendente. Usa o `card` travado/salvo, não `req.card` (foto anterior).
+        _avisar_painel_de_solicitacoes(card, sempre_ids=(req.requested_by_id,))
+
         serializer = self.get_serializer(req)
         return Response(serializer.data, status=status.HTTP_200_OK)
 
@@ -2026,6 +2321,391 @@ class CardDueDateChangeRequestViewSet(viewsets.ModelViewSet):
         req.reviewed_by = request.user
         req.reviewed_at = timezone.now()
         req.save(update_fields=['status', 'reviewed_by', 'reviewed_at', 'updated_at'])
+
+        # -1 na fila: a linha some do painel de todo mundo que a via.
+        _avisar_painel_de_solicitacoes(req.card, sempre_ids=(req.requested_by_id,))
+
+        serializer = self.get_serializer(req)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+def _formatar_data_local(dt):
+    """dd/mm/aaaa hh:mm no fuso da aplicação — para texto lido por humanos.
+
+    O histórico do card é lido por pessoas, não por máquina: gravar o
+    `datetime` cru (UTC, com microssegundos) deixaria a timeline com uma data
+    que não bate com a que o usuário vê no card."""
+    if not dt:
+        return 'sem data'
+    if timezone.is_aware(dt):
+        dt = timezone.localtime(dt)
+    return dt.strftime('%d/%m/%Y %H:%M')
+
+
+class CardReopenRequestViewSet(viewsets.ModelViewSet):
+    """
+    Solicitações de REABERTURA de cards fechados.
+
+    Irmão de `CardDueDateChangeRequestViewSet` (leia aquele primeiro): mesma
+    anatomia de fila, mesmo par de actions, mesma disciplina de escopo. O que
+    muda é o efeito da aprovação — aqui o card volta para "A Desenvolver" com um
+    novo prazo, e a reabertura vira um evento próprio no histórico.
+
+    - Criação: apenas o responsável pelo card, e só enquanto o card estiver
+      FECHADO (finalizado ou inviabilizado).
+    - Avaliação: quem tem `approve_card_reopen` (permissão separada da de
+      prazo — ver permission_catalog.py).
+    """
+    serializer_class = CardReopenRequestSerializer
+    permission_classes = [IsAuthenticated, PodeVerConteudo, NaoVisitanteEscreve]
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filterset_fields = ['status', 'requested_by', 'reviewed_by', 'card']
+    search_fields = ['reason', 'card__nome', 'requested_by__username']
+    ordering_fields = ['created_at', 'updated_at', 'reviewed_at', 'nova_data_entrega']
+    ordering = ['-created_at']
+
+    def get_queryset(self):
+        qs = CardReopenRequest.objects.select_related(
+            'card', 'card__projeto', 'card__projeto__sprint', 'requested_by', 'reviewed_by'
+        )
+        # Projeto arquivado sai das listagens genéricas, mas continua acessível
+        # via `?card=<id>` (a aba de histórico do card) — igual ao irmão.
+        if self.action == 'list' and not self.request.query_params.get('card'):
+            qs = qs.filter(card__projeto__arquivado=False)
+        return scope_card_reopen_requests(qs, self.request.user)  # fail-open enquanto flag OFF
+
+    def perform_create(self, serializer):
+        from rest_framework.exceptions import ValidationError, PermissionDenied
+
+        card = serializer.validated_data.get('card')
+        nova_data = serializer.validated_data.get('nova_data_entrega')
+
+        if not card:
+            raise ValidationError({'card': 'Card é obrigatório.'})
+
+        card = Card.objects.select_related('projeto__sprint').get(pk=card.pk)
+
+        # Pedir reabertura é abrir um registro DENTRO do card, e o card vem por
+        # id do cliente. A checagem de `responsavel` logo abaixo cobre quase
+        # tudo, menos o responsável emprestado: alguém do setor A atribuído a um
+        # card que o setor B cedeu apenas para LEITURA.
+        checar_escrita_no_pai(self.request.user, card)
+
+        # Quem pode PEDIR: o responsável, ou quem já tem poder sobre card de
+        # terceiro (`manage_others_cards`), ou quem avalia reaberturas.
+        #
+        # A regra "só o responsável" veio do fluxo de mudança de PRAZO, onde ela
+        # cabe: o prazo é um acordo de quem executa. Reabertura é outra coisa —
+        # quem percebe que o trabalho não estava pronto costuma ser o gestor ou
+        # quem recebeu a entrega, não quem a fez. E era incoerente que alguém
+        # com `approve_card_reopen` pudesse aprovar o pedido mas não abri-lo,
+        # tendo que pedir ao responsável para registrar algo que ele mesmo
+        # decidiria.
+        pode_pedir = (
+            card.responsavel_id == self.request.user.id
+            or self.request.user.has_perm('accounts.manage_others_cards')
+            or self.request.user.has_perm('accounts.approve_card_reopen')
+        )
+        if not pode_pedir:
+            raise PermissionDenied(
+                'Você só pode solicitar a reabertura de cards atribuídos a você.')
+
+        # A razão de ser do fluxo: reabertura só faz sentido para card FECHADO.
+        # Card aberto não precisa de pedido nenhum — quem é responsável já move
+        # o card no quadro.
+        if card.status not in (CardStatus.FINALIZADO, CardStatus.INVIABILIZADO):
+            raise ValidationError({
+                'card': 'Este card não está fechado — a reabertura só vale para '
+                        'cards finalizados ou inviabilizados.',
+            })
+
+        if not nova_data:
+            raise ValidationError({'nova_data_entrega': 'nova_data_entrega é obrigatório.'})
+
+        if timezone.is_naive(nova_data):
+            nova_data = timezone.make_aware(nova_data, timezone.get_current_timezone())
+        if nova_data <= timezone.now():
+            # Reabrir com prazo no passado devolveria ao quadro um card já
+            # nascido atrasado — o alerta de atraso dispararia no mesmo
+            # instante. Se o prazo real é curto, que seja curto e futuro.
+            raise ValidationError({
+                'nova_data_entrega': 'A nova data de entrega precisa estar no futuro.',
+            })
+
+        # Uma fila por card: dois pedidos pendentes para o mesmo card viram duas
+        # aprovações possíveis do MESMO fato, e a segunda reescreveria o
+        # `data_fim` que a primeira acabou de definir.
+        ja_pendente = CardReopenRequest.objects.filter(
+            card=card, status=CardDateChangeRequestStatus.PENDING,
+        ).exists()
+        if ja_pendente:
+            raise ValidationError({
+                'card': 'Já existe uma solicitação de reabertura pendente para este card.',
+            })
+
+        obj = serializer.save(requested_by=self.request.user)
+        # +1 na fila. É o pedido literal do dono do produto: ao SOLICITAR a
+        # reabertura, o painel de Demandas/Solicitações atualiza sem F5 — nas
+        # outras abas de quem pediu e na sessão de quem aprova.
+        _avisar_painel_de_solicitacoes(card, sempre_ids=(obj.requested_by_id,))
+
+    def update(self, request, *args, **kwargs):
+        # A avaliação (status) muda pelas actions approve/reject. PATCH/PUT
+        # direto é caminho de correção administrativa — quem avalia reabertura.
+        if not request.user.has_perm('accounts.approve_card_reopen'):
+            return Response(
+                {'detail': 'Sem permissão para alterar solicitações de reabertura.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        # Mesmo tratamento do irmão de prazo: `status` é read_only (a contagem
+        # não muda), mas `reason`/`nova_data_entrega` mudam o que o painel exibe
+        # e o `card` gravável move a linha entre escopos de setor.
+        instancia = self.get_object()
+        card_antes = instancia.card
+        resposta = super().update(request, *args, **kwargs)
+        if resposta.status_code < 400:
+            _avisar_painel_apos_update(resposta, card_antes, instancia.requested_by_id)
+        return resposta
+
+    def destroy(self, request, *args, **kwargs):
+        instance = self.get_object()
+        is_privileged = request.user.has_perm('accounts.approve_card_reopen')
+        # Quem pediu pode desistir enquanto ninguém avaliou; depois de avaliado,
+        # o registro é histórico da decisão e só sai por quem avalia.
+        is_dono_pendente = (
+            instance.requested_by_id == request.user.id
+            and instance.status == CardDateChangeRequestStatus.PENDING
+        )
+        if not is_privileged and not is_dono_pendente:
+            return Response(
+                {'detail': 'Sem permissão para excluir esta solicitação.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        # O card sai de `instance` ANTES do delete — depois a linha já não existe.
+        card = instance.card
+        solicitante_id = instance.requested_by_id
+        resposta = super().destroy(request, *args, **kwargs)
+        _avisar_painel_de_solicitacoes(card, sempre_ids=(solicitante_id,))
+        return resposta
+
+    def _notificar_solicitante(self, req, titulo, mensagem):
+        """Avisa quem pediu o desfecho da avaliação.
+
+        Reaproveita `send_notification` (o mecanismo único de notificação da
+        plataforma: grava no banco, respeita a preferência do usuário e empurra
+        pelo WebSocket). Usa o tipo `CARD_UPDATED` porque é o tipo existente que
+        já vem LIGADO por padrão — inventar um tipo novo exigiria também um
+        campo novo em `UserNotificationPreference` para o usuário poder
+        desligá-lo, e o pedido aqui é só "quem solicitou precisa saber".
+
+        Silencioso quando o solicitante saiu da empresa (`requested_by` vira
+        NULL) ou quando quem avaliou é o próprio solicitante — ninguém precisa
+        de notificação do próprio clique.
+        """
+        from .notification_utils import send_notification
+
+        if not req.requested_by_id or req.requested_by_id == (req.reviewed_by_id or 0):
+            return
+        try:
+            send_notification(
+                user_id=req.requested_by_id,
+                tipo=NotificationType.CARD_UPDATED,
+                titulo=titulo,
+                mensagem=mensagem,
+                card_id=req.card_id,
+                project_id=req.card.projeto_id,
+                metadata={
+                    'card_nome': req.card.nome,
+                    'reopen_request_id': req.id,
+                    'reopen_request_status': req.status,
+                },
+            )
+        except Exception:
+            # Notificação é efeito colateral: a reabertura já foi commitada e
+            # não pode ser desfeita porque o WebSocket caiu.
+            logger.exception('Falha ao notificar solicitante da reabertura %s', req.id)
+
+    @action(detail=True, methods=['post'])
+    def approve(self, request, pk=None):
+        if not request.user.has_perm('accounts.approve_card_reopen'):
+            return Response(
+                {'detail': 'Você não tem permissão para aprovar reaberturas de card.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        req = self.get_object()
+        if req.status != CardDateChangeRequestStatus.PENDING:
+            return Response({'detail': 'Esta solicitação não está pendente.'},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        # Aprovar é a única action daqui que escreve DENTRO do card (status,
+        # prazo e uma linha na timeline). O escopo do `get_queryset()` não cobre
+        # este caso: card emprestado em nível 'leitura' é VISÍVEL, então a
+        # solicitação sai normalmente do `get_object()` e só aqui dá para
+        # recusar. `approve_card_reopen` diz O QUE a pessoa faz, não ONDE.
+        checar_escrita_no_pai(request.user, req.card)
+
+        # Card de sprint encerrada é o caso COMUM (no acervo atual, 678 dos 705
+        # cards fechados estão nessa situação), então recusar seria inutilizar a
+        # funcionalidade. Decisão do dono do produto: o card é reaberto na
+        # sprint EM ANDAMENTO do setor dele, e a métrica passa a contar ali.
+        #
+        # Exigir a sprint ativa não é burocracia: sem ela o card voltaria para
+        # um quadro encerrado, invisível para quem trabalha — reaberto no papel
+        # e perdido na prática.
+        sprint_atual = None
+        sprint_origem = getattr(req.card.projeto, 'sprint', None)
+        if _sprint_efetivamente_fechada(sprint_origem):
+            setor_id = getattr(req.card, 'setor_id', None) or getattr(sprint_origem, 'setor_id', None)
+            sprint_atual = sprint_em_andamento_do_setor(setor_id)
+            if sprint_atual is None:
+                nome_setor = getattr(getattr(req.card, 'setor', None), 'nome', 'do card')
+                return Response(
+                    {'detail': f'A sprint deste card já foi encerrada e o setor {nome_setor} '
+                               'não tem nenhuma sprint em andamento para receber a reabertura. '
+                               'Abra a sprint atual antes de aprovar.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+        # Foto do card ANTES do reancoramento. Aprovar pode MOVER o card para
+        # outro projeto/sprint (`reancorar_card_na_sprint`, logo abaixo), e o
+        # empréstimo entre setores do DESTINO não é necessariamente o da ORIGEM:
+        # a sprint antiga podia estar cedida a um setor que a atual não cede, e
+        # o projeto de destino só herda os empréstimos quando é criado agora.
+        # Quem enxergava a fila por aquele caminho precisa saber que a linha
+        # saiu dela — resolvido só sobre o card já movido, o aviso não chega e o
+        # painel dessa gente fica com a solicitação aprovada até um F5. É o
+        # mesmo cuidado que `update` tem com o campo `card` gravável, aqui pela
+        # via indireta.
+        card_antes = req.card
+
+        with transaction.atomic():
+            # Trava a SOLICITAÇÃO antes do card: é ela que decide se a
+            # reabertura acontece. Dois cliques simultâneos em "aprovar" fazem o
+            # segundo esperar aqui e reler `status` já 'approved' — sem isso, os
+            # dois passariam pela checagem lá de cima e o card seria reaberto (e
+            # logado) duas vezes.
+            req = CardReopenRequest.objects.select_for_update().select_related(
+                'card__projeto'
+            ).get(pk=req.pk)
+            if req.status != CardDateChangeRequestStatus.PENDING:
+                return Response({'detail': 'Esta solicitação já foi avaliada.'},
+                                status=status.HTTP_400_BAD_REQUEST)
+
+            card = Card.objects.select_for_update().select_related('projeto__sprint').get(pk=req.card_id)
+            if card.status not in (CardStatus.FINALIZADO, CardStatus.INVIABILIZADO):
+                # Alguém já reabriu o card na mão enquanto o pedido esperava.
+                # Aplicar de novo só reescreveria o prazo e duplicaria o log.
+                return Response(
+                    {'detail': 'Este card não está mais fechado — a reabertura já não se aplica.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            nova_dt = req.nova_data_entrega
+            if timezone.is_naive(nova_dt):
+                nova_dt = timezone.make_aware(nova_dt, timezone.get_current_timezone())
+
+            status_anterior = card.get_status_display()
+
+            # Reancora na sprint em andamento, quando a de origem já fechou. O
+            # card é MOVIDO, não copiado: a métrica conta na sprint em que ele
+            # foi reaberto (decisão do dono do produto), e a de origem perde a
+            # entrega — correto, porque o trabalho voltou.
+            sprint_anterior_nome = None
+            if sprint_atual is not None:
+                sprint_anterior_nome = getattr(getattr(card.projeto, 'sprint', None), 'nome', None)
+                reancorar_card_na_sprint(card, sprint_atual)
+
+            card.status = CardStatus.A_DESENVOLVER
+            card.data_fim = nova_dt
+            # `finalizado_em` é a marca de ENTREGA e alimenta as métricas de
+            # prazo (entregue/entregue no prazo, nos relatórios). Um card "a
+            # desenvolver" com data de conclusão contaria como entrega feita e
+            # como trabalho pendente ao mesmo tempo. O `pre_save` do Card já
+            # limpa isso quando o status anterior era FINALIZADO; aqui é
+            # explícito porque o caso INVIABILIZADO não passa por aquele ramo.
+            # (`data_inicio` também é zerado — pelo `Card.save()`, que trata
+            # 'a_desenvolver' como "ainda não começou". É o comportamento
+            # desejado: o card volta ao início da fila e o cronômetro de
+            # desenvolvimento recomeça quando ele voltar a "Em Desenvolvimento".)
+            card.finalizado_em = None
+            card._request_user = request.user
+            card.save()
+
+            CardLog.objects.create(
+                card=card,
+                tipo_evento=CardLogEventType.REABERTO,
+                descricao=(
+                    f"Card reaberto em {_formatar_data_local(timezone.now())} "
+                    f"(estava em \"{status_anterior}\"). "
+                    f"Nova data de entrega: {_formatar_data_local(nova_dt)}."
+                    + (f' Movido da sprint "{sprint_anterior_nome}" para '
+                       f'"{sprint_atual.nome}".' if sprint_atual is not None else "")
+                    + (f"\n\nMotivo: {req.reason.strip()}" if (req.reason or '').strip() else "")
+                ),
+                usuario=request.user,
+            )
+
+            req.status = CardDateChangeRequestStatus.APPROVED
+            req.reviewed_by = request.user
+            req.reviewed_at = timezone.now()
+            req.save(update_fields=['status', 'reviewed_by', 'reviewed_at', 'updated_at'])
+            # O `card` travado acima é OUTRA instância do mesmo registro que a
+            # carregada em `req.card`. Sem esta linha, o `card_detail` da
+            # resposta seria a foto ANTERIOR do card (ainda "Finalizado", ainda
+            # com a data velha) e a tela de quem aprovou mostraria a reabertura
+            # como se não tivesse acontecido até um refresh.
+            req.card = card
+
+        self._notificar_solicitante(
+            req,
+            'Reabertura aprovada',
+            f'A reabertura do card "{req.card.nome}" foi aprovada. Ele voltou para '
+            f'"A Desenvolver" com entrega em {_formatar_data_local(nova_dt)}.',
+        )
+        # -1 na fila. Aqui, como no `_notificar_solicitante` logo acima, o ponto
+        # é FORA do `with transaction.atomic()`: o cliente reage refazendo o
+        # GET, e de dentro do bloco ele leria a fila ainda com esta linha.
+        # `req.card` é a instância reatribuída acima — já com o `setor_id`
+        # correto depois de um eventual reancoramento de sprint.
+        _avisar_painel_de_solicitacoes(req.card, sempre_ids=(req.requested_by_id,))
+        if card_antes is not None and card_antes.projeto_id != req.card.projeto_id:
+            # Houve reancoramento: sai um segundo aviso pelo alcance ANTIGO. No
+            # caso comum (card fica onde está) esta linha não emite nada, e
+            # quando emite os dois eventos são coalescidos pelo debounce do
+            # cliente — o custo é uma recarga silenciosa, não duas.
+            _avisar_painel_de_solicitacoes(card_antes, sempre_ids=(req.requested_by_id,))
+
+        serializer = self.get_serializer(req)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=['post'])
+    def reject(self, request, pk=None):
+        if not request.user.has_perm('accounts.approve_card_reopen'):
+            return Response(
+                {'detail': 'Você não tem permissão para recusar reaberturas de card.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        req = self.get_object()
+        if req.status != CardDateChangeRequestStatus.PENDING:
+            return Response({'detail': 'Esta solicitação não está pendente.'},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        # Recusar não toca no card — muda só a linha da solicitação —, por isso
+        # não passa por `checar_escrita_no_pai` (mesma divisão do irmão de prazo).
+        req.status = CardDateChangeRequestStatus.REJECTED
+        req.reviewed_by = request.user
+        req.reviewed_at = timezone.now()
+        req.save(update_fields=['status', 'reviewed_by', 'reviewed_at', 'updated_at'])
+
+        self._notificar_solicitante(
+            req,
+            'Reabertura recusada',
+            f'A solicitação de reabertura do card "{req.card.nome}" foi recusada.',
+        )
+        # -1 na fila: a linha some do painel de todo mundo que a via.
+        _avisar_painel_de_solicitacoes(req.card, sempre_ids=(req.requested_by_id,))
 
         serializer = self.get_serializer(req)
         return Response(serializer.data, status=status.HTTP_200_OK)

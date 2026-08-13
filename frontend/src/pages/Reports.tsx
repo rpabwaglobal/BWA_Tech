@@ -1,19 +1,26 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import {
-  BarChart3, Zap, FolderKanban, Layers, User as UserIcon, AlertTriangle,
-  TrendingUp, ListChecks, FileText, Search, History,
-  type LucideIcon,
-} from 'lucide-react';
+import { BarChart3, Zap, FolderKanban, Layers, User as UserIcon, AlertTriangle, TrendingUp, ListChecks, FileText, Search, History, type LucideIcon, MessageCircle } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import ReportConfigPanel from '@/components/reports/ReportConfigPanel';
+import { PainelFeedbacks } from '@/components/reports/PainelFeedbacks';
 import ReportPreviewDialog from '@/components/reports/ReportPreviewDialog';
 import { reportService, type ReportJob, type ReportType } from '@/services/reportService';
 import type { ReportFilterKey } from '@/components/reports/ReportConfigPanel';
 
 type Category = 'Métricas' | 'Operacional';
 
+/**
+ * O ID de um item da lista da esquerda.
+ *
+ * `ReportType` é o contrato do que o BACKEND gera e entrega como arquivo.
+ * `'feedbacks'` não é isso: é um PAINEL que se olha na tela, sem download.
+ * Ampliar `ReportType` para incluí-lo faria o serviço de relatórios prometer um
+ * arquivo que não existe — daí a união aqui, e só aqui.
+ */
+export type ItemDeRelatorioId = ReportType | 'feedbacks';
+
 export type ReportDef = {
-  id: ReportType;
+  id: ItemDeRelatorioId;
   title: string;
   description: string;
   category: Category;
@@ -90,9 +97,18 @@ const REPORT_DEFS: ReportDef[] = [
     category: 'Operacional',
     filters: ['project'],
   },
+  {
+    // NÃO gera arquivo: abre o quadro do fluxo de feedback no painel da direita.
+    // Mora aqui porque é onde se procura "o que os clientes disseram".
+    id: 'feedbacks',
+    title: 'Feedbacks',
+    description: 'Formulários pós-entrega: link para enviar e respostas colhidas.',
+    category: 'Operacional',
+    filters: [],
+  },
 ];
 
-const ICONS: Record<ReportType, LucideIcon> = {
+const ICONS: Record<ItemDeRelatorioId, LucideIcon> = {
   metrics: BarChart3,
   sprint: Zap,
   cards: Layers,
@@ -101,6 +117,7 @@ const ICONS: Record<ReportType, LucideIcon> = {
   bottlenecks: AlertTriangle,
   executive: TrendingUp,
   backlog: ListChecks,
+  feedbacks: MessageCircle,
 };
 
 const CATEGORY_ORDER: Category[] = ['Operacional', 'Métricas'];
@@ -111,7 +128,7 @@ const CATEGORY_META: Record<Category, { dot: string; label: string }> = {
 };
 
 export default function Reports() {
-  const [selectedId, setSelectedId] = useState<ReportType>('cards');
+  const [selectedId, setSelectedId] = useState<ItemDeRelatorioId>('cards');
   const [search, setSearch] = useState('');
   /** Job a ser RETOMADO (se usuário recarregou com job ativo). */
   const [resumeJobId, setResumeJobId] = useState<number | null>(null);
@@ -123,7 +140,7 @@ export default function Reports() {
    * o auto-select tardio do retomar, que sobrescreveria a escolha dele. */
   const userPickedRef = useRef(false);
 
-  const pickReport = useCallback((id: ReportType) => {
+  const pickReport = useCallback((id: ItemDeRelatorioId) => {
     userPickedRef.current = true;
     setSelectedId(id);
   }, []);
@@ -327,10 +344,20 @@ export default function Reports() {
           </div>
         </aside>
 
-        {/* Right: config panel — `key` força reset ao trocar relatório */}
+        {/* Direita: o PAINEL de feedbacks, ou o config do relatório escolhido.
+            São coisas diferentes ocupando o mesmo espaço — feedback se olha,
+            relatório se gera. */}
+        {selectedId === 'feedbacks' ? (
+          <PainelFeedbacks />
+        ) : (
+        /* `key` força reset ao trocar relatório.
+           `report` é estreitado aqui: neste ramo `selectedId` já não é
+           'feedbacks', e o painel de configuração só sabe lidar com relatório
+           que o backend GERA. O TypeScript recusa a atribuição sem isto — e é
+           bom que recuse. */
         <ReportConfigPanel
           key={selected.id}
-          report={selected}
+          report={selected as ReportDef & { id: ReportType }}
           icon={ICONS[selected.id]}
           categoryColor={CATEGORY_META[selected.category].dot}
           categoryLabel={CATEGORY_META[selected.category].label}
@@ -338,6 +365,7 @@ export default function Reports() {
           onCompleted={handleJobCompleted}
           onResumeConsumed={() => { setResumeJobId(null); setResumeJobType(null); }}
         />
+        )}
       </div>
 
       <ReportPreviewDialog

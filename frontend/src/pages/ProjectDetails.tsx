@@ -12,6 +12,7 @@ import { Label } from '@/components/ui/label';
 import { DateInput } from '@/components/ui/date-input';
 import { DateTimePicker } from '@/components/ui/datetime-picker';
 import { RequestDueDateChangeModal } from '@/components/RequestDueDateChangeModal';
+import { RequestCardReopenModal } from '@/components/RequestCardReopenModal';
 import { Textarea } from '@/components/ui/textarea';
 import { UserSelect } from '@/components/ui/user-select';
 import { FilterSelect } from '@/components/ui/filter-select';
@@ -73,7 +74,6 @@ import {
   AlertCircle,
   XCircle,
   Clock,
-  Lock,
   ExternalLink,
   Trash2,
   Pin,
@@ -91,6 +91,7 @@ import {
   FolderInput,
   Trophy,
   Share2,
+  MessageCircle,
 } from 'lucide-react';
 import { formatDate, formatDateTime, isCardAtrasado, calcularDiasTotais, calcularDiasUteis } from '@/lib/dateUtils';
 import { ATRASADO_STATUS_BADGE } from '@/lib/dueDateBadgeClasses';
@@ -113,6 +114,18 @@ import {
   readShowPriorityColorsOnKanbanCards,
   SHOW_PRIORITY_COLORS_ON_KANBAN_CARDS_KEY,
 } from '@/lib/kanbanCardDisplayPreference';
+import {
+  isProjetoMonitoramento,
+  ehEtapaDoFluxoFeedback,
+  CORES_ETAPAS_FEEDBACK,
+} from '@/lib/monitoramentoFeedback';
+import { FeedbackCardBloco } from '@/components/FeedbackCardBloco';
+import {
+  buscarPedidosDosCards,
+} from '@/services/pedidoFeedbackService';
+import type { PedidoFeedbackResumo } from '@/services/pedidoFeedbackService';
+import { CardFeedbackSection } from '@/components/CardFeedbackSection';
+import { FeedbackConsolidadoDialog } from '@/components/FeedbackConsolidadoDialog';
 
 const DEFAULT_PROJECT_STAGES = [
   {
@@ -160,6 +173,29 @@ const DEFAULT_PROJECT_STAGES = [
 ];
 
 type ProjectStage = (typeof DEFAULT_PROJECT_STAGES)[number];
+
+/**
+ * Cor de fundo da coluna, a partir da KEY da etapa.
+ *
+ * Era o mesmo trecho escrito duas vezes (no `loadData` e no
+ * `normalizeStagesFromApi`); virou função única porque agora tem três ordens de
+ * precedência e mantê-las sincronizadas em duas cópias é convite a bug:
+ *   1. etapa legada  -> a cor que ela sempre teve;
+ *   2. etapa de feedback -> cor com significado (espera → aguardando → colhido);
+ *   3. qualquer outra -> paleta determinística por hash (nunca classe Tailwind
+ *      montada em runtime, que o build purga).
+ */
+const stageKeyToColor = (stageId: string): string => {
+  const fallback = DEFAULT_PROJECT_STAGES.find((s) => s.id === stageId);
+  if (fallback) return fallback.color;
+  const corDeFeedback = CORES_ETAPAS_FEEDBACK[stageId];
+  if (corDeFeedback) return corDeFeedback;
+  const palette = ['bg-gray-100', 'bg-blue-100', 'bg-orange-100', 'bg-purple-100', 'bg-green-100', 'bg-red-100'];
+  let hash = 0;
+  for (let i = 0; i < stageId.length; i++) hash = stageId.charCodeAt(i) + ((hash << 5) - hash);
+  const idx = Math.abs(hash) % palette.length;
+  return palette[idx];
+};
 
 const getRoleLabel = (role: string): string => {
   switch (role) {
@@ -384,6 +420,7 @@ function KanbanColumn({
   selectedCardIds,
   pinnedCardIds,
   onTogglePin,
+  pedidosFeedback,
 }: {
   stage: ProjectStage;
   cards: CardType[];
@@ -397,6 +434,9 @@ function KanbanColumn({
   selectedCardIds: string[];
   pinnedCardIds: Set<string>;
   onTogglePin: (cardId: string, pin: boolean) => void;
+  /** Mapa cardId -> pedido de feedback. Só o quadro de monitoramento manda;
+   *  ausente nos demais, e é a ausência que mantém o card comum intacto. */
+  pedidosFeedback?: Record<string, PedidoFeedbackResumo>;
 }) {
   const { setNodeRef, isOver } = useDroppable({
     id: stage.id,
@@ -465,6 +505,7 @@ function KanbanColumn({
                   }
                   isPinned={pinnedCardIds.has(card.id)}
                   onTogglePin={onTogglePin}
+                  pedidoFeedback={pedidosFeedback?.[String(card.id)] ?? null}
                 />
               ))}
             </SortableContext>
@@ -474,6 +515,18 @@ function KanbanColumn({
     </div>
   );
 }
+
+/**
+ * O bloco que substitui a descrição nos cards do fluxo de feedback: link do
+ * formulário + copiar, e a contagem de respostas quando já houver alguma.
+ *
+ * `stopPropagation` em tudo: o card inteiro é clicável (abre o modal) e é
+ * arrastável. Sem isso, copiar o link abriria o card no mesmo gesto.
+ *
+ * A falha de cópia NÃO fica silenciosa: `navigator.clipboard` exige contexto
+ * seguro e pode ser negado pelo navegador. Quando falha, o próprio campo do
+ * link vira a saída — ele já é selecionável, e o aviso diz para usar Ctrl+C.
+ */
 
 function KanbanCard({
   card,
@@ -490,6 +543,7 @@ function KanbanCard({
   excludedFromBulkMove,
   isPinned,
   onTogglePin,
+  pedidoFeedback,
 }: {
   card: CardType;
   onClick: () => void;
@@ -508,6 +562,15 @@ function KanbanCard({
   isPinned?: boolean;
   /** Toggle do pin pessoal. Recebe o cardId e o novo estado desejado. */
   onTogglePin?: (cardId: string, pin: boolean) => void;
+  /**
+   * Pedido de feedback deste card. Presente SÓ no quadro de monitoramento.
+   *
+   * A presença dele é o que muda o preview: sem responsável, sem cor nem tag de
+   * prioridade e sem descrição — no lugar da descrição, o link do formulário com
+   * botão de copiar, e a contagem de respostas quando houver. O card COMUM não
+   * recebe este prop e por isso não muda em nada.
+   */
+  pedidoFeedback?: PedidoFeedbackResumo | null;
 }) {
   // Verificar se card está finalizado ou inviabilizado
   const isCardFinished = card.status === 'finalizado' || card.status === 'inviabilizado';
@@ -696,9 +759,15 @@ function KanbanCard({
         </p>
       )}
 
+      {/* No fluxo de feedback, ABAIXO da descrição: o link (ou a contagem de
+          dias, na espera) e a tag de situação das respostas. */}
+      {pedidoFeedback && <FeedbackCardBloco pedido={pedidoFeedback} />}
+
       <div className="flex items-center justify-between mt-[8px]">
+        {/* Sem responsável no fluxo de feedback: ninguém "executa" um card
+            desses — quem responde é uma pessoa de fora, pelo link. */}
         <div className="flex items-center gap-[8px]">
-          {card.responsavel_name ? (
+          {pedidoFeedback ? null : card.responsavel_name ? (
             <div className={cn('flex items-center gap-[6px] text-xs', ink)}>
               {responsibleRoleLabel ? (
                 <Badge
@@ -727,16 +796,18 @@ function KanbanCard({
               {Number(card.score_final).toFixed(1)}
             </span>
           )}
-          <span
-            className={cn(
-              'text-[10px] px-[6px] py-[2px] rounded-full font-medium',
-              showPriorityColorsOnCards
-                ? kanbanMutedChipOnPastelClass
-                : cn('bg-[var(--color-muted)]/50', ink),
-            )}
-          >
-            {getPriorityLabel(card.prioridade)}
-          </span>
+          {!pedidoFeedback && (
+            <span
+              className={cn(
+                'text-[10px] px-[6px] py-[2px] rounded-full font-medium',
+                showPriorityColorsOnCards
+                  ? kanbanMutedChipOnPastelClass
+                  : cn('bg-[var(--color-muted)]/50', ink),
+              )}
+            >
+              {getPriorityLabel(card.prioridade)}
+            </span>
+          )}
         </div>
       </div>
     </div>
@@ -866,6 +937,7 @@ export default function ProjectDetails() {
     responsavel: '',
     data_inicio: '',
     data_fim: '',
+    gerar_formulario_feedback: false,
   });
   const [cardLinks, setCardLinks] = useState<CardLink[]>([]);
   const [newLinkUrl, setNewLinkUrl] = useState('');
@@ -920,6 +992,12 @@ export default function ProjectDetails() {
   const [cardFormLoading, setCardFormLoading] = useState(false);
   const [cardFormError, setCardFormError] = useState('');
   const [dueDateRequestOpen, setDueDateRequestOpen] = useState(false);
+  // Reabertura é o espelho invertido do pedido de data: só existe para card
+  // FECHADO, então mora ao lado dele mas nunca aparece junto.
+  const [reopenRequestOpen, setReopenRequestOpen] = useState(false);
+  // Guarda o CARD INTEIRO, não o id: o modal de reabertura trabalha sobre um
+  // card só e recebe o objeto pronto, então abre sem nenhuma requisição.
+  const [reopenCard, setReopenCard] = useState<CardType | null>(null);
   const [showPriorityColorsOnCards, setShowPriorityColorsOnCards] = useState(
     readShowPriorityColorsOnKanbanCards,
   );
@@ -1024,24 +1102,18 @@ export default function ProjectDetails() {
       setCards(cardsData);
       setUsers(usersData);
 
-      // Carregar etapas configuradas para este projeto
+      // Carregar etapas configuradas para este projeto.
+      // É AQUI que o recorte das colunas acontece, e ele vem inteiro do backend:
+      // a `kanban-config` devolve as etapas configuradas PARA ESTE PROJETO. O
+      // board de monitoramento recebe só as 3 de feedback; um projeto comum, só
+      // as normais. O frontend nunca monta essa lista, então as colunas não têm
+      // como vazar de um lado para o outro.
       if (kanbanConfigData?.stages?.length) {
-        const stageToColor = (stageId: string): string => {
-          const fallback = DEFAULT_PROJECT_STAGES.find((s) => s.id === stageId);
-          if (fallback) return fallback.color;
-          // Paleta fallback determinística (sem Tailwind dinâmica)
-          const palette = ['bg-gray-100', 'bg-blue-100', 'bg-orange-100', 'bg-purple-100', 'bg-green-100', 'bg-red-100'];
-          let hash = 0;
-          for (let i = 0; i < stageId.length; i++) hash = stageId.charCodeAt(i) + ((hash << 5) - hash);
-          const idx = Math.abs(hash) % palette.length;
-          return palette[idx];
-        };
-
         setStages(
           kanbanConfigData.stages.map((s: any) => ({
             id: s.key,
             label: s.label,
-            color: stageToColor(s.key),
+            color: stageKeyToColor(s.key),
             is_terminal: !!s.is_terminal,
             requires_required_data: !!s.requires_required_data,
           })),
@@ -1085,6 +1157,63 @@ export default function ProjectDetails() {
 
   const sprintIsFinished = isSprintFinished(sprint);
   const isSupportProject = normalizeProjectName(project?.nome || '') === 'suporte';
+  /**
+   * Este board é o fluxo "Monitoramento de Feedbacks"?
+   *
+   * As COLUNAS não precisam de nenhum tratamento: quem decide o board é a
+   * `kanban-config` do projeto, que aqui já devolve exatamente as etapas de
+   * feedback e nenhuma das 6 normais (e o contrário nos projetos comuns). O que
+   * muda é o COMPORTAMENTO: criar e excluir continuam bloqueados, o clique abre
+   * o modal consolidado em vez do editável, e o arraste vale SÓ entre as etapas
+   * do próprio fluxo — ele escreve no PEDIDO, que é a fonte da verdade, e a
+   * coluna é a projeção dele.
+   */
+  const isMonitoramentoProject = isProjetoMonitoramento(project);
+
+  /**
+   * Pedidos de feedback dos cards deste quadro, indexados por id de card.
+   *
+   * UMA requisição em lote (`?cards=1,2,3`), e não uma por card: o quadro
+   * desenha dezenas deles. Só busca no fluxo de monitoramento — nos demais o
+   * mapa fica vazio, e é isso que deixa o card comum sem nenhuma alteração.
+   */
+  const [pedidosFeedback, setPedidosFeedback] = useState<Record<string, PedidoFeedbackResumo>>({});
+  /**
+   * Selo que força a rebusca dos pedidos DEPOIS que o servidor confirma.
+   *
+   * Sem ele havia uma corrida: arrastar atualiza `cards` na hora (otimista),
+   * o efeito abaixo dispara imediatamente e busca ANTES de o PATCH terminar
+   * de gravar o novo estado do pedido — então a tela recebia o dado velho e
+   * só se corrigia num F5. Incrementar isto ao fim da chamada refaz a busca
+   * quando já há o que buscar.
+   */
+  const [seloPedidos, setSeloPedidos] = useState(0);
+
+  /**
+   * Card aberto no MODAL CONSOLIDADO (leitura). `null` = fechado.
+   *
+   * Guarda o card, e não só um booleano, porque o modal precisa dos dados dele
+   * na coluna da esquerda — e guardar o objeto evita procurá-lo de novo em
+   * `cards` a cada render, onde um card recém-movido poderia não estar ainda.
+   *
+   * SÓ o fluxo de feedback chega aqui: o clique no card comum continua indo
+   * direto para `openEditCardDialog`.
+   */
+  const [cardConsolidado, setCardConsolidado] = useState<CardType | null>(null);
+
+  useEffect(() => {
+    if (!isMonitoramentoProject || cards.length === 0) {
+      setPedidosFeedback({});
+      return;
+    }
+    let ativo = true;
+    void buscarPedidosDosCards(cards.map((c) => c.id))
+      .then((mapa) => { if (ativo) setPedidosFeedback(mapa); })
+      // Sem link é estado normal (pedido ainda não criado): a tela apenas não
+      // desenha o bloco. Falhar aqui não pode derrubar o quadro.
+      .catch(() => { if (ativo) setPedidosFeedback({}); });
+    return () => { ativo = false; };
+  }, [isMonitoramentoProject, cards, seloPedidos]);
 
   const selectedKanbanIdsEligibleForMove = useMemo(
     () =>
@@ -1355,6 +1484,51 @@ export default function ProjectDetails() {
 
     // Se o status não mudou, não fazer nada
     if (card.status === newStageId) return;
+
+    /**
+     * O ARRASTE DENTRO DO FLUXO DE FEEDBACK — caminho próprio, e curto.
+     *
+     * Ele existia como um `return` seco: o board era projeção do estado do
+     * pedido e ninguém movia nada à mão. Isso mudou por pedido do usuário —
+     * "Feedback Finalizado" é uma etapa que só uma PESSOA aciona, e voltar de lá
+     * reabre o link. O backend acompanhou: `PATCH /cards/<id>/` com o corpo
+     * EXATAMENTE `{"status": ...}` passa, e é ele quem escreve no PEDIDO antes de
+     * projetar no card (sem isso a varredura noturna desfaria o arraste calada).
+     *
+     * NADA de `createCardLog` nem de campos de carona aqui: qualquer chave a mais
+     * no corpo faz o backend responder 403 (é assim que ele impede "arrastar e,
+     * de quebra, renomear"). Um destino fora das 4 etapas do fluxo é barrado
+     * ANTES da requisição, para o card não pular de coluna e voltar.
+     *
+     * Recarregar os pedidos vem de graça: `setCards` cria um array novo e o
+     * efeito do lote (`?cards=`) depende de `cards` — o link e as tags do card se
+     * atualizam sozinhos com o estado novo.
+     */
+    if (isMonitoramentoProject) {
+      if (!ehEtapaDoFluxoFeedback(newStageId)) return;
+
+      const statusAnterior = card.status;
+      setCards((prevCards) =>
+        prevCards.map((c) => (c.id.toString() === cardId ? { ...c, status: newStageId } : c)),
+      );
+
+      try {
+        await cardService.update(card.id, { status: newStageId });
+        // O estado do PEDIDO mudou junto (o backend sincroniza os dois): rebusca
+        // agora que a gravação terminou, senão o link/contador só apareceriam
+        // no próximo F5.
+        setSeloPedidos((v) => v + 1);
+      } catch (error) {
+        console.error('Erro ao mover o card do fluxo de feedback:', error);
+        // Volta a coluna na hora (o recarregamento é assíncrono e a peça ficaria
+        // no lugar errado até ele terminar) e busca a verdade do servidor.
+        setCards((prevCards) =>
+          prevCards.map((c) => (c.id.toString() === cardId ? { ...c, status: statusAnterior } : c)),
+        );
+        loadData();
+      }
+      return;
+    }
 
     // Se está mudando para "parado_pendencias", abrir modal de pendências
     if (newStageId === 'parado_pendencias') {
@@ -1697,6 +1871,7 @@ export default function ProjectDetails() {
         responsavel: fullCard.responsavel || '',
         data_inicio: dataInicio,
         data_fim: fullCard.data_fim || '',
+        gerar_formulario_feedback: !!fullCard.gerar_formulario_feedback,
       });
       setCardLinks(fullCard.links ?? []);
       setNewLinkUrl('');
@@ -1732,6 +1907,18 @@ export default function ProjectDetails() {
       return;
     }
 
+    // Card criado à mão aqui ficaria órfão para sempre: sem pedido de feedback
+    // apontando para ele, nada o move de coluna e ele nunca tem link. Melhor
+    // dizer isso do que deixar criar.
+    if (isMonitoramentoProject) {
+      setAlertMessage(
+        'Os cards deste fluxo são gerados automaticamente quando um projeto com a opção '
+        + '"Gerar formulário de feedback" é entregue. A criação manual está desabilitada.',
+      );
+      setAlertDialogOpen(true);
+      return;
+    }
+
     setLogsModalOpen(false);
 
     if (id && cardId) {
@@ -1751,6 +1938,8 @@ export default function ProjectDetails() {
       responsavel: '',
       data_inicio: '',
       data_fim: '',
+      // OPCIONAL E DESMARCADA POR PADRÃO — foi o pedido literal do usuário.
+      gerar_formulario_feedback: false,
     });
     setCardLinks([]);
     setNewLinkUrl('');
@@ -1761,6 +1950,7 @@ export default function ProjectDetails() {
     setCardFormError('');
     setCardDialogOpen(true);
   };
+
 
   // Link direto: /projeto/:id/card/:cardId abre o formulário do card
   useEffect(() => {
@@ -1802,20 +1992,10 @@ export default function ProjectDetails() {
   const normalizeStagesFromApi = (apiStages: any[] | undefined | null): ProjectStage[] => {
     if (!apiStages || !apiStages.length) return DEFAULT_PROJECT_STAGES;
 
-    const stageToColor = (stageId: string): string => {
-      const fallback = DEFAULT_PROJECT_STAGES.find((s) => s.id === stageId);
-      if (fallback) return fallback.color;
-      const palette = ['bg-gray-100', 'bg-blue-100', 'bg-orange-100', 'bg-purple-100', 'bg-green-100', 'bg-red-100'];
-      let hash = 0;
-      for (let i = 0; i < stageId.length; i++) hash = stageId.charCodeAt(i) + ((hash << 5) - hash);
-      const idx = Math.abs(hash) % palette.length;
-      return palette[idx];
-    };
-
     return apiStages.map((s: any) => ({
       id: s.key,
       label: s.label,
-      color: stageToColor(s.key),
+      color: stageKeyToColor(s.key),
       is_terminal: !!s.is_terminal,
       requires_required_data: !!s.requires_required_data,
     }));
@@ -2060,6 +2240,7 @@ export default function ProjectDetails() {
         data_fim: cardFormData.data_fim || null,
         projeto: id!,
         links: cardLinks,
+        gerar_formulario_feedback: cardFormData.gerar_formulario_feedback,
       };
 
       if (editingCard) {
@@ -2482,6 +2663,8 @@ export default function ProjectDetails() {
           <div className="flex h-[48px] w-[48px] items-center justify-center rounded-[8px] bg-[var(--color-primary)]/10">
             {isSupportProject ? (
               <Headset className="h-[24px] w-[24px] text-[var(--color-primary)]" />
+            ) : isMonitoramentoProject ? (
+              <MessageCircle className="h-[24px] w-[24px] text-[var(--color-primary)]" />
             ) : (
               <FolderKanban className="h-[24px] w-[24px] text-[var(--color-primary)]" />
             )}
@@ -2493,7 +2676,12 @@ export default function ProjectDetails() {
                   <h1 className="text-2xl font-bold text-[var(--color-foreground)]">
                     {project.nome}
                   </h1>
-                  {sprint && (
+                  {/* A linha da sprint some no fluxo de monitoramento: a sprint
+                      que o segura é técnica e fecha daqui a ~100 anos, então
+                      imprimir o período dela mostraria uma data absurda e daria
+                      a entender que isto é uma sprint — que é justamente o que
+                      não é. */}
+                  {sprint && !isMonitoramentoProject && (
                     <span className="text-xs text-[var(--color-muted-foreground)]">
                       {sprint.nome} ({formatDate(sprint.data_inicio)} → {formatDate(sprintFimDiaParaCalendario(sprint))})
                     </span>
@@ -2505,9 +2693,14 @@ export default function ProjectDetails() {
                   </p>
                 )}
               </div>
-              {/* Botão de criar card - visível para todos e em azul */}
+              {/* Botão de criar card - visível para todos e em azul.
+                  Fora do fluxo de monitoramento: lá os cards são gerados pelo
+                  backend. A seleção em massa também fica de fora — ela move por
+                  `from_stage_key`/`to_stage_key`, uma rota que o backend recusa
+                  no fluxo (403); o único movimento permitido ali é o arraste de
+                  UM card entre as etapas do próprio fluxo. */}
               <div className="flex items-center gap-[8px]">
-                {!isSupportProject && (
+                {!isSupportProject && !isMonitoramentoProject && (
                   <>
                     <Button variant="default" onClick={openCreateCardDialog}>
                       <Plus className="h-4 w-4 mr-2" />
@@ -2573,8 +2766,15 @@ export default function ProjectDetails() {
                     </label>
                   </DropdownMenuContent>
                 </DropdownMenu>
-                {/* Configurar Projeto (quem gerencia colunas do kanban) */}
-                {hasPermission(user, 'manage_kanban_config') && (
+                {/* Configurar Projeto (quem gerencia colunas do kanban).
+
+                    ESCONDIDO no fluxo de monitoramento, e isso é o que fecha a
+                    segunda metade da regra "as colunas normais não aparecem no
+                    board de monitoramento": as 3 etapas de feedback já saíram do
+                    catálogo global (o backend as marca como ocultas), mas as 6
+                    normais continuam lá, e este diálogo deixaria um supervisor
+                    ACRESCENTAR "Em Desenvolvimento" ao board de feedback. */}
+                {hasPermission(user, 'manage_kanban_config') && !isMonitoramentoProject && (
                   <Button
                     variant="outline"
                     size="icon"
@@ -2669,8 +2869,11 @@ export default function ProjectDetails() {
           <span className="text-xs text-[var(--color-muted-foreground)] mb-[4px] block">
             Responsável
           </span>
+          {/* Lista completa: o próprio UserSelect já recorta as OPÇÕES (só
+              quem participa do trabalho, sem admin) e ainda consegue resolver
+              um responsável histórico que caiu fora desse recorte. */}
           <UserSelect
-            users={users.filter((u) => u.role !== 'admin')}
+            users={users}
             value={cardDeveloperFilter}
             onChange={setCardDeveloperFilter}
             placeholder="Todos os responsáveis"
@@ -2693,12 +2896,19 @@ export default function ProjectDetails() {
                 key={stage.id}
                 stage={stage}
                 cards={getCardsByStage(stage.id)}
+                pedidosFeedback={pedidosFeedback}
                 onCardClick={(card) => {
                   if (cardSelectionMode) {
                     if (card.status === 'finalizado' || card.status === 'inviabilizado') {
                       return;
                     }
                     toggleKanbanCardSelected(card.id);
+                  } else if (isMonitoramentoProject) {
+                    // No fluxo de feedback o clique abre o CONSOLIDADO (leitura:
+                    // dados do card + quem respondeu). O modal editável continua
+                    // a um botão de distância, dentro dele. O card COMUM cai no
+                    // `else` e abre direto o editável, como sempre.
+                    setCardConsolidado(card);
                   } else {
                     openEditCardDialog(card);
                   }
@@ -2727,9 +2937,39 @@ export default function ProjectDetails() {
         </DndContext>
       </div>
 
+      {/* MODAL CONSOLIDADO do fluxo de feedback (só leitura). Ele nasce e morre
+          com o card selecionado — montar só quando há card garante que a busca
+          das respostas comece do zero a cada abertura, sem herdar a anterior. */}
+      {cardConsolidado && (
+        <FeedbackConsolidadoDialog
+          card={cardConsolidado}
+          resumo={pedidosFeedback[String(cardConsolidado.id)] ?? null}
+          open={!!cardConsolidado}
+          onOpenChange={(aberto) => !aberto && setCardConsolidado(null)}
+          onIrParaCard={() => {
+            // Fecha o consolidado ANTES de abrir o editável: os dois são modais
+            // em portal e ficariam empilhados, com o backdrop do de baixo
+            // capturando o clique do de cima.
+            const card = cardConsolidado;
+            setCardConsolidado(null);
+            void openEditCardDialog(card);
+          }}
+          onFalhaAoCopiar={(mensagem) => {
+            setAlertMessage(mensagem);
+            setAlertDialogOpen(true);
+          }}
+        />
+      )}
+
       {/* Card Dialog */}
+      {/* O card some da tela enquanto a solicitação de reabertura está aberta,
+          mas `cardDialogOpen` continua TRUE de propósito: o efeito de deep link
+          (que observa `cardDialogOpen` e a URL) reabriria o card na hora se o
+          estado virasse false, engolindo o modal — era essa a piscada. Derivar
+          a visibilidade aqui mantém aquele efeito quieto e faz o card
+          reaparecer sozinho quando a solicitação fecha, sem restaurar nada. */}
       <Dialog
-        open={cardDialogOpen}
+        open={cardDialogOpen && !reopenRequestOpen}
         reserveRightPx={editingCard && logsModalOpen ? CARD_TIMELINE_LAYOUT_RESERVE_PX : undefined}
         onOpenChange={(open) => {
         if (open) {
@@ -2953,6 +3193,37 @@ export default function ProjectDetails() {
 
               <div className="border-t border-[var(--color-border)]" />
 
+              {/* FEEDBACK PÓS-ENTREGA — a checkbox e, quando já existe, o link.
+
+                  Mora junto do bloco de Links porque é disso que se trata do
+                  ponto de vista de quem usa: mais um endereço que sai deste
+                  card. A diferença é que este não é digitado — ele é gerado.
+
+                  A checkbox some no board de monitoramento: aqueles cards SÃO o
+                  acompanhamento, e marcá-los pediria feedback do feedback (o
+                  backend ignora projetos sistêmicos, então seria um controle que
+                  não faz nada). O LINK continua aparecendo lá — é justamente
+                  onde ele é copiado. */}
+              <CardFeedbackSection
+                cardId={editingCard?.id ?? null}
+                marcado={cardFormData.gerar_formulario_feedback}
+                onMarcadoChange={(marcado) =>
+                  setCardFormData({ ...cardFormData, gerar_formulario_feedback: marcado })
+                }
+                disabled={!!(editingCard && (editingCard.status === 'finalizado' || editingCard.status === 'inviabilizado')) || sprintIsFinished}
+                mostrarCheckbox={!isMonitoramentoProject}
+                // O que decide é o valor SALVO, não o do formulário: desmarcar a
+                // checkbox sem salvar não pode fazer um link que já existe
+                // desaparecer da tela.
+                podeTerLink={isMonitoramentoProject || !!editingCard?.gerar_formulario_feedback}
+                onFalhaAoCopiar={(mensagem) => {
+                  setAlertMessage(mensagem);
+                  setAlertDialogOpen(true);
+                }}
+              />
+
+              <div className="border-t border-[var(--color-border)]" />
+
               <CardAnexosSection
                 cardId={editingCard?.id ?? null}
                 disabled={!!(editingCard && (editingCard.status === 'finalizado' || editingCard.status === 'inviabilizado')) || sprintIsFinished}
@@ -3041,8 +3312,17 @@ export default function ProjectDetails() {
                   placeholder="Selecionar status"
                   searchPlaceholder="Buscar status..."
                   clearable={false}
-                  disabled={!!(editingCard && (editingCard.status === 'finalizado' || editingCard.status === 'inviabilizado')) || sprintIsFinished}
+                  // No board de monitoramento a coluna é PROJEÇÃO do estado do
+                  // pedido: quem a move é a varredura dos 30 dias e a resposta
+                  // do formulário. O backend recusa a troca à mão com 400 —
+                  // deixar o select ativo só produziria um erro incompreensível.
+                  disabled={isMonitoramentoProject || !!(editingCard && (editingCard.status === 'finalizado' || editingCard.status === 'inviabilizado')) || sprintIsFinished}
                 />
+                {isMonitoramentoProject && (
+                  <p className="text-xs text-[var(--color-muted-foreground)]">
+                    Definido pelo formulário de feedback — não é alterado à mão.
+                  </p>
+                )}
               </div>
             </div>
 
@@ -3119,7 +3399,10 @@ export default function ProjectDetails() {
                     )}
                   />
                 </div>
-                {editingCard?.responsavel && String(editingCard.responsavel) === String(user?.id) && editingCard?.data_fim && (
+                {editingCard?.responsavel &&
+                  String(editingCard.responsavel) === String(user?.id) &&
+                  editingCard?.data_fim &&
+                  !['finalizado', 'inviabilizado'].includes(editingCard.status) && (
                   <div className="flex items-center justify-end">
                     <Button
                       type="button"
@@ -3180,10 +3463,45 @@ export default function ProjectDetails() {
             />
 
             <DialogFooter>
+              {/* Card fechado: o pedido de REABERTURA fica ao lado do "Fechar",
+                  que é o único outro botão que sobra no rodapé de um card
+                  encerrado. Solto no meio do formulário ele passava
+                  despercebido — é a ação principal disponível ali. */}
+              {['finalizado', 'inviabilizado'].includes(editingCard?.status ?? '') &&
+                (String(editingCard?.responsavel ?? '') === String(user?.id) ||
+                  hasPermission(user, 'manage_others_cards') ||
+                  hasPermission(user, 'approve_card_reopen')) && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => {
+                    // Some com o card e põe a solicitação no lugar dele — um
+                    // por vez, sem empilhar. Levantar `reopenRequestOpen` basta:
+                    // o diálogo do card é `cardDialogOpen && !reopenRequestOpen`
+                    // (ver o comentário lá), então o card se esconde agora e
+                    // volta sozinho quando a solicitação fechar. NÃO chamamos
+                    // `closeCardDialog()` de propósito: aquele navega para fora
+                    // do card, e daí não haveria para onde voltar.
+                    //
+                    // Passa o CARD INTEIRO, não o id: é o que faz a solicitação
+                    // abrir sem nenhuma requisição. A guarda acima já garante
+                    // `editingCard` não-nulo (status vazio não é card fechado).
+                    setReopenCard(editingCard);
+                    setReopenRequestOpen(true);
+                  }}
+                >
+                  Solicitar reabertura
+                </Button>
+              )}
               <Button type="button" variant="outline" onClick={closeCardDialog}>
                 {(editingCard && (editingCard.status === 'finalizado' || editingCard.status === 'inviabilizado')) || sprintIsFinished ? 'Fechar' : 'Cancelar'}
               </Button>
-              {!(editingCard && (editingCard.status === 'finalizado' || editingCard.status === 'inviabilizado')) && !sprintIsFinished && (
+              {/* Sem "Salvar" no fluxo de feedback: o card é mantido pelo
+                  sistema e o backend recusa PATCH nele (CardViewSet.update).
+                  Sem esta guarda o botão apareceria e devolveria 403. */}
+              {!isMonitoramentoProject
+                && !(editingCard && (editingCard.status === 'finalizado' || editingCard.status === 'inviabilizado'))
+                && !sprintIsFinished && (
                 <Button type="submit" disabled={cardFormLoading}>
                   {cardFormLoading ? (
                     <>
@@ -3905,6 +4223,24 @@ export default function ProjectDetails() {
       </Dialog>
 
       {/* Card Logs Modal */}
+      {/* Fica FORA do diálogo do card de propósito: renderizado dentro dele, o
+          modal empilhava por cima em vez de substituí-lo, e desmontaria junto
+          quando o card fechasse — o que impediria justamente o vai-e-volta
+          entre os dois. `reopenCard` serve a duas coisas: é o próprio card
+          sobre o qual a solicitação é feita (por isso o modal abre sem baixar
+          nada) e o sinal de que existe um card para reabrir atrás. */}
+      <RequestCardReopenModal
+        open={reopenRequestOpen}
+        onOpenChange={(aberto) => {
+          setReopenRequestOpen(aberto);
+          if (!aberto) setReopenCard(null);
+        }}
+        card={reopenCard}
+        onCreated={() => {
+          void loadData();
+        }}
+      />
+
       <CardLogsModal
         cardId={editingCard?.id || null}
         isOpen={logsModalOpen}

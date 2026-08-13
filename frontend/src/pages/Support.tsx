@@ -108,7 +108,7 @@ import {
 } from '@/lib/suporteChamadosColumns';
 import { exportCardsToCSV, exportCardsToXLSX } from '@/lib/exportCards';
 import { logSuporteChamadoChanges, logSuporteTicketCriado } from '@/lib/suporteTimelineLog';
-import { userService, type User } from '@/services/userService';
+import { userService, participaDoTrabalho, type User } from '@/services/userService';
 import { suporteTimelineService } from '@/services/suporteTimelineService';
 import {
   suporteResolucaoService,
@@ -789,9 +789,19 @@ export default function Support() {
     };
   }, []);
 
+  /** Quem pode RESOLVER um chamado (opções do seletor e do filtro).
+   *
+   * Só quem participa do trabalho. Atenção à assimetria do Suporte: quem ABRE
+   * um chamado pode perfeitamente ser um visitante — é justamente o perfil de
+   * quem precisa pedir ajuda — então nada que liste SOLICITANTE pode usar este
+   * recorte. `assignUsers` continua completa e é ela que resolve nome/foto do
+   * responsável histórico de um ticket antigo.
+   *
+   * O critério exato do Suporte seria `view_all_tickets`, não `view_content`;
+   * `view_content` é a aproximação conservadora disponível hoje. */
   const responsavelSelectUsers = useMemo(
     () =>
-      [...assignUsers.filter((u) => u.role !== 'admin')].sort((a, b) =>
+      [...assignUsers.filter((u) => u.role !== 'admin' && participaDoTrabalho(u))].sort((a, b) =>
         displayUserName(a).localeCompare(displayUserName(b), 'pt-BR'),
       ),
     [assignUsers],

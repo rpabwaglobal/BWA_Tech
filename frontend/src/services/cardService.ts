@@ -71,6 +71,16 @@ export type Card = {
   events_count?: number;
   /** Score final do card (null se ainda não pontuado). DecimalField → string. */
   score_final?: string | null;
+  /**
+   * Checkbox "Gerar formulário de feedback". Quando o PROJETO deste card vira
+   * "Entregue", o backend cria UM formulário e UM link públicos para ESTE card
+   * e um card de acompanhamento no fluxo de monitoramento.
+   *
+   * O link NÃO vem junto do card de propósito (ele contém o token, que é a
+   * credencial inteira da rota anônima) — busca-se sob demanda em
+   * `pedidoFeedbackService.buscarPedidoDoCard`.
+   */
+  gerar_formulario_feedback?: boolean;
   created_at?: string;
   updated_at?: string;
 };
@@ -92,6 +102,8 @@ export type CardCreate = {
   complexidade_custom_items?: Array<{ id: string; label: string; hours: number }>;
   card_comment?: string | null;
   links?: CardLink[];
+  /** Opcional e desmarcado por padrão — ver o comentário no tipo `Card`. */
+  gerar_formulario_feedback?: boolean;
 };
 
 // Opções para os campos

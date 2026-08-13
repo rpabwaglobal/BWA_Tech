@@ -86,7 +86,7 @@ interface DropdownMenuContentProps extends React.HTMLAttributes<HTMLDivElement> 
 }
 
 const DropdownMenuContent = React.forwardRef<HTMLDivElement, DropdownMenuContentProps>(
-  ({ className, align = "start", open, setOpen, children, ...props }, ref) => {
+  ({ className, align = "start", open, setOpen, children, style, ...props }, ref) => {
     const context = React.useContext(DropdownMenuContext)
     const isOpen = open ?? context?.open ?? false
     const setIsOpen = setOpen ?? context?.setOpen
@@ -131,6 +131,47 @@ const DropdownMenuContent = React.forwardRef<HTMLDivElement, DropdownMenuContent
       }
     }, [isOpen, setIsOpen, wrapperRef])
 
+    /**
+     * Altura máxima medida: o que sobra do topo do menu até a borda de baixo da
+     * janela, menos uma margem de respiro.
+     *
+     * Precisa ser medido, e não um `70vh` cravado: o menu é `absolute` logo
+     * abaixo do gatilho, então a altura disponível depende de ONDE o gatilho
+     * está na página. Um valor fixo ou sobra espaço à toa, ou continua passando
+     * da tela quando o gatilho está mais para baixo.
+     */
+    const [maxHeight, setMaxHeight] = React.useState<number | undefined>(undefined)
+
+    React.useLayoutEffect(() => {
+      if (!isOpen) {
+        setMaxHeight(undefined)
+        return
+      }
+
+      const MARGEM_DA_BORDA = 16
+
+      const medir = () => {
+        const node = contentRef.current
+        if (!node) return
+        // `top` do próprio menu já embute o deslocamento do gatilho e o `mt`.
+        const topo = node.getBoundingClientRect().top
+        const disponivel = window.innerHeight - topo - MARGEM_DA_BORDA
+        // Piso: em tela muito baixa é melhor um menu curto COM rolagem do que
+        // um menu de altura negativa (que o navegador trata como 0 e some).
+        setMaxHeight(Math.max(disponivel, 160))
+      }
+
+      medir()
+      window.addEventListener("resize", medir)
+      // `capture`: a página pode rolar num contêiner interno, e o evento de
+      // scroll de elemento não borbulha até window sem isto.
+      window.addEventListener("scroll", medir, true)
+      return () => {
+        window.removeEventListener("resize", medir)
+        window.removeEventListener("scroll", medir, true)
+      }
+    }, [isOpen])
+
     if (!isOpen) return null
 
     const alignClasses = {
@@ -144,9 +185,25 @@ const DropdownMenuContent = React.forwardRef<HTMLDivElement, DropdownMenuContent
         ref={combinedRef}
         className={cn(
           "absolute z-50 mt-[4px] min-w-[160px] rounded-md border border-[var(--color-border)] bg-[var(--color-popover)] shadow-md",
+          // A rolagem vive AQUI, no elemento que tem a altura máxima. Antes o
+          // conteúdo ia para um `<div>` interno sem altura, então um `max-h` do
+          // chamador apenas CORTAVA os últimos itens, sem barra nenhuma.
+          "overflow-y-auto overscroll-contain",
+          // A altura medida entra como CLASSE (via custom property), e não como
+          // `style` inline, de propósito: inline venceria SEMPRE, inclusive o
+          // `max-h-[280px]` que alguns menus deste sistema já definem. Como esta
+          // classe vem ANTES de `className`, o twMerge deixa a do chamador
+          // ganhar — a medição é o padrão, não uma imposição.
+          maxHeight != null && "max-h-[var(--ddm-max-h)]",
           alignClasses[align],
           className
         )}
+        style={{
+          ...(maxHeight != null
+            ? ({ "--ddm-max-h": `${maxHeight}px` } as React.CSSProperties)
+            : null),
+          ...style,
+        }}
         {...props}
       >
         <div className="p-[4px]">
@@ -161,17 +218,27 @@ DropdownMenuContent.displayName = "DropdownMenuContent"
 interface DropdownMenuItemProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
   children: React.ReactNode
   onSelect?: () => void
+  /**
+   * Fechar o menu ao clicar? Padrão `true` — o comportamento de sempre.
+   *
+   * `false` é para itens de ALTERNÂNCIA (marcar/desmarcar, escolher modo de
+   * visualização): ali o menu é um painel de ajustes, e fechar a cada clique
+   * esconde justamente o efeito que a pessoa quer conferir, além de obrigar a
+   * reabrir para mexer na opção seguinte. Itens de AÇÃO (compartilhar,
+   * exportar) continuam fechando, porque a tela muda de assunto.
+   */
+  closeOnSelect?: boolean
 }
 
 const DropdownMenuItem = React.forwardRef<HTMLButtonElement, DropdownMenuItemProps>(
-  ({ className, children, onSelect, onClick, ...props }, ref) => {
+  ({ className, children, onSelect, onClick, closeOnSelect = true, ...props }, ref) => {
     const context = React.useContext(DropdownMenuContext)
     const setIsOpen = context?.setOpen
 
     const handleClick = (e: React.MouseEvent<HTMLButtonElement>) => {
       onSelect?.()
       onClick?.(e)
-      if (setIsOpen) {
+      if (setIsOpen && closeOnSelect) {
         setIsOpen(false)
       }
     }

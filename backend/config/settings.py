@@ -100,6 +100,7 @@ INSTALLED_APPS = [
     'apps.geekday',
     'apps.formularios',
     'apps.reports',
+    'apps.feedbacks',
 ]
 
 MIDDLEWARE = [
@@ -272,6 +273,24 @@ REST_FRAMEWORK = {
         'login': '10/min',
         'register': '5/min',
         'recovery': '5/hour',
+        # Rota pública de feedback (a única anônima fora de login/register/recover).
+        # LEITURA e ESCRITA têm baldes SEPARADOS desde que o link passou a ser
+        # perene e a aceitar várias respostas: com um balde só, os GETs de 20
+        # pessoas abrindo o mesmo link estouravam o limite e o cliente legítimo
+        # via "Muitas tentativas em pouco tempo". Escopo ausente aqui faz o
+        # DRF levantar ImproperlyConfigured NA REQUISIÇÃO, não no boot.
+        #
+        # `feedback_ip` fica onde estava: é por IP, e 20 pessoas são 20 IPs.
+        'feedback_ip': '30/min',
+        # LEITURA (GET): 20 pessoas × ~3 aberturas cada = 60; 120 dá o dobro de
+        # folga e continua barrando varredura.
+        'feedback_token': '120/hour',
+        # ESCRITA (POST): 10 opiniões por hora no MESMO link é folga absurda para
+        # o caso real, e derruba o teto de vazão de ~720 KB/h para ~120 KB/h.
+        # Quem fecha o buraco de vez, porém, não é a taxa (dentro dela o
+        # crescimento é ilimitado, e o balde zera a cada restart do Redis) — é o
+        # teto absoluto MAX_RESPOSTAS_POR_PEDIDO, conferido no banco.
+        'feedback_envio': '10/hour',
     },
 }
 
@@ -441,6 +460,30 @@ from celery.schedules import crontab
 # arquivo, que é o consolidado de vários setores e o que de fato pesa no disco.
 REPORT_RETENTION_DAYS = int(os.getenv('REPORT_RETENTION_DAYS', '7'))
 
+# --- Feedback pós-entrega (app apps.feedbacks) -----------------------------
+# Dias entre a data de entrega do projeto e a promoção do pedido para
+# "Aguardando Feedback". Como não há envio de e-mail, é ESTE prazo que dispara a
+# mudança de etapa. Vive em um lugar só: não existe coluna com a data derivada,
+# então mudar o número move também os pedidos já criados (comportamento
+# desejado — uma regra só).
+FEEDBACK_ESPERA_DIAS = int(os.getenv('FEEDBACK_ESPERA_DIAS', '30'))
+# Dias que o TEXTO de uma resposta sobrevive depois de enviada. 0 = DESLIGADO,
+# default proposital: o prazo é decisão de negócio, não default técnico. Quando
+# ligado, a task apaga a RespostaFeedback inteira e o PedidoFeedback preserva
+# `estado='respondido'` + `respondido_em` — o fato e a data ficam (métrica), o
+# dado pessoal some (LGPD).
+FEEDBACK_RETENCAO_DIAS = int(os.getenv('FEEDBACK_RETENCAO_DIAS', '0'))
+# Base do link público, montada fora de requisição (a criação do pedido vem de
+# um sinal, onde não há `request`). Guardamos só o token no banco, nunca a URL:
+# trocar de domínio não invalida nada já gravado. https explícito porque
+# SECURE_SSL_REDIRECT=True em produção e um POST redirecionado por 301 perde o
+# corpo em alguns clientes — e este link vai ser colado à mão no WhatsApp.
+FEEDBACK_PUBLIC_BASE_URL = os.getenv('FEEDBACK_PUBLIC_BASE_URL', '').strip().rstrip('/')
+if not FEEDBACK_PUBLIC_BASE_URL:
+    _feedback_host = os.getenv('PUBLIC_HOST', '').strip().rstrip('/')
+    if _feedback_host:
+        FEEDBACK_PUBLIC_BASE_URL = f'https://{_feedback_host}'
+
 CELERY_BEAT_SCHEDULE = {
     'check-card-deadlines': {
         'task': 'apps.projects.tasks.check_card_deadlines',
@@ -462,6 +505,30 @@ CELERY_BEAT_SCHEDULE = {
         # Fallback de segurança (casos em que o agendamento por ETA ao salvar a sprint falhe).
         # O fechamento no instante correto usa Sprint.fechamento_em (não WeeklyPriorityConfig).
         'schedule': 300.0,  # a cada 5 min
+    },
+    'feedbacks-liberar-pedidos': {
+        'task': 'feedbacks.liberar_pedidos_no_prazo',
+        # DE HORA EM HORA, no minuto 1. A REGRA continua sendo por DIA — a task
+        # compara `data_referencia` (DateField) com `timezone.localdate()`, sem
+        # hora nenhuma. O que muda aqui é só QUANDO ela olha.
+        #
+        # Antes rodava uma vez por dia, às 06:10, e isso criava uma janela ruim:
+        # o dia virava à meia-noite, o pedido JÁ estava vencido pela regra, mas o
+        # card só mudava de coluna seis horas depois. O contador na tela dizia
+        # "liberado hoje" enquanto o card seguia em "Aguardando 30 dias".
+        #
+        # De hora em hora resolve os dois lados: promove logo após a virada do
+        # dia (00:01) e se cura sozinho se uma execução falhar ou o worker
+        # estiver fora do ar — o que uma execução diária levaria 24h para fazer.
+        # A varredura é barata: um SELECT por índice, e no-op quando não há nada.
+        # CELERY_TIMEZONE já é America/Sao_Paulo, então "virar o dia" é local.
+        'schedule': crontab(minute=1),
+    },
+    'feedbacks-limpar-respostas': {
+        'task': 'feedbacks.limpar_respostas_expiradas',
+        # Madrugada, junto das demais limpezas. No-op enquanto
+        # FEEDBACK_RETENCAO_DIAS for 0.
+        'schedule': crontab(hour=3, minute=45),
     },
 }
 

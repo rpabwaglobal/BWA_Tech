@@ -21,6 +21,21 @@ export type Sprint = {
   cards_entregues_atrasados?: number;
   cards_abertos_atrasados?: number;
   finalizada?: boolean;
+  /**
+   * Sprint SISTÊMICA — hoje existe no máximo uma, a que segura o projeto
+   * "Monitoramento de Feedbacks". Read-only: quem marca é o backend.
+   *
+   * Ela nunca fecha (`finalizada` false e `fechamento_em` daqui a ~100 anos),
+   * então SEM esta flag ela passaria por "sprint em andamento" em todo lugar
+   * que decide isso por data — Sidebar, Dashboard, redirect de entrada e a
+   * própria lista de Sprints. É por isso que a flag existe em vez de um
+   * casamento por nome.
+   *
+   * `GET /sprints/` já a exclui no backend; os cortes do frontend são a
+   * segunda camada (o detail e o bundle continuam devolvendo a sprint, e é de
+   * lá que ela pode chegar a uma dessas funções).
+   */
+  is_system?: boolean;
   /** Codename do setor dono. A sprint é a autoridade: projetos e cards dela
    * herdam este setor. */
   setor?: string | null;

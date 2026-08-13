@@ -92,7 +92,9 @@ export default function ReportConfigDialog({
         }));
       }
       if (report?.filters.some((f) => ['responsavel', 'user'].includes(f))) {
-        tasks.push(userService.getAll().then((u) => { if (!cancelled) setUsers(u); }));
+        // Mesmo recorte do ReportConfigPanel (código gêmeo): o seletor de
+        // pessoa dos relatórios só oferece quem participa do trabalho.
+        tasks.push(userService.getParticipantes().then((u) => { if (!cancelled) setUsers(u); }));
       }
       await Promise.allSettled(tasks);
     })();
