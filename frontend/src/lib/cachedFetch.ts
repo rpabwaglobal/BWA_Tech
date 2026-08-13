@@ -12,6 +12,25 @@
  * mas tolera dados levemente desatualizados (Métricas, Dashboard).
  */
 
+/** Chave do bundle da página de Métricas.
+ *
+ * Mora aqui, e não na página, porque tem DOIS donos: `pages/Metrics.tsx` grava
+ * e `pages/SprintDetails.tsx` invalida a cada card mexido. Enquanto a string
+ * era repetida nos dois arquivos, mudar a versão num só quebrava a
+ * invalidação em silêncio — a página de Métricas continuaria servindo dados
+ * velhos e ninguém veria erro nenhum.
+ *
+ * SUBA O SUFIXO `:vN` sempre que o FORMATO do bundle mudar. Trocar a chave
+ * descarta os payloads antigos do localStorage de todo mundo, o que é
+ * exatamente o que se quer quando o código novo espera um campo que os
+ * payloads antigos não têm.
+ *
+ * v2: `MetricsBundle.users` passou a carregar `participa_do_trabalho` (o
+ * recorte de quem participa do trabalho). Sem o bump, quem tivesse cache
+ * fresco continuaria por até 60s vendo na tela quem o filtro deveria excluir.
+ */
+export const METRICS_BUNDLE_CACHE_KEY = 'metrics:bundle:v2';
+
 const memCache = new Map<string, { value: unknown; ts: number }>();
 const inFlight = new Map<string, Promise<unknown>>();
 

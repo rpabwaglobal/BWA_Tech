@@ -121,11 +121,21 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
     void logout();
   }, [logout]);
 
+  // Uma fila de solicitações mudou (reabertura de card ou data de entrega). O
+  // provider não conhece o painel: re-emite como CustomEvent de `window`, a
+  // MESMA ponte que já serve o 'notificationReceived' logo acima (e que
+  // Priorities.tsx já consome). Uma API nova de contexto para um consumidor só
+  // seria superfície a mais sem ganho.
+  const handleSolicitacoesChanged = useCallback(() => {
+    window.dispatchEvent(new CustomEvent('solicitacoesChanged'));
+  }, []);
+
   // Conectar WebSocket
   useWebSocket({
     onNotification: handleNotification,
     onPermissionsChanged: handlePermissionsChanged,
     onAccountDeactivated: handleAccountDeactivated,
+    onSolicitacoesChanged: handleSolicitacoesChanged,
     enabled: isAuthenticated,
   });
 

@@ -95,6 +95,13 @@ class NotificationConsumer(AsyncWebsocketConsumer):
         logger.info(f'Avisando usuario {self.user_id} de desativacao de conta')
         await self.send(text_data=json.dumps({'type': 'account_deactivated'}))
 
+    async def solicitacoes_changed(self, event):
+        # Uma fila do painel de Demandas/Solicitações mudou (reabertura de card
+        # ou mudança de data). O cliente deve refazer os GETs do painel — nada
+        # do conteúdo viaja aqui de propósito: quem decide o que cada um vê é o
+        # queryset escopado da API, não este consumer (ver projects/realtime.py).
+        await self.send(text_data=json.dumps({'type': 'solicitacoes_changed'}))
+
     @database_sync_to_async
     def get_user_from_token(self, token_key):
         """Obter usuário a partir do token"""

@@ -34,7 +34,21 @@ def _group_send_many(user_ids, event_type):
     ids = [user_ids] if isinstance(user_ids, int) else list(user_ids)
     if not ids:
         return
-    channel_layer = get_channel_layer()
+    # `get_channel_layer()` DENTRO do try, pelo mesmo motivo do gêmeo em
+    # `projects/realtime.py`: ele não só devolve None quando não há camada — ele
+    # LEVANTA quando a camada está configurada e não pode ser construída
+    # (BACKEND inexistente, CONFIG inválida, Redis fora do ar na instanciação).
+    # Estas funções são chamadas de signals de `User`/`UserSetor`, então a
+    # exceção subia pelo signal e derrubava a request: com o Redis mal
+    # configurado, salvar um usuário respondia 500. Tempo real é melhoria de
+    # UX — a escrita já aconteceu e não se desfaz porque o WebSocket caiu.
+    try:
+        channel_layer = get_channel_layer()
+    except Exception:
+        logger.exception(
+            'Camada de canais inconstruível — %s não enviado (%s usuário(s))',
+            event_type, len(ids))
+        return
     if channel_layer is None:
         logger.warning('Channel layer indisponível — %s não enviado (%s usuário(s))', event_type, len(ids))
         return
@@ -61,6 +75,18 @@ def _group_send_many(user_ids, event_type):
 
 def _group_send(user_id, event_type):
     _group_send_many([user_id], event_type)
+
+
+def notify_users(user_ids, event_type):
+    """Empurra `event_type` (sem payload) para vários usuários de uma vez.
+
+    Wrapper público de `_group_send_many` para quem está FORA deste app: o
+    `apps.projects` precisa do mesmo envio em lote — lotes de 100, uma travessia
+    sync→async por lote, falha de um usuário não cancela a dos outros — e
+    importar um nome privado atravessando fronteira de app é convite a
+    divergência silenciosa no dia em que o interno mudar de assinatura.
+    """
+    _group_send_many(user_ids, event_type)
 
 
 def notify_permissions_changed(user_ids):

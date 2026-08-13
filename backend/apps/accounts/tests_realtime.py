@@ -415,13 +415,47 @@ class _CenariosDeTempoReal:
 
 @override_settings(CHANNEL_LAYERS=CANAL_EM_MEMORIA)
 class TempoRealDeAcessoTests(_CenariosDeTempoReal, TransactionTestCase):
+
     """Todos os cenários, camada em memória (rápida e determinística)."""
+
+    # RESTAURA O SEED DAS MIGRAÇÕES DEPOIS DO FLUSH.
+    #
+    # `TransactionTestCase` não usa transação: faz TRUNCATE em todas as tabelas
+    # ao terminar. Isso apaga o que as migrações semearam (o formulário de
+    # feedback ativo, o catálogo de etapas), e quem roda depois quebra com um
+    # `DoesNotExist` que não tem nenhuma relação com o que estava sendo testado
+    # — foi esse o efeito de 48 erros aparentemente aleatórios.
+    #
+    # O QUE ISTO CONSERTA E O QUE NÃO CONSERTA: o Django serializa o banco no
+    # início da execução e devolve esse retrato no `_fixture_setup` seguinte.
+    # Logo, protege de uma classe para a outra DENTRO da mesma execução. NÃO
+    # protege ENTRE execuções com `--keepdb`: o último flush fica gravado no
+    # banco reaproveitado, e a rodada seguinte serializa o estado já vazio.
+    # Rodando `--keepdb` depois de uma suíte completa, recrie o banco de teste.
+    serialized_rollback = True
 
 
 @unittest.skipIf(_CAMADA_REDIS is None,
                  'Ambiente sem channels_redis configurado — nada a provar aqui.')
 @override_settings(CHANNEL_LAYERS=_CAMADA_REDIS or CANAL_EM_MEMORIA)
 class TempoRealComChannelsRedisTests(_CenariosDeTempoReal, TransactionTestCase):
+
+    # RESTAURA O SEED DAS MIGRAÇÕES DEPOIS DO FLUSH.
+    #
+    # `TransactionTestCase` não usa transação: faz TRUNCATE em todas as tabelas
+    # ao terminar. Isso apaga o que as migrações semearam (o formulário de
+    # feedback ativo, o catálogo de etapas), e quem roda depois quebra com um
+    # `DoesNotExist` que não tem nenhuma relação com o que estava sendo testado
+    # — foi esse o efeito de 48 erros aparentemente aleatórios.
+    #
+    # O QUE ISTO CONSERTA E O QUE NÃO CONSERTA: o Django serializa o banco no
+    # início da execução e devolve esse retrato no `_fixture_setup` seguinte.
+    # Logo, protege de uma classe para a outra DENTRO da mesma execução. NÃO
+    # protege ENTRE execuções com `--keepdb`: o último flush fica gravado no
+    # banco reaproveitado, e a rodada seguinte serializa o estado já vazio.
+    # Rodando `--keepdb` depois de uma suíte completa, recrie o banco de teste.
+    serialized_rollback = True
+
     """Os mesmos cenários contra o channels_redis REAL — a camada de produção.
 
     Existe porque a camada em memória vive dentro do processo do teste e não

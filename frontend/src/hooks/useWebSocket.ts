@@ -2,7 +2,8 @@ import { useEffect, useRef, useCallback } from 'react';
 import type { Notification } from '@/services/notificationService';
 
 type WebSocketMessage = {
-  type: 'notification' | 'pong' | 'permissions_changed' | 'account_deactivated';
+  type: 'notification' | 'pong' | 'permissions_changed' | 'account_deactivated'
+    | 'solicitacoes_changed';
   data?: Notification;
 };
 
@@ -12,6 +13,8 @@ type UseWebSocketOptions = {
   onPermissionsChanged?: () => void;
   /** Conta do usuário logado foi desativada — deve encerrar a sessão agora. */
   onAccountDeactivated?: () => void;
+  /** Uma fila de solicitações mudou — o painel de Demandas/Solicitações deve refazer os GETs. */
+  onSolicitacoesChanged?: () => void;
   enabled?: boolean;
 };
 
@@ -19,6 +22,7 @@ export function useWebSocket({
   onNotification,
   onPermissionsChanged,
   onAccountDeactivated,
+  onSolicitacoesChanged,
   enabled = true,
 }: UseWebSocketOptions) {
   const wsRef = useRef<WebSocket | null>(null);
@@ -80,6 +84,11 @@ export function useWebSocket({
         // GET /users/me/ por reconexão.
         if (jaConectouRef.current) {
           onPermissionsChanged?.();
+          // Mesma razão para o painel de solicitações: um pedido criado ou
+          // avaliado durante a queda não é reenviado, e a fila voltaria
+          // defasada até um F5. Custa um refetch silencioso por reconexão, e
+          // só de quem está com a página aberta.
+          onSolicitacoesChanged?.();
         }
         jaConectouRef.current = true;
 
@@ -106,6 +115,8 @@ export function useWebSocket({
             onPermissionsChanged?.();
           } else if (message.type === 'account_deactivated') {
             onAccountDeactivated?.();
+          } else if (message.type === 'solicitacoes_changed') {
+            onSolicitacoesChanged?.();
           }
           // 'pong' é mantido apenas como sinal de vida — nenhum side-effect.
         } catch (error) {
@@ -147,7 +158,8 @@ export function useWebSocket({
     } catch (error) {
       console.error('Erro ao criar conexão WebSocket:', error);
     }
-  }, [enabled, onNotification, onPermissionsChanged, onAccountDeactivated]);
+  }, [enabled, onNotification, onPermissionsChanged, onAccountDeactivated,
+      onSolicitacoesChanged]);
 
   const disconnect = useCallback(() => {
     if (reconnectTimeoutRef.current) {
