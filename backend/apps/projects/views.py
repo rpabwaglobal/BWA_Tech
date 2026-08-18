@@ -676,6 +676,31 @@ class ProjectViewSet(CompartilhamentoSetorMixin, viewsets.ModelViewSet):
             )
 
         project = self.get_object()
+
+        # A GUARDA DO QUADRO DE FLUXO AUTOMÁTICO VEM ANTES DA BIFURCAÇÃO.
+        #
+        # Ela ficava depois, junto do ramo que resolve `stage_key`, e o ramo
+        # novo (`label`) devolvia 201 sem passar por ela: dava para pendurar uma
+        # coluna no quadro do "Monitoramento de Feedbacks", que é somente
+        # leitura. Nenhum card conseguiria chegar nessa coluna — a criação e a
+        # movimentação de card naquele projeto são bloqueadas em outro ponto —
+        # mas a coluna decorativa ficava lá, e a própria guarda deixava de
+        # disparar dali em diante, porque ela pergunta "todas as colunas são
+        # ocultas?" e a resposta passava a ser não.
+        #
+        # A regra é a mesma para os dois modos, então o lugar dela é antes de
+        # decidir qual dos dois é.
+        etapas_configuradas = ProjectKanbanStageConfig.objects.filter(project=project)
+        if (
+            etapas_configuradas.exists()
+            and not etapas_configuradas.filter(stage__oculta_no_catalogo=False).exists()
+        ):
+            return Response(
+                {'detail': 'O quadro deste projeto é de um fluxo automático: as colunas '
+                           'dele são definidas pelo fluxo e não podem ser alteradas.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         stage_key = request.data.get('stage_key')
         label = request.data.get('label')
 
@@ -786,17 +811,6 @@ class ProjectViewSet(CompartilhamentoSetorMixin, viewsets.ModelViewSet):
         # a reconciliação escreve o estado do pedido e nunca esses valores.
         # "Quadro de fluxo" é uma pergunta aos dados, não um nome cravado: é o
         # projeto cujas colunas são TODAS ocultas.
-        etapas_configuradas = ProjectKanbanStageConfig.objects.filter(project=project)
-        if (
-            etapas_configuradas.exists()
-            and not etapas_configuradas.filter(stage__oculta_no_catalogo=False).exists()
-        ):
-            return Response(
-                {'detail': 'O quadro deste projeto é de um fluxo automático: as colunas '
-                           'dele são definidas pelo fluxo e não podem ser alteradas.'},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
         last_order = (
             ProjectKanbanStageConfig.objects.filter(project=project).aggregate(Max('order'))['order__max']
             if ProjectKanbanStageConfig.objects.filter(project=project).exists()
@@ -1258,7 +1272,25 @@ class KanbanStageViewSet(viewsets.ModelViewSet):
     def _is_supervisor_editor(self, request):
         return request.user.has_perm('accounts.manage_global_kanban_stages')
 
-    def _exigir_permissao(self, acao: str):
+    def _exigir_permissao(self, acao: str, etapa=None):
+        """A permissão exigida depende de QUEM é o dono da etapa.
+
+        Editar o catálogo GLOBAL mexe no quadro de ~120 projetos e é
+        `manage_global_kanban_stages`. Renomear a coluna DO PRÓPRIO PROJETO é
+        outra coisa — mexe num quadro só — e é `manage_kanban_config`, a mesma
+        que a pessoa usou para criá-la.
+
+        Sem esta distinção, quem acabava de criar a coluna levava 403 ao tentar
+        renomeá-la: podia criar e não podia editar, o que não é regra, é engano.
+        """
+        if etapa is not None and etapa.projeto_id is not None:
+            if not self.request.user.has_perm('accounts.manage_kanban_config'):
+                from rest_framework.exceptions import PermissionDenied
+
+                raise PermissionDenied(
+                    f'Você não tem permissão para {acao} colunas deste projeto.')
+            return
+
         if not self._is_supervisor_editor(self.request):
             from rest_framework.exceptions import PermissionDenied
 
@@ -1282,11 +1314,11 @@ class KanbanStageViewSet(viewsets.ModelViewSet):
     # o sistema de uma vez — e a única forma de voltar seria reconfigurar
     # projeto por projeto.
     def perform_update(self, serializer):
-        self._exigir_permissao('editar')
+        self._exigir_permissao('editar', etapa=serializer.instance)
         serializer.save()
 
     def perform_destroy(self, instance):
-        self._exigir_permissao('apagar')
+        self._exigir_permissao('apagar', etapa=instance)
 
         # APAGAR ETAPA EM USO É RECUSADO, não é confirmado com aviso.
         # Quem apaga do catálogo não tem como enxergar as consequências nos

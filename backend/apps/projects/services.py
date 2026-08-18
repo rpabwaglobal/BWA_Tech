@@ -122,6 +122,22 @@ def merge_project_kanban_into(canonical: Project, other: Project) -> None:
                 },
             )
 
+        # A CONFERÊNCIA TEM DE SER PELA KEY, QUE É O QUE O BANCO TRAVA.
+        #
+        # `get_or_create(project, stage)` casa por ETAPA, mas a constraint é
+        # `(project, stage_key)`. Se o destino já tiver uma coluna com a mesma
+        # key vinda de outra linha — uma global homônima, por exemplo — o
+        # `get_or_create` não a encontraria, tentaria inserir, e o
+        # IntegrityError derrubaria a virada da sprint INTEIRA, no meio,
+        # para todos os projetos.
+        #
+        # Hoje nenhum caminho produz esse estado (a migração converteu as
+        # customizadas e o `add` recusa key repetida), mas a virada de sprint é
+        # justamente o lugar onde não se quer descobrir isso.
+        if ProjectKanbanStageConfig.objects.filter(
+                project=canonical, stage_key=etapa.key).exists():
+            continue
+
         ProjectKanbanStageConfig.objects.get_or_create(
             project=canonical,
             stage=etapa,

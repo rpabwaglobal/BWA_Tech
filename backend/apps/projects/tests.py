@@ -1249,3 +1249,69 @@ class ColunaPertenceAoProjetoTests(APITestCase):
             f'/api/projects/{self.projeto_a.pk}/kanban-config/add/',
             {'label': 'Finalizado'}, format='json')
         self.assertEqual(r.status_code, 400, r.content)
+
+    def test_nao_da_para_pendurar_coluna_no_quadro_de_fluxo_automatico(self):
+        """A guarda vale para os DOIS modos de criacao.
+
+        Ela ficava depois da bifurcacao, e o modo `label` devolvia 201 sem
+        passar por ela: dava para pendurar uma coluna decorativa no quadro do
+        monitoramento de feedbacks - e a propria guarda parava de disparar dali
+        em diante, porque ela pergunta 'todas as colunas sao ocultas?'.
+        """
+        fluxo = Project.objects.create(nome='Fluxo automatico', sprint=self.sprint)
+        oculta = KanbanStage.objects.create(
+            key='etapa_oculta', label='Etapa Oculta', oculta_no_catalogo=True)
+        ProjectKanbanStageConfig.objects.create(
+            project=fluxo, stage=oculta, order=0, stage_key=oculta.key)
+
+        for corpo in ({'label': 'Coluna Nova'}, {'stage_key': 'a_desenvolver'}):
+            with self.subTest(corpo=corpo):
+                r = self.client.post(
+                    f'/api/projects/{fluxo.pk}/kanban-config/add/', corpo, format='json')
+                self.assertEqual(r.status_code, 400, r.content)
+
+        self.assertEqual(
+            ProjectKanbanStageConfig.objects.filter(project=fluxo).count(), 1)
+
+    def test_quem_cria_a_coluna_do_projeto_consegue_renomea_la(self):
+        """Criar exigia `manage_kanban_config` e renomear exigia a permissao de
+        CATALOGO GLOBAL: dava para criar e nao dava para editar."""
+        User = get_user_model()
+        from django.contrib.auth.models import Permission
+        supervisor = User.objects.create_user(
+            username='sup_coluna', email='sup.coluna@example.com',
+            password='pass12345', role='supervisor')
+        supervisor.user_permissions.add(
+            Permission.objects.get(codename='manage_kanban_config'),
+            Permission.objects.get(codename='view_content'),
+        )
+
+        etapa = self._criar_coluna(self.projeto_a, 'Backlog')
+
+        self.client.force_authenticate(user=supervisor)
+        r = self.client.patch(
+            f'/api/kanban-stages/{etapa.pk}/', {'label': 'Backlog Novo'}, format='json')
+
+        self.assertEqual(r.status_code, 200, r.content)
+        etapa.refresh_from_db()
+        self.assertEqual(etapa.label, 'Backlog Novo')
+
+    def test_o_supervisor_do_projeto_nao_mexe_no_catalogo_global(self):
+        """A distincao tem de valer nos dois sentidos: coluna do projeto sim,
+        etapa global nao."""
+        User = get_user_model()
+        from django.contrib.auth.models import Permission
+        supervisor = User.objects.create_user(
+            username='sup_global', email='sup.global@example.com',
+            password='pass12345', role='supervisor')
+        supervisor.user_permissions.add(
+            Permission.objects.get(codename='manage_kanban_config'),
+            Permission.objects.get(codename='view_content'),
+        )
+        glob = KanbanStage.objects.create(key='coluna_global', label='Coluna Global')
+
+        self.client.force_authenticate(user=supervisor)
+        r = self.client.patch(
+            f'/api/kanban-stages/{glob.pk}/', {'label': 'Renomeada'}, format='json')
+
+        self.assertEqual(r.status_code, 403, r.content)

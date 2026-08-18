@@ -883,6 +883,11 @@ export default function ProjectDetails() {
   const [configLoading, setConfigLoading] = useState(false);
   const [globalStages, setGlobalStages] = useState<KanbanStageType[]>([]);
   const [newStageLabel, setNewStageLabel] = useState('');
+  /** Motivo da recusa ao criar a coluna, para a tela poder DIZER o que houve.
+   *  Sem isto o backend recusa (nome longo demais, nome de etapa do sistema,
+   *  coluna já existente) e o erro morre no console: o botão simplesmente não
+   *  faz nada, que é a pior resposta possível — a pessoa clica de novo. */
+  const [erroNovaColuna, setErroNovaColuna] = useState('');
   const [newStageIsTerminal, setNewStageIsTerminal] = useState(false);
   const [newStageRequiresRequiredData, setNewStageRequiresRequiredData] = useState(false);
 
@@ -2069,6 +2074,7 @@ export default function ProjectDetails() {
     if (!id) return;
     const label = newStageLabel.trim();
     if (!label) return;
+    setErroNovaColuna('');
 
     try {
       // UMA CHAMADA SÓ, E A COLUNA NASCE DO PROJETO.
@@ -2093,6 +2099,15 @@ export default function ProjectDetails() {
       const global = await kanbanStageService.getAll().catch(() => []);
       setGlobalStages(global);
     } catch (error) {
+      // A mensagem do backend é específica e útil ("gera um identificador de 26
+      // caracteres e o limite é 20"), então ela vai para a tela em vez de virar
+      // um genérico.
+      const resposta = (error as { response?: { data?: { detail?: string; label?: string[] } } })?.response?.data;
+      setErroNovaColuna(
+        resposta?.detail
+          || resposta?.label?.[0]
+          || 'Não foi possível criar a coluna. Tente outro nome.',
+      );
       console.error('Erro ao criar a coluna:', error);
     }
   };
@@ -3755,9 +3770,23 @@ export default function ProjectDetails() {
                     <Input
                       id="new-stage-label"
                       value={newStageLabel}
-                      onChange={(e) => setNewStageLabel(e.target.value)}
+                      onChange={(e) => {
+                        setNewStageLabel(e.target.value);
+                        if (erroNovaColuna) setErroNovaColuna('');
+                      }}
                       placeholder="Ex.: Em revisão"
                     />
+
+                    {/* A recusa do backend é específica e acionável — o nome
+                        gera um identificador longo demais, ou colide com uma
+                        etapa do sistema. Mostrar isso é a diferença entre
+                        corrigir o nome e clicar no botão de novo achando que
+                        travou. */}
+                    {erroNovaColuna && (
+                      <p role="alert" className="text-xs text-[var(--color-destructive)]">
+                        {erroNovaColuna}
+                      </p>
+                    )}
 
                     <div className="flex items-center gap-[12px]">
                       <label className="flex items-center gap-[8px] text-sm">
