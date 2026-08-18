@@ -68,3 +68,15 @@ backend/dump_banco_prod/
 
 # DEV local override do docker-compose (expõe Redis pra worker nativo)
 docker-compose.override.yml
+
+# Dados de acesso a VPS, gravados por scripts/sincronizar-banco-dev.ps1.
+# O repositorio nunca guarda endereco de servidor: o deploy usa secrets do
+# GitHub pelo mesmo motivo. Cada maquina tem o seu.
+scripts/vps.local.ps1
+
+# Saida bruta das sincronizacoes de banco (o painel mostra o resumo; o detalhe
+# vai para ca).
+logs/
+
+# Script de sincronizacao do banco de dev: fica so na maquina de quem usa.
+scripts/sincronizar-banco-dev.ps1
