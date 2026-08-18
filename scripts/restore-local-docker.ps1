@@ -16,7 +16,19 @@ param(
     [switch] $SkipMigrate
 )
 
-$ErrorActionPreference = "Stop"
+# PROGRAMA NATIVO ESCREVE EM STDERR SEM QUE ISSO SEJA ERRO.
+#
+# `docker compose` imprime o progresso ("Container bwa_tech-db-1 Running") no
+# STDERR. Com $ErrorActionPreference='Stop', o PowerShell 5.1 embrulha cada uma
+# dessas linhas num NativeCommandError TERMINANTE - e o script morria em
+# `docker compose up -d db` com o container subindo perfeitamente. O sintoma era
+# absurdo: falha imediata, log dizendo apenas "Verificando o container do
+# banco...", e o container `Up (healthy)` ao lado.
+#
+# Com 'Continue', a saida do nativo e so texto. O erro de verdade continua sendo
+# detectado, e melhor: por $LASTEXITCODE, conferido depois de cada chamada.
+# `throw` segue terminando o script, entao os pontos de falha reais nao mudam.
+$ErrorActionPreference = "Continue"
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $root = Split-Path -Parent $scriptDir
 Set-Location $root
