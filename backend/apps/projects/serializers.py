@@ -8,6 +8,7 @@ from .models import (
     Sprint,
     Project,
     KanbanStage,
+    keys_reservadas,
     ProjectKanbanStageConfig,
     Card,
     CardAnexo,
@@ -1596,12 +1597,77 @@ class KanbanStageSerializer(serializers.ModelSerializer):
     def validate(self, attrs):
         label = attrs.get('label')
         key = attrs.get('key')
-        if label and (not key or not str(key).strip()):
+
+        # A KEY SÓ NASCE DO LABEL NA CRIAÇÃO.
+        #
+        # Derivar também no update fazia o serializer recusar a operação mais
+        # comum de todas: renomear a coluna. Ao receber só `label`, ele gerava a
+        # key nova a partir dele e em seguida batia na própria trava de
+        # imutabilidade — o pedido legítimo era negado por uma regra que existe
+        # para impedir outra coisa. Depois de criada, o label é livre e a key
+        # está congelada.
+        if label and (not key or not str(key).strip()) and self.instance is None:
             # slug simples compatível com status atuais (underscore + lowercase)
             normalized = unicodedata.normalize('NFKD', label)
             without_accents = ''.join(ch for ch in normalized if not unicodedata.combining(ch))
             slug = re.sub(r'[^a-zA-Z0-9]+', '_', without_accents).strip('_').lower()
             attrs['key'] = slug
+
+        chave = (attrs.get('key') or '').strip()
+
+        # A KEY NÃO PODE PASSAR DE 20 CARACTERES, E O TETO NÃO É O DESTE CAMPO.
+        #
+        # `KanbanStage.key` aceita 50, mas quem guarda esse valor no dia a dia é
+        # `Card.status`, que é varchar(20). Sem este limite o sistema aceita a
+        # coluna, desenha o quadro, e o PRIMEIRO card arrastado para ela estoura
+        # com DataError no Postgres — erro na tela do usuário, num lugar sem
+        # nenhuma relação aparente com o que ele fez minutos antes. Em SQLite
+        # (desenvolvimento) passa calado, então o defeito só aparece em produção.
+        #
+        # Medido: "Aguardando Cliente Externo" gera 26 caracteres. As três
+        # colunas customizadas que existem hoje cabem por sorte (7, 11 e 12), e a
+        # maior chave do sistema, `aguardando_resposta`, tem 19 — uma a menos que
+        # o limite.
+        if len(chave) > 20:
+            raise serializers.ValidationError({
+                'label': (
+                    f'O nome gera um identificador de {len(chave)} caracteres '
+                    f'("{chave}") e o limite é 20. Use um nome mais curto.'
+                )
+            })
+
+        # AS CHAVES DE SISTEMA SÃO RESERVADAS.
+        #
+        # As seis do ciclo de vida e as quatro do fluxo de feedback são
+        # comparadas como string crua em dezenas de pontos — métricas, filtros
+        # de relatório, `CARD_STATUS_FECHADOS`, o gatilho que gera o pedido de
+        # feedback ao finalizar. Deixar um projeto criar a própria "Finalizado"
+        # faria os cards dele entrarem nessas contas sem que ninguém tivesse
+        # pedido, e a divergência apareceria num número de relatório, longe daqui.
+        if chave in keys_reservadas():
+            raise serializers.ValidationError({
+                'label': (
+                    f'"{chave}" é uma etapa do sistema e não pode ser recriada. '
+                    'Escolha outro nome para a coluna.'
+                )
+            })
+
+        # A KEY É IMUTÁVEL DEPOIS DE CRIADA.
+        #
+        # `Card.status` guarda a string, e não há FK: renomear a key não arrasta
+        # os cards, ORFANA todos eles de uma vez. Numa etapa global isso atinge
+        # os ~120 projetos que a usam, sem cascata, sem erro e sem log. Trocar o
+        # rótulo (`label`) continua liberado — é o que a pessoa quer quando pede
+        # para "renomear a coluna".
+        if self.instance is not None and chave and chave != self.instance.key:
+            raise serializers.ValidationError({
+                'key': (
+                    'O identificador da etapa não pode ser alterado depois de '
+                    'criada: os cards guardam esse valor e ficariam órfãos. '
+                    'Altere apenas o nome exibido.'
+                )
+            })
+
         return attrs
 
 

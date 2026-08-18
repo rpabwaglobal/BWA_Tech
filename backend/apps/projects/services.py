@@ -7,7 +7,8 @@ from django.db import models, transaction
 from django.utils import timezone
 
 from .models import (Sprint, Project, ProjectCompartilhamento, Card, CardStatus, ProjectStatus,
-                     ProjectKanbanStageConfig, CardLog, CardLogEventType, CARD_STATUS_FECHADOS)
+                     KanbanStage, ProjectKanbanStageConfig, CardLog, CardLogEventType,
+                     CARD_STATUS_FECHADOS)
 
 
 def _norm_nome_projeto(nome: str) -> str:
@@ -87,12 +88,44 @@ def _replicar_card_para_sprint(card: Card, novo_projeto: Project, sprint_origem:
 
 
 def merge_project_kanban_into(canonical: Project, other: Project) -> None:
-    """Copia etapas Kanban do projeto `other` para `canonical` (sem duplicar stage)."""
-    for cfg in other.kanban_stage_configs.all():
+    """Leva as colunas de `other` para `canonical`.
+
+    ETAPA GLOBAL É REAPROVEITADA; ETAPA DO PROJETO É CLONADA.
+
+    A diferença decide se a operação funciona. Uma etapa que pertence a `other`
+    não pode ser apenas referenciada pelo `canonical`: os dois chamadores que
+    consolidam projetos apagam `other` logo em seguida, e com `on_delete=CASCADE`
+    a etapa iria junto — levando pela cascata a coluna recém-criada no destino.
+    Na replicação de sprint o dano seria outro e pior, porque silencioso: o
+    projeto de ORIGEM SOBREVIVE na sprint passada, então mover a etapa esvaziaria
+    o quadro histórico dela.
+
+    Clonar mantém a MESMA `key`, e é isso que faz os cards continuarem no lugar:
+    `Card.status` guarda a string, então o card replicado cai na coluna clonada
+    sem que nada precise ser reescrito.
+
+    Idempotente pelos dois lados: `get_or_create` na etapa (por projeto+key) e na
+    config (por projeto+etapa), então rodar duas vezes não duplica nada.
+    """
+    for cfg in other.kanban_stage_configs.select_related('stage'):
+        etapa = cfg.stage
+
+        if etapa.projeto_id is not None:
+            etapa, _ = KanbanStage.objects.get_or_create(
+                projeto=canonical,
+                key=etapa.key,
+                defaults={
+                    'label': etapa.label,
+                    'is_terminal': etapa.is_terminal,
+                    'requires_required_data': etapa.requires_required_data,
+                    'oculta_no_catalogo': etapa.oculta_no_catalogo,
+                },
+            )
+
         ProjectKanbanStageConfig.objects.get_or_create(
             project=canonical,
-            stage=cfg.stage,
-            defaults={"order": cfg.order},
+            stage=etapa,
+            defaults={"order": cfg.order, "stage_key": etapa.key},
         )
 
 
@@ -378,6 +411,26 @@ def finalizar_sprint_replicacao(sprint, criado_por_user=None):
                 for c in project.compartilhamentos.all()
                 if c.setor_id not in ja_no_destino
             ])
+
+            # AS COLUNAS DO QUADRO TAMBEM ACOMPANHAM O TRABALHO.
+            #
+            # Sem isto o projeto chegava na sprint nova SEM as etapas
+            # personalizadas, e o modo de falha era mudo: o card e replicado
+            # carregando `status = <key da etapa>`, mas o quadro so desenha
+            # coluna que tenha ProjectKanbanStageConfig. O projeto novo nascia
+            # com zero configs, entao `_ensure_project_default_kanban_config`
+            # criava as SEIS PADRAO na primeira abertura — e todo card que
+            # estivesse numa etapa personalizada sumia da tela sem erro, sem
+            # log e sem ter sido perdido.
+            #
+            # Recriar a coluna a mao "resolvia" porque a KanbanStage e um
+            # catalogo GLOBAL: ela nunca foi apagada, so tinha perdido o
+            # vinculo com este projeto. Refeito o vinculo, os cards reapareciam
+            # na hora, com o status que sempre tiveram.
+            #
+            # get_or_create por (project, stage), igual ao compartilhamento
+            # acima: no projeto reutilizado isto e uniao, nao substituicao.
+            merge_project_kanban_into(novo_projeto, project)
 
             for card in cards_pendentes:
                 _replicar_card_para_sprint(

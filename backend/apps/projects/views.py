@@ -457,7 +457,13 @@ class SprintViewSet(CompartilhamentoSetorMixin, viewsets.ModelViewSet):
             'em_homologacao', 'finalizado', 'inviabilizado',
         ]
         for idx, stage_key in enumerate(default_stage_keys_order):
-            stage = KanbanStage.objects.filter(key=stage_key).first()
+            # `projeto__isnull=True`: as SEIS do ciclo de vida são globais, e
+            # sem este recorte o `.first()` poderia devolver a etapa homônima de
+            # OUTRO projeto — sem erro e sem log, contaminando o quadro desde o
+            # nascimento. Um `.first()` que escolhe errado é pior que um `.get()`
+            # que estoura.
+            stage = KanbanStage.objects.filter(
+                key=stage_key, projeto__isnull=True).first()
             if not stage:
                 continue
             ProjectKanbanStageConfig.objects.get_or_create(
@@ -562,7 +568,13 @@ class ProjectViewSet(CompartilhamentoSetorMixin, viewsets.ModelViewSet):
         ]
 
         for idx, stage_key in enumerate(default_stage_keys_order):
-            stage = KanbanStage.objects.filter(key=stage_key).first()
+            # `projeto__isnull=True`: as SEIS do ciclo de vida são globais, e
+            # sem este recorte o `.first()` poderia devolver a etapa homônima de
+            # OUTRO projeto — sem erro e sem log, contaminando o quadro desde o
+            # nascimento. Um `.first()` que escolhe errado é pior que um `.get()`
+            # que estoura.
+            stage = KanbanStage.objects.filter(
+                key=stage_key, projeto__isnull=True).first()
             if not stage:
                 continue
             cfg, _ = ProjectKanbanStageConfig.objects.get_or_create(project=project, stage=stage, defaults={'order': idx})
@@ -592,7 +604,13 @@ class ProjectViewSet(CompartilhamentoSetorMixin, viewsets.ModelViewSet):
         ]
 
         for idx, stage_key in enumerate(default_stage_keys_order):
-            stage = KanbanStage.objects.filter(key=stage_key).first()
+            # `projeto__isnull=True`: as SEIS do ciclo de vida são globais, e
+            # sem este recorte o `.first()` poderia devolver a etapa homônima de
+            # OUTRO projeto — sem erro e sem log, contaminando o quadro desde o
+            # nascimento. Um `.first()` que escolhe errado é pior que um `.get()`
+            # que estoura.
+            stage = KanbanStage.objects.filter(
+                key=stage_key, projeto__isnull=True).first()
             if not stage:
                 continue
             ProjectKanbanStageConfig.objects.get_or_create(
@@ -659,14 +677,88 @@ class ProjectViewSet(CompartilhamentoSetorMixin, viewsets.ModelViewSet):
 
         project = self.get_object()
         stage_key = request.data.get('stage_key')
+        label = request.data.get('label')
+
+        # DOIS MODOS NUMA ROTA SÓ: `label` CRIA a coluna deste projeto;
+        # `stage_key` PENDURA uma etapa que já existe (global do catálogo).
+        #
+        # Antes o frontend fazia os dois passos: criava uma etapa GLOBAL e
+        # depois a adicionava pela key. Com colunas por projeto isso passou a
+        # ser errado por construção — a coluna nasceria no catálogo de todo
+        # mundo. Aqui a criação e o vínculo acontecem juntos, e a etapa já nasce
+        # com dono.
+        if isinstance(label, str) and label.strip() and not (
+                isinstance(stage_key, str) and stage_key.strip()):
+            serializer = KanbanStageSerializer(data={
+                'label': label.strip(),
+                'is_terminal': bool(request.data.get('is_terminal')),
+                'requires_required_data': bool(request.data.get('requires_required_data')),
+            })
+            # Aqui é que valem o teto de 20 caracteres (o limite real é
+            # `Card.status`) e a recusa das chaves de sistema.
+            serializer.is_valid(raise_exception=True)
+            nova_key = serializer.validated_data['key']
+
+            if ProjectKanbanStageConfig.objects.filter(
+                    project=project, stage_key=nova_key).exists():
+                return Response(
+                    {'detail': f'Este projeto já tem uma coluna "{nova_key}".'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            with transaction.atomic():
+                stage = serializer.save(projeto=project)
+                ordem = ProjectKanbanStageConfig.objects.filter(
+                    project=project).aggregate(Max('order'))['order__max']
+                ProjectKanbanStageConfig.objects.create(
+                    project=project,
+                    stage=stage,
+                    order=(ordem + 1) if ordem is not None else 0,
+                    stage_key=stage.key,
+                )
+            return Response(
+                {'detail': 'Coluna criada.', 'stage_key': stage.key, 'stage_id': stage.id},
+                status=status.HTTP_201_CREATED,
+            )
+
         if not isinstance(stage_key, str) or not stage_key.strip():
-            return Response({'detail': 'stage_key é obrigatório.'}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {'detail': 'Informe `label` para criar uma coluna, ou `stage_key` '
+                           'para adicionar uma etapa existente.'},
+                status=status.HTTP_400_BAD_REQUEST)
         stage_key = stage_key.strip()
 
-        try:
-            stage = KanbanStage.objects.get(key=stage_key)
-        except KanbanStage.DoesNotExist:
-            return Response({'detail': 'Etapa global não encontrada.'}, status=status.HTTP_404_NOT_FOUND)
+        # A ETAPA DO PRÓPRIO PROJETO VEM ANTES DA GLOBAL.
+        #
+        # Este era o único `.get(key=...)` cru do backend, e com colunas por
+        # projeto ele viraria MultipleObjectsReturned — 500 — assim que dois
+        # projetos tivessem uma coluna homônima. Agora a busca é escopada e
+        # ordenada: `projeto_id` DESC põe a do projeto na frente da global, que é
+        # a preferência certa (a coluna do projeto é a que o dono enxerga).
+        stage = (
+            KanbanStage.objects
+            .filter(Q(projeto=project) | Q(projeto__isnull=True), key=stage_key)
+            .order_by(F('projeto_id').desc(nulls_last=True))
+            .first()
+        )
+        if stage is None:
+            return Response({'detail': 'Etapa não encontrada.'}, status=status.HTTP_404_NOT_FOUND)
+
+        # DUAS COLUNAS COM A MESMA KEY NO MESMO QUADRO DEIXAM O CARD SEM DONO.
+        #
+        # `Card.status` guarda a string, não uma FK: com duas colunas de key
+        # `backlog` no board, todo código que resolve a coluna pela key escolhe
+        # no escuro DENTRO do próprio projeto. A constraint
+        # `config_key_unica_por_projeto` barra isso no banco; aqui a checagem
+        # existe para o erro sair como 400 explicado em vez de IntegrityError.
+        ja_no_board = ProjectKanbanStageConfig.objects.filter(
+            project=project, stage_key=stage_key).exclude(stage=stage).exists()
+        if ja_no_board:
+            return Response(
+                {'detail': f'Este projeto já tem uma coluna "{stage_key}". '
+                           'Renomeie ou remova a existente antes de adicionar outra.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         # QUADRO DE FLUXO AUTOMÁTICO NÃO SE MISTURA COM QUADRO DE TRABALHO, e o
         # recorte tem de valer nos DOIS sentidos.
@@ -774,7 +866,22 @@ class ProjectViewSet(CompartilhamentoSetorMixin, viewsets.ModelViewSet):
 
             _move_project_cards_status(project, stage_key, move_to_key, user=request.user)
 
+        # A ETAPA DO PROJETO MORRE COM A ÚLTIMA CONFIG QUE APONTA PARA ELA.
+        #
+        # Antes bastava apagar a config: a etapa era global e continuava no
+        # catálogo, servindo aos outros projetos. Uma etapa DO PROJETO sem config
+        # não serve a ninguém — e não é só lixo: ela continua ocupando o slot de
+        # `(projeto, key)` da constraint, então recriar a mesma coluna no mesmo
+        # projeto passaria a esbarrar num IntegrityError vindo de uma linha que
+        # o usuário não tem como ver nem apagar pela interface.
+        #
+        # A etapa GLOBAL nunca é apagada aqui: removê-la do meu quadro não pode
+        # tirá-la do quadro de mais ninguém.
+        etapa = cfg.stage
         cfg.delete()
+        if etapa.projeto_id == project.id and not etapa.project_configs.exists():
+            etapa.delete()
+
         return Response({'detail': 'Etapa removida.'})
 
     @action(detail=True, methods=['post'], url_path='kanban-config/move-cards')
@@ -1119,15 +1226,80 @@ class KanbanStageViewSet(viewsets.ModelViewSet):
     serializer_class = KanbanStageSerializer
     permission_classes = [IsAuthenticated, PodeVerConteudo, NaoVisitanteEscreve]
 
+    # SEM PAGINAÇÃO: o catálogo é uma lista fechada que a tela consome inteira.
+    # Com o `PAGE_SIZE=20` global, ele passou despercebido enquanto tinha 9
+    # linhas — e teria começado a truncar em silêncio agora que existem etapas
+    # de projeto. Quem monta o seletor de colunas não pagina; simplesmente
+    # deixaria de ver metade das opções.
+    pagination_class = None
+
+    def get_queryset(self):
+        """A LISTA é o catálogo global; o DETALHE alcança a etapa do projeto.
+
+        São dois recursos com naturezas diferentes servidos pela mesma rota. A
+        lista alimenta o seletor de "adicionar coluna", e coluna de projeto não
+        cabe ali: ela não é oferecível a mais ninguém, e listá-la vazaria o nome
+        de colunas de projetos de outros setores para a plataforma inteira.
+
+        O detalhe precisa alcançá-la, porque renomear a coluna do próprio
+        projeto é `PATCH /kanban-stages/<id>/`. Aí o recorte é o do PROJETO:
+        `scope_projects` decide o que a pessoa enxerga, e sem isso o detalhe
+        seria uma porta lateral para editar o quadro de um setor alheio.
+        """
+        base = KanbanStage.objects.filter(oculta_no_catalogo=False)
+        if self.action == 'list':
+            return base.filter(projeto__isnull=True).order_by('key')
+
+        projetos = scope_projects(Project.objects.all(), self.request.user)
+        return base.filter(
+            Q(projeto__isnull=True) | Q(projeto__in=projetos)
+        ).order_by('key')
+
     def _is_supervisor_editor(self, request):
         return request.user.has_perm('accounts.manage_global_kanban_stages')
 
-    def perform_create(self, serializer):
+    def _exigir_permissao(self, acao: str):
         if not self._is_supervisor_editor(self.request):
             from rest_framework.exceptions import PermissionDenied
 
-            raise PermissionDenied('Você não tem permissão para criar etapas globais do Kanban.')
+            raise PermissionDenied(
+                f'Você não tem permissão para {acao} etapas globais do Kanban.')
+
+    def perform_create(self, serializer):
+        self._exigir_permissao('criar')
         serializer.save()
+
+    # EDITAR E APAGAR SÃO TÃO GLOBAIS QUANTO CRIAR — e estavam abertos.
+    #
+    # Só `perform_create` exigia `manage_global_kanban_stages`. PATCH e DELETE
+    # caíam apenas nas permissões de classe, que barram somente o visitante:
+    # qualquer autenticado podia renomear ou apagar uma etapa do catálogo.
+    #
+    # O estrago não fica no objeto editado. `ProjectKanbanStageConfig.stage` é
+    # `on_delete=CASCADE` e não há trava no modelo, então apagar `finalizado`
+    # levaria junto a configuração dessa coluna nos ~120 projetos que a usam. Os
+    # cards sobreviveriam (`Card.status` é string), mas sumiriam da tela em todo
+    # o sistema de uma vez — e a única forma de voltar seria reconfigurar
+    # projeto por projeto.
+    def perform_update(self, serializer):
+        self._exigir_permissao('editar')
+        serializer.save()
+
+    def perform_destroy(self, instance):
+        self._exigir_permissao('apagar')
+
+        # APAGAR ETAPA EM USO É RECUSADO, não é confirmado com aviso.
+        # Quem apaga do catálogo não tem como enxergar as consequências nos
+        # outros projetos; o número na mensagem é o que faltava para a decisão.
+        em_uso = ProjectKanbanStageConfig.objects.filter(stage=instance).count()
+        if em_uso:
+            from rest_framework.exceptions import ValidationError
+
+            raise ValidationError(
+                f'Esta etapa está configurada em {em_uso} projeto(s). '
+                'Remova a coluna desses projetos antes de apagar a etapa do catálogo.'
+            )
+        instance.delete()
 
 
 class CardViewSet(CompartilhamentoSetorMixin, viewsets.ModelViewSet):

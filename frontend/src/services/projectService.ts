@@ -193,6 +193,24 @@ export const projectService = {
     return response.data;
   },
 
+  /**
+   * Cria uma coluna QUE PERTENCE a este projeto.
+   *
+   * Diferente de `addKanbanStage`, que pendura no quadro uma etapa global já
+   * existente. A coluna criada aqui é do projeto: outro projeto pode ter uma com
+   * o mesmo nome e cards próprios, e renomear uma não mexe na outra.
+   *
+   * O backend recusa nome que gere identificador acima de 20 caracteres (o
+   * limite real é o campo `status` do card) e os nomes das etapas de sistema.
+   */
+  async criarColunaDoProjeto(
+    projectId: string,
+    dados: { label: string; is_terminal?: boolean; requires_required_data?: boolean },
+  ): Promise<{ detail?: string; stage_key?: string; stage_id?: number }> {
+    const response = await api.post(`/projects/${projectId}/kanban-config/add/`, dados);
+    return response.data;
+  },
+
   async removeKanbanStage(
     projectId: string,
     stageKey: string,

@@ -255,8 +255,32 @@ class KanbanStage(models.Model):
     'a_desenvolver', 'em_desenvolvimento', etc).
     """
 
-    key = models.CharField(max_length=50, unique=True, verbose_name='Key (status)')
+    # `unique=True` SAIU daqui e virou duas constraints parciais (ver Meta).
+    # A key deixou de ser única no sistema para ser única DENTRO do seu dono:
+    # global entre as globais, e por projeto entre as do projeto. É isso que
+    # permite dois projetos terem, cada um, a sua coluna "Backlog".
+    key = models.CharField(max_length=50, verbose_name='Key (status)')
     label = models.CharField(max_length=100, verbose_name='Label')
+
+    # DONO DA ETAPA. NULL = global (catálogo do sistema); preenchido = a coluna
+    # pertence àquele projeto e não aparece para mais ninguém.
+    #
+    # CASCADE porque a coluna não tem vida fora do projeto: apagou o projeto,
+    # apagou o quadro dele. Os cards do projeto morrem junto pelo mesmo caminho,
+    # então não sobra card apontando para etapa inexistente.
+    #
+    # A key NÃO ganha prefixo nem sufixo para desambiguar. `Card.status` é
+    # varchar(20) e a maior key do sistema já tem 19 — qualquer namespace
+    # estouraria o campo no primeiro arraste. Quem separa é a constraint.
+    projeto = models.ForeignKey(
+        'projects.Project',
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name='etapas_proprias',
+        verbose_name='Projeto dono',
+        help_text='Vazio = etapa global do catálogo. Preenchido = coluna deste projeto.',
+    )
 
     # Comportamento (usado na UI para lógica terminal e campos obrigatórios)
     is_terminal = models.BooleanField(default=False, verbose_name='Etapa Terminal')
@@ -286,9 +310,49 @@ class KanbanStage(models.Model):
         verbose_name = 'Etapa do Kanban'
         verbose_name_plural = 'Etapas do Kanban'
         ordering = ['key']
+        constraints = [
+            # DUAS constraints PARCIAIS no lugar do `unique=True` antigo.
+            # Uma só, sobre (projeto, key), não serviria: no Postgres NULL nunca
+            # é igual a NULL, então todas as globais escapariam da checagem e
+            # nada impediria duas etapas globais com a mesma key.
+            models.UniqueConstraint(
+                fields=['key'],
+                condition=models.Q(projeto__isnull=True),
+                name='kanbanstage_key_global_unica',
+            ),
+            models.UniqueConstraint(
+                fields=['projeto', 'key'],
+                condition=models.Q(projeto__isnull=False),
+                name='kanbanstage_key_unica_por_projeto',
+            ),
+        ]
 
     def __str__(self):
         return f'{self.label} ({self.key})'
+
+
+def keys_reservadas() -> set:
+    """Chaves que um projeto NÃO pode usar ao criar uma coluna própria.
+
+    São duas famílias, e nenhuma delas está cravada como lista aqui:
+
+    - As do CICLO DE VIDA (`CardStatus`), comparadas como string crua em
+      métricas, filtros de relatório, `CARD_STATUS_FECHADOS` e no gatilho que
+      gera o pedido de feedback ao finalizar um card. Um projeto com a própria
+      "Finalizado" entraria nessas contas sem ninguém ter pedido, e a
+      divergência apareceria num número de relatório, longe da causa.
+
+    - As de FLUXO INTERNO, descobertas por `oculta_no_catalogo` em vez de
+      listadas. Isso é deliberado e segue o mesmo raciocínio documentado no
+      campo: cravar as keys do app `feedbacks` aqui colocaria conhecimento dele
+      dentro de `projects`, que é justamente o que o flag existe para evitar.
+      Fluxos internos futuros ficam cobertos sem tocar neste arquivo.
+    """
+    reservadas = set(CardStatus.values)
+    reservadas |= set(
+        KanbanStage.objects.filter(oculta_no_catalogo=True).values_list('key', flat=True)
+    )
+    return reservadas
 
 
 class ProjectKanbanStageConfig(models.Model):
@@ -310,6 +374,22 @@ class ProjectKanbanStageConfig(models.Model):
     )
     order = models.PositiveIntegerField(default=0, verbose_name='Ordem')
 
+    # CÓPIA DA KEY DA ETAPA, para o banco poder impedir duas colunas homônimas
+    # no MESMO quadro.
+    #
+    # `unique_together('project', 'stage')` impede repetir a mesma ETAPA, não a
+    # mesma KEY: com colunas por projeto, um projeto poderia ter configurada a
+    # global `backlog` e mais a `backlog` própria. Como `Card.status` guarda a
+    # string, o card passaria a pertencer às duas colunas ao mesmo tempo, e
+    # todo código que resolve a coluna pela key escolheria no escuro DENTRO do
+    # próprio projeto.
+    #
+    # A trava tinha de ser sobre `stage__key`, e `UniqueConstraint` só aceita
+    # campos locais — atravessar o join é recusado na checagem do modelo. Daí a
+    # desnormalização. Ela é segura porque a key é IMUTÁVEL depois de criada
+    # (ver KanbanStageSerializer): o valor copiado não tem como ficar velho.
+    stage_key = models.CharField(max_length=50, blank=True, verbose_name='Key da etapa')
+
     created_at = models.DateTimeField(auto_now_add=True, verbose_name='Data de Criação')
     updated_at = models.DateTimeField(auto_now=True, verbose_name='Data de Atualização')
 
@@ -318,6 +398,21 @@ class ProjectKanbanStageConfig(models.Model):
         verbose_name_plural = 'Configurações de Etapas do Kanban por Projeto'
         unique_together = [('project', 'stage')]
         ordering = ['order', 'stage__key']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['project', 'stage_key'],
+                name='config_key_unica_por_projeto',
+            ),
+        ]
+
+    def save(self, *args, **kwargs):
+        # Mantém a cópia em dia sozinha. Deixar isso a cargo de quem cria a
+        # config espalharia a responsabilidade por três lugares (a action de
+        # adicionar, a replicação de sprint e o preenchimento das etapas padrão)
+        # e bastaria um esquecer para a constraint parar de valer em silêncio.
+        if self.stage_id and not self.stage_key:
+            self.stage_key = self.stage.key
+        super().save(*args, **kwargs)
 
     def __str__(self):
         return f'{self.project.nome}: {self.stage.label} ({self.order})'

@@ -255,8 +255,18 @@ def garantir_estrutura_monitoramento(supervisor=None):
             setor=setor)
 
         for idx, (key, label, terminal) in enumerate(etapas_monitoramento()):
+            # `projeto=None` NÃO É REDUNDANTE: as etapas deste fluxo são
+            # GLOBAIS, e desde que as colunas customizadas passaram a pertencer
+            # ao projeto pode existir uma etapa homônima com dono. Sem este
+            # recorte, o `get()` embutido no `get_or_create` casaria com a etapa
+            # de um projeto qualquer e o motor de feedback a sequestraria: ela
+            # sumiria do quadro do dono e o fluxo passaria a depender de uma
+            # linha que morre junto com um projeto de terceiro. Pior, a falha
+            # seria muda — quem chama isto embrulha tudo em `logger.exception`,
+            # então o fluxo simplesmente pararia de gerar pedidos.
             stage, criada = KanbanStage.objects.get_or_create(
                 key=key,
+                projeto=None,
                 defaults={
                     'label': label,
                     'is_terminal': terminal,

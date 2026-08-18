@@ -2071,23 +2071,29 @@ export default function ProjectDetails() {
     if (!label) return;
 
     try {
-      const created = await kanbanStageService.create({
+      // UMA CHAMADA SÓ, E A COLUNA NASCE DO PROJETO.
+      //
+      // Antes eram duas: criava uma etapa GLOBAL no catálogo e depois a
+      // pendurava aqui pela key. Isso é o que fazia a "Backlog" deste projeto
+      // ser a MESMA linha da "Backlog" de outro — renomear numa renomeava em
+      // todas, e não dava para ter duas colunas homônimas independentes. Além
+      // disso, criar em dois passos deixava lixo no catálogo quando o segundo
+      // falhava.
+      await projectService.criarColunaDoProjeto(id, {
         label,
         is_terminal: newStageIsTerminal,
         requires_required_data: newStageRequiresRequiredData,
       });
-      // Reset inputs
+
       setNewStageLabel('');
       setNewStageIsTerminal(false);
       setNewStageRequiresRequiredData(false);
 
-      // Adicionar ao projeto
-      await projectService.addKanbanStage(id, created.key);
       await refreshProjectStages();
       const global = await kanbanStageService.getAll().catch(() => []);
       setGlobalStages(global);
     } catch (error) {
-      console.error('Erro ao criar/adicionar etapa:', error);
+      console.error('Erro ao criar a coluna:', error);
     }
   };
 

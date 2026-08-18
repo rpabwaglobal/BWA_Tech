@@ -15,6 +15,8 @@ from apps.projects.models import (
     CardLogEventType,
     CardPin,
     WeeklyPriority,
+    KanbanStage,
+    ProjectKanbanStageConfig,
 )
 from apps.projects.services import (
     data_inicio_para_status,
@@ -153,6 +155,47 @@ class SprintReplicationTests(TestCase):
         novo = Card.objects.get(
             nome='Card com feedback', projeto__sprint=self.sprint_destino)
         self.assertTrue(novo.gerar_formulario_feedback)
+
+    def test_replicacao_leva_a_coluna_personalizada_junto_com_o_card(self):
+        """A etapa criada no projeto sobrevive a virada da sprint.
+
+        O defeito que isto tranca era MUDO: o card era replicado carregando
+        `status = <key da etapa>`, mas o quadro so desenha coluna que tenha
+        ProjectKanbanStageConfig. O projeto novo nascia sem nenhuma config,
+        entao ganhava as SEIS PADRAO na primeira abertura e o card na etapa
+        personalizada sumia da tela - sem erro, sem log, e sem ter sido
+        perdido de fato.
+
+        Por isso o teste afirma as DUAS coisas: que a coluna existe no destino
+        e que o card continua nela. Afirmar so uma deixaria passar metade.
+        """
+        # `order` nao existe na etapa global: a ordem e por projeto, e mora na
+        # config. E o mesmo motivo de a coluna sumir na virada — o que pertence
+        # ao projeto esta na config, e era ela que nao era copiada.
+        etapa = KanbanStage.objects.create(
+            key='aguardando_cliente', label='Aguardando Cliente')
+        ProjectKanbanStageConfig.objects.create(
+            project=self.projeto, stage=etapa, order=10)
+
+        card = Card.objects.create(
+            nome='Card em etapa personalizada',
+            projeto=self.projeto,
+            status=etapa.key,
+            criado_por=self.user,
+        )
+
+        finalizar_sprint_replicacao(self.sprint_origem, criado_por_user=self.user)
+
+        novo_projeto = Project.objects.get(
+            nome=self.projeto.nome, sprint=self.sprint_destino)
+
+        self.assertTrue(
+            ProjectKanbanStageConfig.objects.filter(
+                project=novo_projeto, stage=etapa).exists(),
+            'A coluna personalizada nao acompanhou o projeto para a sprint nova.')
+
+        novo_card = Card.objects.get(nome=card.nome, projeto=novo_projeto)
+        self.assertEqual(novo_card.status, etapa.key)
 
     def test_replicacao_a_desenvolver_sem_data_inicio(self):
         card_backlog = Card.objects.create(
@@ -861,3 +904,348 @@ class TimelineDaDesatribuicaoNaTelaTests(APITestCase):
         self.assertIn('conta desativada', logs[0]['descricao'])
         # Quem puxou o gatilho aparece na linha do evento.
         self.assertEqual(logs[0]['usuario_name'], self.gestora.username)
+
+
+class CatalogoGlobalDeEtapasTests(APITestCase):
+    """Editar e apagar etapa do catalogo exige a MESMA permissao que criar.
+
+    O buraco era assimetrico e por isso passou despercebido: `perform_create`
+    exigia `manage_global_kanban_stages`, mas PATCH e DELETE caiam so nas
+    permissoes de classe, que barram apenas o visitante. Qualquer autenticado
+    podia renomear ou apagar uma etapa usada por dezenas de projetos.
+
+    O estrago nao fica no objeto editado: `ProjectKanbanStageConfig.stage` e
+    CASCADE, entao apagar `finalizado` levaria junto a coluna nos ~120 projetos
+    que a usam. Os cards sobreviveriam (o status e string), mas sumiriam da tela
+    em todo o sistema de uma vez.
+    """
+
+    def setUp(self):
+        User = get_user_model()
+        self.dev = User.objects.create_user(
+            username='dev_catalogo', email='dev.catalogo@example.com',
+            password='pass12345', role='desenvolvedor')
+        self.admin = User.objects.create_user(
+            username='admin_catalogo', email='admin.catalogo@example.com',
+            password='pass12345', role='admin', is_superuser=True, is_staff=True)
+        self.etapa = KanbanStage.objects.create(key='coluna_teste', label='Coluna Teste')
+
+    def test_desenvolvedor_nao_renomeia_etapa_global(self):
+        self.client.force_authenticate(user=self.dev)
+        r = self.client.patch(
+            f'/api/kanban-stages/{self.etapa.pk}/', {'label': 'Renomeada'}, format='json')
+        self.assertEqual(r.status_code, 403, r.content)
+        self.etapa.refresh_from_db()
+        self.assertEqual(self.etapa.label, 'Coluna Teste')
+
+    def test_desenvolvedor_nao_apaga_etapa_global(self):
+        self.client.force_authenticate(user=self.dev)
+        r = self.client.delete(f'/api/kanban-stages/{self.etapa.pk}/')
+        self.assertEqual(r.status_code, 403, r.content)
+        self.assertTrue(KanbanStage.objects.filter(pk=self.etapa.pk).exists())
+
+    def test_apagar_etapa_em_uso_e_recusado_mesmo_com_permissao(self):
+        """Ter a permissao nao torna a cascata aceitavel.
+
+        Quem apaga do catalogo nao ve as consequencias nos outros projetos, e o
+        numero de projetos afetados e justamente o dado que falta para decidir.
+        """
+        sprint = Sprint.objects.create(
+            nome='Sprint catalogo',
+            data_inicio=timezone.now(),
+            fechamento_em=timezone.now() + timedelta(days=7),
+            duracao_dias=7,
+            supervisor=self.admin,
+            setor=setor_de_teste(),
+        )
+        projeto = Project.objects.create(nome='Projeto catalogo', sprint=sprint)
+        ProjectKanbanStageConfig.objects.create(project=projeto, stage=self.etapa, order=0)
+
+        self.client.force_authenticate(user=self.admin)
+        r = self.client.delete(f'/api/kanban-stages/{self.etapa.pk}/')
+
+        self.assertEqual(r.status_code, 400, r.content)
+        self.assertIn('1 projeto', str(r.content, 'utf-8'))
+        self.assertTrue(KanbanStage.objects.filter(pk=self.etapa.pk).exists())
+
+    def test_admin_apaga_etapa_que_nao_esta_em_uso(self):
+        self.client.force_authenticate(user=self.admin)
+        r = self.client.delete(f'/api/kanban-stages/{self.etapa.pk}/')
+        self.assertEqual(r.status_code, 204, r.content)
+        self.assertFalse(KanbanStage.objects.filter(pk=self.etapa.pk).exists())
+
+
+class BlindagemDaEtapaTests(APITestCase):
+    """As tres travas do serializer, cada uma contra um modo de falha distinto."""
+
+    def setUp(self):
+        User = get_user_model()
+        self.admin = User.objects.create_user(
+            username='admin_blindagem', email='admin.blindagem@example.com',
+            password='pass12345', role='admin', is_superuser=True, is_staff=True)
+        self.client.force_authenticate(user=self.admin)
+
+    def test_nome_longo_demais_e_recusado_com_400_em_vez_de_estourar_no_arraste(self):
+        """O teto e `Card.status` (varchar 20), nao `KanbanStage.key` (50).
+
+        Sem esta trava a etapa e criada, a coluna aparece no quadro, e o
+        PRIMEIRO card arrastado para ela estoura com DataError no Postgres -
+        erro na cara do usuario, num lugar sem relacao aparente com o que ele
+        fez minutos antes. Em SQLite passaria calado.
+        """
+        r = self.client.post(
+            '/api/kanban-stages/', {'label': 'Aguardando Cliente Externo'}, format='json')
+
+        self.assertEqual(r.status_code, 400, r.content)
+        self.assertIn('26', str(r.content, 'utf-8'))
+        self.assertFalse(
+            KanbanStage.objects.filter(key='aguardando_cliente_externo').exists())
+
+    def test_nome_no_limite_e_aceito(self):
+        """20 caracteres exatos passam: a trava recusa o que NAO cabe, nao o
+        que chega perto."""
+        r = self.client.post(
+            '/api/kanban-stages/', {'label': 'Aguardando Cliente'}, format='json')
+        self.assertEqual(r.status_code, 201, r.content)
+        self.assertEqual(r.data['key'], 'aguardando_cliente')
+
+    def test_chave_do_ciclo_de_vida_e_reservada(self):
+        """Recriar 'Finalizado' faria os cards do projeto entrarem nas metricas
+        e no gatilho de feedback sem ninguem ter pedido."""
+        r = self.client.post('/api/kanban-stages/', {'label': 'Finalizado'}, format='json')
+        self.assertEqual(r.status_code, 400, r.content)
+        self.assertIn('sistema', str(r.content, 'utf-8').lower())
+
+    def test_chave_de_fluxo_interno_e_reservada_sem_estar_cravada(self):
+        """A reserva das etapas de fluxo vem de `oculta_no_catalogo`, e nao de
+        uma lista de keys do app `feedbacks` dentro de `projects` - que e
+        exatamente o que o campo existe para evitar (ver models.py)."""
+        KanbanStage.objects.create(
+            key='fluxo_interno', label='Fluxo Interno', oculta_no_catalogo=True)
+
+        r = self.client.post('/api/kanban-stages/', {'label': 'Fluxo Interno'}, format='json')
+        self.assertEqual(r.status_code, 400, r.content)
+
+    def test_a_key_nao_pode_ser_alterada_depois_de_criada(self):
+        """`Card.status` guarda a string e nao ha FK: trocar a key nao arrasta
+        os cards, ORFANA todos de uma vez - nos ~120 projetos, sem erro."""
+        etapa = KanbanStage.objects.create(key='coluna_x', label='Coluna X')
+
+        r = self.client.patch(
+            f'/api/kanban-stages/{etapa.pk}/', {'key': 'coluna_y'}, format='json')
+
+        self.assertEqual(r.status_code, 400, r.content)
+        etapa.refresh_from_db()
+        self.assertEqual(etapa.key, 'coluna_x')
+
+    def test_renomear_apenas_o_rotulo_continua_liberado(self):
+        """E o que a pessoa quer quando pede para 'renomear a coluna'."""
+        etapa = KanbanStage.objects.create(key='coluna_z', label='Coluna Z')
+
+        r = self.client.patch(
+            f'/api/kanban-stages/{etapa.pk}/', {'label': 'Coluna Renomeada'}, format='json')
+
+        self.assertEqual(r.status_code, 200, r.content)
+        etapa.refresh_from_db()
+        self.assertEqual(etapa.label, 'Coluna Renomeada')
+        self.assertEqual(etapa.key, 'coluna_z')
+
+
+class ColunaPertenceAoProjetoTests(APITestCase):
+    """O pedido original: a coluna e do PROJETO, nao do sistema.
+
+    Dois projetos podem ter, cada um, a sua "Backlog", com cards proprios; e a
+    coluna acompanha o projeto quando ele passa de sprint.
+    """
+
+    def setUp(self):
+        User = get_user_model()
+        self.admin = User.objects.create_user(
+            username='admin_colunas', email='admin.colunas@example.com',
+            password='pass12345', role='admin', is_superuser=True, is_staff=True)
+        tz = timezone.get_current_timezone()
+        hoje = hoje_local()
+        self.sprint = Sprint.objects.create(
+            nome='Sprint colunas',
+            data_inicio=timezone.make_aware(datetime.combine(hoje - timedelta(days=15), time.min), tz),
+            fechamento_em=timezone.make_aware(datetime.combine(hoje - timedelta(days=1), time(23, 0)), tz),
+            duracao_dias=14, supervisor=self.admin, setor=setor_de_teste())
+        self.sprint_nova = Sprint.objects.create(
+            nome='Sprint colunas 2',
+            data_inicio=timezone.make_aware(datetime.combine(hoje, time.min), tz),
+            fechamento_em=timezone.make_aware(datetime.combine(hoje + timedelta(days=13), time(23, 0)), tz),
+            duracao_dias=14, supervisor=self.admin, setor=setor_de_teste())
+        self.projeto_a = Project.objects.create(nome='Projeto A', sprint=self.sprint)
+        self.projeto_b = Project.objects.create(nome='Projeto B', sprint=self.sprint)
+        self.client.force_authenticate(user=self.admin)
+
+    def _criar_coluna(self, projeto, label):
+        etapa = KanbanStage.objects.create(key='backlog', label=label, projeto=projeto)
+        ProjectKanbanStageConfig.objects.create(
+            project=projeto, stage=etapa, order=0, stage_key=etapa.key)
+        return etapa
+
+    def test_dois_projetos_tem_backlog_independentes(self):
+        """Mesma key, linhas diferentes, cards separados.
+
+        Era exatamente isto que a key unica global impedia: 'Backlog' do projeto
+        A e do B eram a MESMA linha, entao renomear numa renomeava na outra.
+        """
+        a = self._criar_coluna(self.projeto_a, 'Backlog')
+        b = self._criar_coluna(self.projeto_b, 'Ideias Guardadas')
+
+        self.assertNotEqual(a.pk, b.pk)
+        self.assertEqual(a.key, b.key)
+
+        Card.objects.create(nome='Card A', projeto=self.projeto_a, status='backlog',
+                            criado_por=self.admin)
+        Card.objects.create(nome='Card B1', projeto=self.projeto_b, status='backlog',
+                            criado_por=self.admin)
+        Card.objects.create(nome='Card B2', projeto=self.projeto_b, status='backlog',
+                            criado_por=self.admin)
+
+        self.assertEqual(Card.objects.filter(projeto=self.projeto_a, status='backlog').count(), 1)
+        self.assertEqual(Card.objects.filter(projeto=self.projeto_b, status='backlog').count(), 2)
+
+        # E renomear uma NAO toca na outra - o ponto de partida do pedido.
+        r = self.client.patch(f'/api/kanban-stages/{a.pk}/', {'label': 'Backlog do A'}, format='json')
+        self.assertEqual(r.status_code, 200, r.content)
+        b.refresh_from_db()
+        self.assertEqual(b.label, 'Ideias Guardadas')
+
+    def test_pedir_a_coluna_que_ja_existe_e_idempotente(self):
+        """Com a global homonima disponivel, adicionar 'backlog' num projeto que
+        JA tem a sua resolve para a dele - nao cria uma segunda.
+
+        A busca prefere a etapa do proprio projeto, entao o pedido vira no-op em
+        vez de conflito. O que importa e o invariante: UMA coluna por key no
+        quadro, porque `Card.status` e string e duas colunas homonimas deixariam
+        o card pertencendo as duas.
+        """
+        propria = self._criar_coluna(self.projeto_a, 'Backlog')
+        KanbanStage.objects.create(key='backlog', label='Backlog Global')
+
+        r = self.client.post(
+            f'/api/projects/{self.projeto_a.pk}/kanban-config/add/',
+            {'stage_key': 'backlog'}, format='json')
+
+        self.assertEqual(r.status_code, 200, r.content)
+        configs = ProjectKanbanStageConfig.objects.filter(
+            project=self.projeto_a, stage_key='backlog')
+        self.assertEqual(configs.count(), 1)
+        self.assertEqual(configs.first().stage_id, propria.pk)
+
+    def test_o_banco_recusa_duas_colunas_de_mesma_key_no_mesmo_projeto(self):
+        """A defesa final e a constraint, nao o codigo da view.
+
+        Se algum caminho futuro esquecer a checagem, o banco ainda barra.
+        """
+        from django.db import IntegrityError, transaction as _tx
+
+        self._criar_coluna(self.projeto_a, 'Backlog')
+        outra = KanbanStage.objects.create(
+            key='backlog', label='Backlog 2', projeto=self.projeto_b)
+
+        with self.assertRaises(IntegrityError):
+            with _tx.atomic():
+                ProjectKanbanStageConfig.objects.create(
+                    project=self.projeto_a, stage=outra, order=1, stage_key='backlog')
+
+    def test_a_coluna_do_projeto_e_CLONADA_na_virada_da_sprint(self):
+        """Clonada, nao compartilhada: o quadro da sprint anterior sobrevive.
+
+        Se a etapa fosse apenas referenciada, apagar o projeto antigo levaria a
+        coluna do novo junto pela cascata; e mover esvaziaria o board historico.
+        """
+        etapa = self._criar_coluna(self.projeto_a, 'Backlog')
+        Card.objects.create(nome='Card que atravessa', projeto=self.projeto_a,
+                            status='backlog', criado_por=self.admin)
+
+        finalizar_sprint_replicacao(self.sprint, criado_por_user=self.admin)
+
+        novo_projeto = Project.objects.get(nome='Projeto A', sprint=self.sprint_nova)
+        nova_cfg = ProjectKanbanStageConfig.objects.get(
+            project=novo_projeto, stage_key='backlog')
+
+        self.assertNotEqual(nova_cfg.stage_id, etapa.pk)
+        self.assertEqual(nova_cfg.stage.projeto_id, novo_projeto.pk)
+        self.assertEqual(nova_cfg.stage.key, 'backlog')
+
+        # o card atravessou e continua na coluna
+        novo_card = Card.objects.get(nome='Card que atravessa', projeto=novo_projeto)
+        self.assertEqual(novo_card.status, 'backlog')
+
+        # e o quadro da sprint ANTERIOR continua de pe
+        self.assertTrue(
+            ProjectKanbanStageConfig.objects.filter(
+                project=self.projeto_a, stage_key='backlog').exists())
+
+    def test_remover_a_coluna_apaga_a_etapa_do_projeto_mas_nunca_a_global(self):
+        """Etapa do projeto sem config nao serve a ninguem E prende o slot da
+        constraint, impedindo recriar a mesma coluna depois."""
+        etapa = self._criar_coluna(self.projeto_a, 'Backlog')
+
+        r = self.client.post(
+            f'/api/projects/{self.projeto_a.pk}/kanban-config/remove/',
+            {'stage_key': 'backlog'}, format='json')
+        self.assertEqual(r.status_code, 200, r.content)
+        self.assertFalse(KanbanStage.objects.filter(pk=etapa.pk).exists())
+
+        # a global sai do board, mas continua existindo para os outros projetos
+        glob, _ = KanbanStage.objects.get_or_create(
+            key='a_desenvolver', projeto=None, defaults={'label': 'A Desenvolver'})
+        ProjectKanbanStageConfig.objects.create(
+            project=self.projeto_b, stage=glob, order=0, stage_key=glob.key)
+        r = self.client.post(
+            f'/api/projects/{self.projeto_b.pk}/kanban-config/remove/',
+            {'stage_key': 'a_desenvolver'}, format='json')
+        self.assertEqual(r.status_code, 200, r.content)
+        self.assertTrue(KanbanStage.objects.filter(pk=glob.pk).exists())
+
+    def test_o_catalogo_lista_so_as_globais(self):
+        """Coluna de projeto nao e oferecivel a ninguem, e listar vazaria o nome
+        de colunas de projetos de outros setores."""
+        self._criar_coluna(self.projeto_a, 'Backlog')
+
+        r = self.client.get('/api/kanban-stages/')
+        self.assertEqual(r.status_code, 200, r.content)
+        # sem paginacao: a resposta e a lista, nao um envelope
+        self.assertIsInstance(r.data, list)
+        self.assertTrue(all(s.get('key') != 'backlog' for s in r.data))
+
+    def test_criar_coluna_pelo_label_nasce_dona_do_projeto(self):
+        """Uma chamada so, e a etapa ja nasce com dono.
+
+        Antes o front criava a etapa GLOBAL e depois a pendurava pela key - dois
+        passos, e o primeiro deixava lixo no catalogo de todo mundo quando o
+        segundo falhava.
+        """
+        r = self.client.post(
+            f'/api/projects/{self.projeto_a.pk}/kanban-config/add/',
+            {'label': 'Em Discussao'}, format='json')
+
+        self.assertEqual(r.status_code, 201, r.content)
+        etapa = KanbanStage.objects.get(key='em_discussao')
+        self.assertEqual(etapa.projeto_id, self.projeto_a.pk)
+        self.assertTrue(ProjectKanbanStageConfig.objects.filter(
+            project=self.projeto_a, stage=etapa, stage_key='em_discussao').exists())
+
+        # e nao entrou no catalogo global
+        lista = self.client.get('/api/kanban-stages/')
+        self.assertTrue(all(s.get('key') != 'em_discussao' for s in lista.data))
+
+    def test_criar_coluna_com_nome_longo_demais_e_recusado(self):
+        """O teto e `Card.status` (varchar 20). Sem isto a coluna aparece e o
+        primeiro arraste estoura."""
+        r = self.client.post(
+            f'/api/projects/{self.projeto_a.pk}/kanban-config/add/',
+            {'label': 'Aguardando Cliente Externo'}, format='json')
+
+        self.assertEqual(r.status_code, 400, r.content)
+        self.assertFalse(KanbanStage.objects.filter(key='aguardando_cliente_externo').exists())
+
+    def test_criar_coluna_com_nome_de_etapa_do_sistema_e_recusado(self):
+        r = self.client.post(
+            f'/api/projects/{self.projeto_a.pk}/kanban-config/add/',
+            {'label': 'Finalizado'}, format='json')
+        self.assertEqual(r.status_code, 400, r.content)
