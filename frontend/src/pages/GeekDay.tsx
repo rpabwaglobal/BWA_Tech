@@ -956,7 +956,7 @@ export default function GeekDay() {
             !canDrag ? 'opacity-50 cursor-not-allowed' : 'cursor-move'
           )}
         >
-          <CardContent className="flex items-center gap-3 p-4">
+          <CardContent className="flex items-center gap-3 p-[10px]">
             <Avatar className="h-[40px] w-[40px]">
               {user.profile_picture_url ? (
                 <AvatarImage src={user.profile_picture_url} alt={getUserDisplayName(user)} />
@@ -1054,7 +1054,7 @@ export default function GeekDay() {
           <CardTitle className="text-base">{title} ({count})</CardTitle>
         </CardHeader>
         <CardContent className="flex-1 min-h-0 overflow-hidden pt-0">
-          <div className="space-y-2 h-full overflow-y-auto pr-2">
+          <div className="space-y-1 h-full overflow-y-auto pr-2">
             {isEmpty ? (
               <div className="flex flex-col items-center justify-center py-8 text-center">
                 <p className="text-sm text-[var(--color-muted-foreground)]">
@@ -1253,7 +1253,16 @@ export default function GeekDay() {
                   <div className="lg:col-span-2 flex flex-col items-center justify-center space-y-3 h-full min-h-0">
                     <div className="w-full flex-1 flex items-center justify-center min-h-0 relative">
                       <div className={cn(
-                        "w-full max-w-lg h-full max-h-[500px] aspect-square relative rounded-2xl overflow-hidden roulette-wrapper",
+                        // A ALTURA manda, e a largura acompanha.
+                        //
+                        // Antes eram `w-full` E `h-full` junto com
+                        // `aspect-square`: os tres brigam, a caixa ficava mais
+                        // LARGA que alta, a roleta era dimensionada pela
+                        // largura e o `overflow-hidden` cortava o circulo em
+                        // baixo. Com a altura mandando (`h-full` + `w-auto`), o
+                        // quadrado sempre cabe na vertical; `max-w-full` cobre
+                        // o caso oposto, de uma coluna estreita demais.
+                        "h-full max-h-[500px] w-auto max-w-full aspect-square relative rounded-2xl overflow-hidden roulette-wrapper",
                         roletaIndisponivel && "bg-[var(--color-muted)]",
                       )}>
                         {!roletaIndisponivel && (
