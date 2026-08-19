@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, useRef } from 'react';
+import { useEffect, useMemo, useState, useRef, useCallback } from 'react';
 import confetti from 'canvas-confetti';
 import { useAuth } from '@/context/AuthContext';
 import { hasPermission } from '@/lib/permissions';
@@ -471,6 +471,9 @@ export default function GeekDay() {
   const [historico, setHistorico] = useState<GeekDayDraw[]>([]);
   const [loading, setLoading] = useState(true);
   const [isSpinning, setIsSpinning] = useState(false);
+  /** Roleta em primeiro plano durante o sorteio. Entra ANTES do giro e sai
+   *  quando o resultado é confirmado — ver `handleSpin`/`handleSpinEnd`. */
+  const [roletaEmDestaque, setRoletaEmDestaque] = useState(false);
   const [winner, setWinner] = useState<GeekDayUserStatus | null>(null);
   const [showWinnerDialog, setShowWinnerDialog] = useState(false);
   const [showResetDialog, setShowResetDialog] = useState(false);
@@ -729,6 +732,7 @@ export default function GeekDay() {
 
   const handleSpinEnd = (sector: Sector) => {
     setIsSpinning(false);
+    setRoletaEmDestaque(false);
     
     // Encontrar o usuário correspondente ao setor sorteado pela roleta
     const usuarioSorteado = users.find(u => String(u.id) === String(sector.id));
@@ -742,11 +746,32 @@ export default function GeekDay() {
   };
 
   const handleSpin = () => {
-    if (wheelRef.current && !isSpinning && sectors.length > 0) {
-      // Apenas girar a roleta - o resultado será definido quando parar
-      wheelRef.current.spin();
-    }
+    if (!wheelRef.current || isSpinning || sectors.length === 0) return;
+    // SÓ EXPANDE AQUI. Quem dispara o giro é o fim da transição de tamanho
+    // (`onTransitionEnd` no elemento da roleta): girar junto com o movimento
+    // somaria duas animações no mesmo instante e a roleta pareceria tremer.
+    setRoletaEmDestaque(true);
   };
+
+  /** Chamado quando a expansão termina. É daqui que o giro parte. */
+  const iniciarGiroAposExpandir = useCallback(() => {
+    if (isSpinning || !wheelRef.current) return;
+    wheelRef.current.spin();
+  }, [isSpinning]);
+
+  // REDE DE SEGURANÇA, E NÃO REDUNDÂNCIA.
+  //
+  // O giro parte do `transitionend` da expansão — mas quem tem
+  // `prefers-reduced-motion` recebe `transition: none`, e aí o evento NUNCA
+  // dispara: sem isto, o sorteio simplesmente não aconteceria para essas
+  // pessoas, e o botão pareceria quebrado. O tempo é folgado de propósito
+  // (maior que os 320ms da transição), então em uso normal quem chega primeiro
+  // é sempre o evento; a guarda de `isSpinning` impede o giro em dobro.
+  useEffect(() => {
+    if (!roletaEmDestaque) return;
+    const t = window.setTimeout(iniciarGiroAposExpandir, 450);
+    return () => window.clearTimeout(t);
+  }, [roletaEmDestaque, iniciarGiroAposExpandir]);
 
   const handleConfirmWinner = async () => {
     if (!winner || confirmingWinner) return;
@@ -1252,7 +1277,18 @@ export default function GeekDay() {
                   {/* Coluna esquerda: Roleta */}
                   <div className="lg:col-span-2 flex flex-col items-center justify-center space-y-3 h-full min-h-0">
                     <div className="w-full flex-1 flex items-center justify-center min-h-0 relative">
-                      <div className={cn(
+                      {/* Fundo desfocado do sorteio. Fica FORA do elemento da
+                          roleta para não desfocá-la também. */}
+                      {roletaEmDestaque && <div className="roleta-destaque-fundo" />}
+                      <div
+                        onTransitionEnd={(e) => {
+                          // Só o fim da transição de TAMANHO conta: o mesmo
+                          // elemento dispara `transitionend` para cada
+                          // propriedade animada, e reagir a todas giraria a
+                          // roleta duas vezes.
+                          if (e.propertyName === 'width') iniciarGiroAposExpandir();
+                        }}
+                        className={cn(
                         // A ALTURA manda, e a largura acompanha.
                         //
                         // Antes eram `w-full` E `h-full` junto com
@@ -1264,6 +1300,7 @@ export default function GeekDay() {
                         // o caso oposto, de uma coluna estreita demais.
                         "h-full max-h-[500px] w-auto max-w-full aspect-square relative rounded-2xl overflow-hidden roulette-wrapper",
                         roletaIndisponivel && "bg-[var(--color-muted)]",
+                        roletaEmDestaque && "roleta-em-destaque",
                       )}>
                         {!roletaIndisponivel && (
                           <PrizeWheel
@@ -1279,8 +1316,10 @@ export default function GeekDay() {
                             textFontSize={16}
                           />
                         )}
-                        {/* Overlay escuro quando não está sorteando */}
-                        {!isSpinning && (
+                        {/* Overlay escuro quando não está sorteando. Some
+                            durante a expansão: manter o botão sobre a roleta
+                            enquanto ela cresce faz a cena parecer travada. */}
+                        {!isSpinning && !roletaEmDestaque && (
                           <div className="absolute inset-0 bg-black/60 rounded-2xl flex items-center justify-center z-10 backdrop-blur-sm">
                             {roletaIndisponivel ? (
                               <div className="text-center p-6">

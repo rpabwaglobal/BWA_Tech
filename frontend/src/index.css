@@ -450,3 +450,50 @@
      não fazer. */
   .card-entra { animation: none; }
 }
+
+/* ── Roleta em destaque durante o sorteio ────────────────────────────────
+   Ao girar, a roleta sai do canto da tela e ocupa o centro, sobre um fundo
+   desfocado. O motivo não é enfeite: o sorteio é o momento em que todo mundo
+   está olhando para a mesma coisa ao mesmo tempo, e disputar atenção com as
+   listas ao lado é o oposto do que a cena pede.
+
+   A EXPANSÃO ACONTECE ANTES DO GIRO. Começar a girar durante o movimento
+   somaria duas animações no mesmo instante e a roleta pareceria tremer; quem
+   dispara o giro é o fim da transição (ver `onTransitionEnd` no componente),
+   não um tempo cravado — assim os dois nunca se sobrepõem, mesmo em máquina
+   lenta. */
+.roleta-destaque-fundo {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(6px);
+  animation: roleta-fundo-entra 260ms ease-out;
+}
+@keyframes roleta-fundo-entra {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+/* A roleta em si: sai do lugar dela e vai para o centro do viewport.
+   `position: fixed` com translate no centro, e a transição cuidando do resto —
+   o elemento é O MESMO, então não há troca de nó nem recarga do canvas da
+   roleta no meio do caminho. */
+.roleta-em-destaque {
+  position: fixed !important;
+  top: 50%;
+  left: 50%;
+  z-index: 61;
+  width: min(78vh, 78vw) !important;
+  height: min(78vh, 78vw) !important;
+  max-width: none !important;
+  max-height: none !important;
+  transform: translate(-50%, -50%);
+  transition: width 320ms cubic-bezier(0.22, 1, 0.36, 1),
+              height 320ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .roleta-destaque-fundo { animation: none; }
+  .roleta-em-destaque { transition: none; }
+}
