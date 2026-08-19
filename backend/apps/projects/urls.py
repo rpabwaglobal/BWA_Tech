@@ -10,6 +10,7 @@ from .views import (
     ScoreCriterionViewSet, CardScoreViewSet,
     CardAnexoViewSet,
 )
+from .dashboard import DashboardResumoView
 
 router = DefaultRouter()
 router.register(r'sprints', SprintViewSet, basename='sprint')
@@ -30,6 +31,7 @@ router.register(r'card-scores', CardScoreViewSet, basename='cardscore')
 router.register(r'card-anexos', CardAnexoViewSet, basename='cardanexo')
 
 urlpatterns = [
+    path('dashboard/resumo/', DashboardResumoView.as_view(), name='dashboard-resumo'),
     # Preferências de notificação (single-resource — não usa router)
     path('notifications/preferences/', NotificationPreferenceView.as_view(), name='notification-preferences'),
     path('', include(router.urls)),

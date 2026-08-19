@@ -26,6 +26,7 @@ import { userService, type User as UserType } from '@/services/userService';
 import { weeklyPriorityService } from '@/services/weeklyPriorityService';
 import { cn, normalizeExternalUrl } from '@/lib/utils';
 import { ROUTES } from '@/routes';
+import { TelaComCarregamento } from '@/components/TelaComCarregamento';
 // Formatação de data sem dependência externa
 
 type CardData = {
@@ -532,16 +533,8 @@ export default function Priorities() {
     }
   };
 
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <Loader2 className="h-8 w-8 animate-spin text-[var(--color-primary)]" />
-      </div>
-    );
-  }
-
   return (
-    <div className="space-y-[24px]">
+    <TelaComCarregamento carregando={loading} mensagem="Carregando prioridades…" className="space-y-[24px]">
       <div>
         <h1 className="text-2xl font-bold text-[var(--color-foreground)]">Prioridades</h1>
         <p className="text-sm text-[var(--color-muted-foreground)] mt-1">
@@ -1672,6 +1665,6 @@ export default function Priorities() {
           </DialogContent>
         </Dialog>
       )}
-    </div>
+    </TelaComCarregamento>
   );
 }

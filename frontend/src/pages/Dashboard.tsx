@@ -6,16 +6,13 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Avatar, AvatarImage, AvatarFallback } from '@/components/ui/avatar';
-import { sprintService } from '@/services/sprintService';
-import { projectService } from '@/services/projectService';
-import { cardService, type Card as CardType } from '@/services/cardService';
-import { userService, type User } from '@/services/userService';
+import type { Card as CardType } from '@/services/cardService';
+import { dashboardService } from '@/services/dashboardService';
+import type { User } from '@/services/userService';
 import type { Project } from '@/services/projectService';
 import { formatDate } from '@/lib/dateUtils';
 import { QuickCreateCardModal } from '@/components/QuickCreateCardModal';
 import { ROUTES } from '@/routes';
-import { getSprintEmAndamentoPrincipal } from '@/lib/sprintFechamento';
-import { isProjetoMonitoramento } from '@/lib/monitoramentoFeedback';
 import {
   Zap,
   FolderKanban,
@@ -28,6 +25,8 @@ import {
   Plus,
   ListChecks,
 } from 'lucide-react';
+import { NumeroCrescente } from '@/components/NumeroCrescente';
+import { TelaComCarregamento } from '@/components/TelaComCarregamento';
 
 type Stats = {
   totalSprints: number;
@@ -69,38 +68,9 @@ export default function Dashboard() {
    * permissão `view_content`). Quem não participa não enxerga sprint, projeto
    * nem card — cobrar card dessa pessoa não faz sentido. */
   const developersRef = useRef<User[]>([]);
-  const projetosSprintsAtivasRef = useRef<Project[]>([]);
   const refreshDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const recomputeDevelopersWithoutCards = useCallback(
-    (cardsSprintsAtivas: CardType[]) => {
-      const developers = developersRef.current;
-      const allCardsInDevelopment = cardsSprintsAtivas.filter((card) => {
-        const statusNormalized = (card.status || '').toLowerCase();
-        return statusNormalized === 'em_desenvolvimento';
-      });
 
-      const usersWithCards = new Set<string>();
-      allCardsInDevelopment.forEach((card) => {
-        if (card.responsavel) usersWithCards.add(String(card.responsavel));
-      });
-
-      // `developersRef` já vem só com quem participa do trabalho (o backend
-      // recorta por `view_content` em `getParticipantes`). Aqui resta a única
-      // pergunta da tela: essa pessoa tem card em desenvolvimento?
-      //
-      // As comparações antigas por nome de cargo (`!== 'admin'` e
-      // `!== 'supervisor'`) foram removidas: 'supervisor' não existe mais no
-      // catálogo de cargos e admin já não vem na rota /users/. Não excluíam
-      // visitante nenhum — eram código morto se passando por regra.
-      const usersWithout = developers.filter(
-        (dev) => !usersWithCards.has(String(dev.id)),
-      );
-
-      setDevelopersWithoutCards(usersWithout);
-    },
-    [],
-  );
 
   const refreshDevelopersWithoutCards = useCallback(async () => {
     // Rebusca a lista de PESSOAS junto com os cards — não só os cards. Quem foi
@@ -112,27 +82,19 @@ export default function Dashboard() {
     // sem card": o oposto exato do esperado, na tela em que o gestor está
     // olhando logo após desativar a conta. Custo: uma requisição por janela de
     // debounce, ao lado das N de cards que já acontecem aqui.
-    const participantes = await userService
-      .getParticipantes()
-      .catch(() => developersRef.current);
-    developersRef.current = participantes;
-
-    const projetos = projetosSprintsAtivasRef.current;
-    if (!projetos.length) {
-      setDevelopersWithoutCards(participantes);
-      return;
-    }
+    // O refresh do tempo real também era N+1: buscava participantes e depois
+    // os cards de cada projeto. O resumo já traz a resposta pronta, então aqui
+    // é a MESMA requisição da carga inicial — barata o bastante para caber num
+    // debounce de 250 ms.
     try {
-      const cardsSprintsAtivas = (
-        await Promise.all(
-          projetos.map((project) => cardService.getByProject(project.id).catch(() => [])),
-        )
-      ).flat();
-      recomputeDevelopersWithoutCards(cardsSprintsAtivas);
+      const resumo = await dashboardService.obterResumo();
+      developersRef.current = resumo.usuarios_sem_card;
+      setDevelopersWithoutCards(resumo.usuarios_sem_card);
+      setCardsInDevelopment(resumo.cards.lista_em_desenvolvimento);
     } catch (error) {
       console.error('Erro ao atualizar usuários sem card:', error);
     }
-  }, [recomputeDevelopersWithoutCards]);
+  }, []);
 
   const scheduleRefreshUsersWithoutCards = useCallback(() => {
     if (refreshDebounceRef.current) clearTimeout(refreshDebounceRef.current);
@@ -159,139 +121,41 @@ export default function Dashboard() {
 
   const loadData = async () => {
     try {
-      const [sprints, projetosCarregados, participantes] = await Promise.all([
-        sprintService.getAll().catch(() => []),
-        projectService.getAll().catch(() => []),
-        // Só quem participa do trabalho: o card "Usuários sem card" e o
-        // fallback "sem sprint ativa → todos entram na lista" não podem
-        // cobrar card de quem sequer enxerga sprint/projeto/card (Visitante e
-        // qualquer cargo sem `view_content`). O recorte é por PERMISSÃO, feito
-        // no backend — o frontend não consegue fazê-lo sozinho, porque o campo
-        // `permissions` vem vazio para quem não gerencia usuários.
-        userService.getParticipantes().catch(() => []),
-      ]);
-
-      developersRef.current = participantes;
-
-      // Fora o fluxo de Monitoramento de Feedbacks: ele é recém-criado, e como
-      // a listagem vem por `-created_at` ele apareceria em PRIMEIRO lugar em
-      // "Projetos Recentes" — logo ele, que é oculto por definição. Também
-      // somaria em "total de projetos" e em "projetos ativos".
+      // UMA REQUISIÇÃO, e não quarenta.
       //
-      // O corte é SÓ nele, e não em `is_system` inteiro de propósito: Suporte,
-      // Sugestões e Projetos Descartados já contam nestes números hoje, e mudar
-      // isso alteraria o painel sem ninguém ter pedido.
-      const projects = projetosCarregados.filter((p) => !isProjetoMonitoramento(p));
+      // Antes esta função paginava TODOS os projetos em sequência e depois
+      // disparava uma busca de cards POR PROJETO, baixando centenas de cards
+      // completos para no fim calcular contagens e um conjunto de ids. Medido
+      // no navegador: LCP de 6,53 s.
+      //
+      // Agora o servidor responde o que a tela pergunta. As regras de negócio
+      // (o que conta como projeto ativo, quem é o fluxo de monitoramento, qual
+      // é a sprint principal) foram para lá EXATAMENTE como estavam aqui —
+      // conferidas contra o cálculo antigo, métrica por métrica, nos dados de
+      // produção.
+      const resumo = await dashboardService.obterResumo();
 
-      const activeProjects = projects.filter(
-        (p) => p.status === 'em_desenvolvimento' || p.status === 'em_avaliacao'
-      ).length;
-
-      const completedProjects = projects.filter(
-        (p) => p.status === 'finalizado' || p.status === 'homologado'
-      ).length;
-
-      // Sprints em andamento: não finalizadas, já iniciadas e antes do instante de fechamento
-      const now = new Date();
-      const sprintsEmAndamento = sprints.filter((sprint) => {
-        if (sprint.finalizada) return false;
-        const start = new Date(sprint.data_inicio);
-        start.setHours(0, 0, 0, 0);
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
-        const fechamento = new Date(sprint.fechamento_em);
-        return today >= start && now <= fechamento;
-      });
-
-      // Guarda a primeira sprint ativa para o atalho "Meus Cards"
+      developersRef.current = resumo.usuarios_sem_card;
       setActiveSprintId(
-        (() => {
-          const principal = getSprintEmAndamentoPrincipal(sprints);
-          return principal ? String(principal.id) : null;
-        })(),
+        resumo.sprints.principal_id !== null ? String(resumo.sprints.principal_id) : null,
       );
-
-      // Filtrar projetos das sprints em andamento
-      const projetosSprintsAtivas = projects.filter((project) => {
-        return sprintsEmAndamento.some((sprint) => {
-          const projectSprintId = String(project.sprint || '');
-          const sprintId = String(sprint.id || '');
-          return projectSprintId === sprintId;
-        });
-      });
-      projetosSprintsAtivasRef.current = projetosSprintsAtivas;
-
-      // Carregar apenas cards de projetos em sprints ativas (evita baixar cards do sistema inteiro)
-      const cardsSprintsAtivas = (
-        await Promise.all(
-          projetosSprintsAtivas.map((project) =>
-            cardService.getByProject(project.id).catch(() => [])
-          )
-        )
-      ).flat();
-
-      // Contar cards concluídos das sprints ativas
-      const cardsConcluidosSprintsAtivas = projetosSprintsAtivas.reduce(
-        (acc, project) => acc + (project.cards_entregues_count ?? 0),
-        0
-      );
-
-      // Contar total de cards concluídos no geral
-      const totalCardsConcluidos = projects.reduce(
-        (acc, project) => acc + (project.cards_entregues_count ?? 0),
-        0
-      );
-
-      // Contar cards "A desenvolver" das sprints ativas
-      const cardsADesenvolverSprintsAtivas = cardsSprintsAtivas.filter(
-        (card) => card.status === 'a_desenvolver'
-      ).length;
-
-      // Contar cards "Em desenvolvimento" das sprints ativas
-      const cardsEmDesenvolvimentoSprintsAtivas = cardsSprintsAtivas.filter(
-        (card) => card.status === 'em_desenvolvimento'
-      ).length;
 
       setStats({
-        totalSprints: sprints.length, // Total de sprints
-        sprintsEmAndamento: sprintsEmAndamento.length, // Sprints em andamento
-        totalProjects: projects.length,
-        projetosSprintsAtivas: projetosSprintsAtivas.length, // Projetos das sprints ativas
-        activeProjects,
-        completedProjects,
-        cardsConcluidosSprintsAtivas, // Cards concluídos das sprints ativas
-        totalCardsConcluidos, // Total de cards concluídos
-        cardsADesenvolverSprintsAtivas, // Cards "A desenvolver" das sprints ativas
-        cardsEmDesenvolvimentoSprintsAtivas, // Cards "Em desenvolvimento" das sprints ativas
+        totalSprints: resumo.sprints.total,
+        sprintsEmAndamento: resumo.sprints.em_andamento,
+        totalProjects: resumo.projetos.total,
+        projetosSprintsAtivas: resumo.projetos.em_sprints_ativas,
+        activeProjects: resumo.projetos.ativos,
+        completedProjects: resumo.projetos.concluidos,
+        cardsConcluidosSprintsAtivas: resumo.cards.entregues_sprints_ativas,
+        totalCardsConcluidos: resumo.cards.entregues_total,
+        cardsADesenvolverSprintsAtivas: resumo.cards.a_desenvolver,
+        cardsEmDesenvolvimentoSprintsAtivas: resumo.cards.em_desenvolvimento,
       });
 
-      setRecentProjects(projects.slice(0, 5));
-
-      // Filtrar cards em desenvolvimento apenas das sprints em andamento
-      const allCardsInDevelopment = cardsSprintsAtivas.filter((card) => {
-        // Verificar se o status é 'em_desenvolvimento' (comparação case-insensitive)
-        const statusNormalized = (card.status || '').toLowerCase();
-        if (statusNormalized !== 'em_desenvolvimento') return false;
-        return true;
-      });
-
-      const cardsEmDesenvolvimento = allCardsInDevelopment.map((card) => {
-        // Tentar encontrar o projeto, mas não bloquear se não encontrar
-        const projeto = projects.find((p) => {
-          const projectId = String(p.id || '');
-          const cardProjectId = String(card.projeto || '');
-          return projectId === cardProjectId;
-        });
-        
-        return {
-          ...card,
-          projeto_nome: projeto?.nome || card.projeto || 'Projeto não encontrado',
-        };
-      });
-
-      setCardsInDevelopment(cardsEmDesenvolvimento);
-
-      recomputeDevelopersWithoutCards(cardsSprintsAtivas);
+      setRecentProjects(resumo.projetos.recentes);
+      setCardsInDevelopment(resumo.cards.lista_em_desenvolvimento);
+      setDevelopersWithoutCards(resumo.usuarios_sem_card);
     } catch (error) {
       console.error('Erro ao carregar dados:', error);
     } finally {
@@ -407,16 +271,19 @@ export default function Dashboard() {
     return name || user.username || '';
   };
 
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center h-[256px]">
-        <div className="animate-spin rounded-full h-[32px] w-[32px] border-b-2 border-[var(--color-primary)]"></div>
-      </div>
-    );
-  }
-
+  // O RETORNO ANTECIPADO DO CARREGAMENTO SAIU DAQUI, como na página do projeto.
+  //
+  // A tela renderiza inteira desde o primeiro quadro — saudação, atalhos, os
+  // cartões de número, as listas — desfocada, e fica nítida quando o resumo
+  // chega. Trocar a página por um spinner e depois pelo conteúdo faz o layout
+  // aparecer do nada: o olho não tem para onde ir e a espera parece maior do
+  // que foi.
+  //
+  // Os números nascem em zero e as listas vazias, então a estrutura desenhada
+  // durante o carregamento é a real — não é um esqueleto falso que depois é
+  // substituído por outra coisa.
   return (
-    <div className="space-y-[16px]">
+    <TelaComCarregamento carregando={loading} mensagem="Carregando Dashboard…" className="space-y-[16px]">
       {/* Greeting + caixa de Atalhos Rápidos (direita, slim e alinhada
           verticalmente ao bloco de saudação). */}
       <div className="flex items-center justify-between gap-[16px] flex-wrap">
@@ -480,7 +347,7 @@ export default function Dashboard() {
               <CardContent className="p-[16px] pt-0">
                 <div className="flex items-baseline gap-[8px]">
                   <div className="text-3xl font-bold text-[var(--color-foreground)]">
-                    {stat.value}
+                    <NumeroCrescente valor={stat.value} />
                   </div>
                   {stat.subtitle && (
                     <span className="text-xs text-[var(--color-muted-foreground)]">
@@ -490,9 +357,8 @@ export default function Dashboard() {
                 </div>
                 {stat.subtitle && (
                   <div className="mt-[4px] text-xs text-[var(--color-muted-foreground)] text-right">
-                    {stat.title === 'Cards em Andamento' 
-                      ? `${stat.totalValue || stat.value} a desenvolver`
-                      : `${stat.totalValue || stat.value} total`}
+                    <NumeroCrescente valor={stat.totalValue || stat.value} />
+                    {stat.title === 'Cards em Andamento' ? ' a desenvolver' : ' total'}
                   </div>
                 )}
               </CardContent>
@@ -521,14 +387,15 @@ export default function Dashboard() {
               </p>
             ) : (
               <div className="space-y-[16px] max-h-[400px] overflow-y-auto pr-2">
-                {cardsInDevelopment.map((card) => {
+                {cardsInDevelopment.map((card, i) => {
                   const diasRestantes = calculateDaysRemaining(card.data_fim);
                   const isOverdue = diasRestantes !== null && diasRestantes < 0;
                   
                   return (
                     <div
                       key={card.id}
-                      className="flex items-center justify-between p-[16px] rounded-[8px] border border-[var(--color-border)] hover:bg-[var(--color-accent)] transition-colors"
+                      className="card-entra flex items-center justify-between p-[16px] rounded-[8px] border border-[var(--color-border)] hover:bg-[var(--color-accent)] transition-colors"
+                      style={{ animationDelay: `${60 + Math.min(i, 6) * 45}ms` }}
                     >
                       <div className="flex items-center gap-[16px]">
                         {/* Avatar do desenvolvedor */}
@@ -605,13 +472,14 @@ export default function Dashboard() {
               </p>
             ) : (
               <div className="space-y-[16px] max-h-[400px] overflow-y-auto pr-2">
-                {developersWithoutCards.map((developer) => {
+                {developersWithoutCards.map((developer, i) => {
                   const displayName = getShortDisplayName(developer);
 
                   return (
                     <div
                       key={developer.id}
-                      className="flex items-center justify-between p-[16px] rounded-[8px] border border-[var(--color-border)] hover:bg-[var(--color-accent)] transition-colors"
+                      className="card-entra flex items-center justify-between p-[16px] rounded-[8px] border border-[var(--color-border)] hover:bg-[var(--color-accent)] transition-colors"
+                      style={{ animationDelay: `${60 + Math.min(i, 6) * 45}ms` }}
                     >
                       <div className="flex items-center gap-[16px]">
                         {/* Avatar do desenvolvedor */}
@@ -664,10 +532,11 @@ export default function Dashboard() {
             </p>
           ) : (
             <div className="space-y-[16px]">
-              {recentProjects.map((project) => (
+              {recentProjects.map((project, i) => (
                 <div
                   key={project.id}
-                  className="flex items-center justify-between p-[16px] rounded-[8px] border border-[var(--color-border)] hover:bg-[var(--color-accent)] transition-colors"
+                  style={{ animationDelay: `${60 + Math.min(i, 6) * 45}ms` }}
+                  className="card-entra flex items-center justify-between p-[16px] rounded-[8px] border border-[var(--color-border)] hover:bg-[var(--color-accent)] transition-colors"
                 >
                   <div className="flex items-center gap-[16px]">
                     <div className="flex h-[40px] w-[40px] items-center justify-center rounded-[8px] bg-[var(--color-primary)]/10">
@@ -697,6 +566,6 @@ export default function Dashboard() {
           )}
         </CardContent>
       </Card>
-    </div>
+    </TelaComCarregamento>
   );
 }

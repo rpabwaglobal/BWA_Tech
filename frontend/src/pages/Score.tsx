@@ -37,6 +37,7 @@ import type {
   ScoreCriterion, ScoreCriterionInput, CardScore, ScoreHistoryEntry, PickableCard,
   SetorSolicitanteOption,
 } from '@/services/scoreService';
+import { TelaComCarregamento } from '@/components/TelaComCarregamento';
 
 // ---------------------------------------------------------------------------
 // Fórmula do Score (espelha CardScore.calcular_score no backend)
@@ -270,16 +271,8 @@ export default function Score() {
     }
   };
 
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center min-h-[60vh]">
-        <Loader2 className="h-8 w-8 animate-spin text-[var(--color-primary)]" />
-      </div>
-    );
-  }
-
   return (
-    <div className="flex flex-col gap-[16px] flex-1 min-h-0">
+    <TelaComCarregamento carregando={loading} mensagem="Carregando Score…" className="flex flex-col gap-[16px] flex-1 min-h-0">
       <div className="flex items-start justify-between gap-4 flex-wrap shrink-0">
         <div>
           <h1 className="text-3xl font-bold tracking-tight flex items-center gap-2">
@@ -561,7 +554,7 @@ export default function Score() {
           </DialogContent>
         </Dialog>
       )}
-    </div>
+    </TelaComCarregamento>
   );
 }
 

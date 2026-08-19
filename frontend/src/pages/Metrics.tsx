@@ -38,6 +38,7 @@ import { useAuth } from '@/context/AuthContext';
 import { cn } from '@/lib/utils';
 import { ROUTES } from '@/routes';
 import { cachedFetch, METRICS_BUNDLE_CACHE_KEY } from '@/lib/cachedFetch';
+import { TelaComCarregamento } from '@/components/TelaComCarregamento';
 
 /** Alias usado em todo o módulo. Slim para todos os cálculos de métricas
  * (sem nested), com campos suficientes para o modal de drill-down. */
@@ -1547,16 +1548,8 @@ export default function Metrics() {
     return Array.from(set).sort((a, b) => b - a);
   }, [projects, cards]);
 
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center min-h-[400px]">
-        <Loader2 className="h-8 w-8 animate-spin text-[var(--color-primary)]" />
-      </div>
-    );
-  }
-
   return (
-    <div className="space-y-[24px]">
+    <TelaComCarregamento carregando={loading} mensagem="Carregando métricas…" className="space-y-[24px]">
       <div>
         <h1 className="text-2xl font-semibold text-[var(--color-foreground)] flex items-center gap-2">
           <BarChart3 className="h-7 w-7" />
@@ -3303,6 +3296,6 @@ export default function Metrics() {
       </>
       )}
 
-    </div>
+    </TelaComCarregamento>
   );
 }

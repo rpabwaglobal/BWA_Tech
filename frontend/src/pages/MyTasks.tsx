@@ -60,6 +60,7 @@ import { cardPinService, type CardPin } from '@/services/cardPinService';
 import { KanbanCardPreview } from '@/components/KanbanCardPreview';
 import { ROUTES } from '@/routes';
 import { cn } from '@/lib/utils';
+import { TelaComCarregamento } from '@/components/TelaComCarregamento';
 
 type NoteFilter = 'active' | 'archived';
 
@@ -1818,7 +1819,7 @@ export default function MyTasks() {
   const creatingInitial = useMemo(() => (creatingOpen ? emptyDraft() : null), [creatingOpen]);
 
   return (
-    <div className="space-y-[24px]">
+    <TelaComCarregamento carregando={loading} mensagem="Carregando seus afazeres…" className="space-y-[24px]">
       <div>
         <h1 className="text-2xl font-bold text-[var(--color-foreground)]">Meus Afazeres</h1>
         <p className="text-sm text-[var(--color-muted-foreground)] mt-1">
@@ -2269,6 +2270,6 @@ export default function MyTasks() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </div>
+    </TelaComCarregamento>
   );
 }

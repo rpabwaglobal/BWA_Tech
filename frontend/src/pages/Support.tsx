@@ -77,6 +77,7 @@ import {
   usesLocalFormulariosBackend,
   proxyThroughDjango,
 } from '@/services/formulariosApi';
+import { TelaComCarregamento } from '@/components/TelaComCarregamento';
 import {
   suporteService,
   stripPendenciaMarker,
@@ -1239,7 +1240,7 @@ export default function Support() {
   );
 
   return (
-    <div className="flex h-[calc(100vh-64px-64px)] max-h-[calc(100vh-64px-64px)] min-h-0 min-w-0 flex-col gap-[16px] overflow-hidden">
+    <TelaComCarregamento carregando={loading} mensagem="Carregando chamados…" className="flex h-[calc(100vh-64px-64px)] max-h-[calc(100vh-64px-64px)] min-h-0 min-w-0 flex-col gap-[16px] overflow-hidden">
       {error && (
         <div
           className="shrink-0 rounded-[10px] border border-red-200 bg-red-50 px-[14px] py-[10px] text-sm text-red-800 dark:border-red-900 dark:bg-red-950/30 dark:text-red-200"
@@ -1835,7 +1836,7 @@ export default function Support() {
           </div>
         </div>
       )}
-    </div>
+    </TelaComCarregamento>
   );
 }
 

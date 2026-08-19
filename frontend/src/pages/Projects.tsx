@@ -52,6 +52,7 @@ import { RequestCardReopenModal, SelectCardToReopenDialog } from '@/components/R
 import { cardDateChangeRequestService, type CardDueDateChangeRequest } from '@/services/cardDateChangeRequestService';
 import { cardReopenRequestService, type CardReopenRequest } from '@/services/cardReopenRequestService';
 import { ROUTES } from '@/routes';
+import { TelaComCarregamento } from '@/components/TelaComCarregamento';
 
 /** Abas do painel de Pendências. Fora do useState para o cast do
  *  `onValueChange` do Radix (que entrega `string`) ter um alvo tipado. */
@@ -1155,16 +1156,8 @@ export default function Projects() {
     }
   };
 
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <div className="text-[var(--color-muted-foreground)]">Carregando projetos...</div>
-      </div>
-    );
-  }
-
   return (
-    <div className="space-y-[16px]">
+    <TelaComCarregamento carregando={loading} mensagem="Carregando projetos…" className="space-y-[16px]">
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-[var(--color-foreground)]">Demandas / Solicitações</h1>
@@ -2957,6 +2950,6 @@ export default function Projects() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </div>
+    </TelaComCarregamento>
   );
 }

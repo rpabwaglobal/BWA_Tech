@@ -52,6 +52,7 @@ import {
   isSprintEmAndamentoJanela,
 } from '@/lib/sprintFechamento';
 import { ROUTES } from '@/routes';
+import { TelaComCarregamento } from '@/components/TelaComCarregamento';
 
 type SortField = 'nome' | 'created_at' | 'supervisor_name' | 'projects_count';
 type SortDirection = 'asc' | 'desc';
@@ -515,14 +516,6 @@ export default function Sprints() {
     });
   };
 
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center h-[256px]">
-        <Loader2 className="h-[32px] w-[32px] animate-spin text-[var(--color-primary)]" />
-      </div>
-    );
-  }
-
   // View: Sprint selecionada movida para SprintDetails.tsx
   // Esta página agora apenas lista sprints
   // O código da sprint aberta foi movido para SprintDetails.tsx
@@ -531,7 +524,7 @@ export default function Sprints() {
   const filteredSprints = getFilteredAndSortedSprints();
 
   return (
-    <div className="space-y-[24px]">
+    <TelaComCarregamento carregando={loading} mensagem="Carregando sprints…" className="space-y-[24px]">
       {/* Cabeçalho */}
       <div className="flex flex-col gap-[16px] sm:flex-row sm:items-center sm:justify-between">
         <div>
@@ -1267,7 +1260,7 @@ export default function Sprints() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </div>
+    </TelaComCarregamento>
   );
 }
 

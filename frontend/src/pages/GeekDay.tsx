@@ -51,6 +51,7 @@ import {
   sortableKeyboardCoordinates,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
+import { TelaComCarregamento } from '@/components/TelaComCarregamento';
 
 /** Cor de fallback dos chips de setor — mesma dos diálogos de setores. */
 const COR_SETOR_PADRAO = '#94a3b8';
@@ -1129,16 +1130,8 @@ export default function GeekDay() {
   // marcar quem falta arrastando.
   const roletaIndisponivel = sectors.length < 2;
 
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <Loader2 className="h-8 w-8 animate-spin text-[var(--color-primary)]" />
-      </div>
-    );
-  }
-
   return (
-    <div className="flex flex-col h-[calc(100vh-128px)] space-y-[24px]">
+    <TelaComCarregamento carregando={loading} mensagem="Carregando Geek Day…" className="flex flex-col h-[calc(100vh-128px)] space-y-[24px]">
       <div className="shrink-0">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0">
@@ -1626,6 +1619,6 @@ export default function GeekDay() {
           }}
         />
       )}
-    </div>
+    </TelaComCarregamento>
   );
 }
