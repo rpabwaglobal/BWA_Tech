@@ -1254,7 +1254,11 @@ export default function Support() {
           (border-b com underline ativo). Posicionadas ACIMA da search.
           Badge mostra quantos chamados estão na etapa "A desenvolver"
           (trabalho aguardando) — não o total da tab. */}
-      {!(loading && items.length === 0) ? (
+      {/* AS ETAPAS APARECEM DURANTE O CARREGAMENTO, atrás do desfoque.
+          Antes estas guardas escondiam a estrutura inteira e desenhavam um
+          spinner próprio — a tela ficava só com a mensagem, sem nada por trás,
+          e a pessoa não tinha para onde olhar enquanto esperava. Quem cuida da
+          espera agora é o desfoque da página (`TelaComCarregamento`). */}
         <div className="flex items-end justify-between gap-[8px] shrink-0">
           <div className="flex flex-1 min-w-0 items-center gap-[8px] border-b border-[var(--color-border)] self-stretch">
           {TABS.map((t) => {
@@ -1296,9 +1300,7 @@ export default function Support() {
             <span className="hidden sm:inline">Métricas do suporte</span>
           </Button>
         </div>
-      ) : null}
 
-      {!(loading && items.length === 0) ? (
         <div className="flex shrink-0 flex-col gap-[8px] lg:flex-row lg:items-end lg:gap-[8px]">
           <div className="relative min-h-[40px] min-w-0 w-full lg:min-w-[min(280px,100%)] lg:flex-1">
             <span className="mb-[4px] block text-xs text-[var(--color-muted-foreground)]">Buscar tickets</span>
@@ -1484,15 +1486,14 @@ export default function Support() {
             />
           </div>
         </div>
-      ) : null}
 
       <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-        {loading && items.length === 0 ? (
-          <div className="flex flex-1 items-center justify-center text-[var(--color-muted-foreground)]">
-            <Loader2 className="mr-[10px] h-5 w-5 animate-spin" />
-            Carregando chamados…
-          </div>
-        ) : viewMode === 'lista' ? (
+        {/* O QUADRO DESENHA DESDE O PRIMEIRO QUADRO, mesmo sem chamados.
+            Aqui havia um spinner que substituía o board inteiro: com ele, a
+            página ficava só com a mensagem de carregamento e nada por trás. As
+            etapas são a ESTRUTURA da tela — elas não dependem dos dados para
+            existir, e ver as colunas vazias já diz onde o conteúdo vai cair. */}
+        {viewMode === 'lista' ? (
           <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
             <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
               {selectedColumnDefsSafe.length === 0 ? (

@@ -1512,44 +1512,62 @@ export default function GeekDay() {
                 <p>Nenhum sorteio realizado ainda.</p>
               </div>
             ) : (
-              <div className="space-y-4">
+              // Linha, e nao um Card dentro de outro Card. O aninhamento
+              // duplicava borda e sombra em volta de cada item, o que pesa a
+              // lista inteira; o padrao das demais listas do projeto (demandas,
+              // solicitacoes, usuarios sem card) e a linha com borda fina.
+              <div className="space-y-[8px]">
                 {historico.map((draw, iEntrada) => (
-                  <Card
+                  <div
                     key={draw.id}
-                    className="card-entra"
+                    className="card-entra flex items-center justify-between gap-[12px] p-[12px] rounded-[8px] border border-[var(--color-border)] hover:bg-[var(--color-accent)] transition-colors min-w-0"
                     style={{ animationDelay: `${60 + Math.min(iEntrada, 6) * 45}ms` }}
                   >
-                    <CardContent className="flex items-center justify-between p-4">
-                      <div className="flex items-center gap-4">
-                        <Avatar className="h-[40px] w-[40px]">
-                          {draw.usuario_profile_picture ? (
-                            <AvatarImage src={draw.usuario_profile_picture} alt={draw.usuario_name} />
-                          ) : null}
-                          <AvatarFallback className="bg-[var(--color-muted)] text-[var(--color-muted-foreground)]">
-                            {draw.usuario_name?.charAt(0) || 'U'}
-                          </AvatarFallback>
-                        </Avatar>
-                        <div>
-                          <p className="font-medium">{draw.usuario_name}</p>
-                          <div className="flex items-center gap-2 mt-1">
-                            <p className="text-sm text-[var(--color-muted-foreground)]">
-                              {formatDate(draw.data_sorteio)}
-                            </p>
-                            {draw.data_apresentacao && (
-                              <Badge variant="outline" className="text-xs">
-                                Apresentação: {formatDate(draw.data_apresentacao)}
-                              </Badge>
-                            )}
-                            {draw.sorteado_por_name && (
-                              <span className="text-xs text-[var(--color-muted-foreground)]">
-                                por {draw.sorteado_por_name}
-                              </span>
-                            )}
-                          </div>
-                        </div>
+                    <div className="flex items-center gap-[12px] min-w-0">
+                      <Avatar className="h-[40px] w-[40px] shrink-0">
+                        {draw.usuario_profile_picture ? (
+                          <AvatarImage src={draw.usuario_profile_picture} alt={draw.usuario_name} />
+                        ) : null}
+                        <AvatarFallback className="bg-[var(--color-muted)] text-[var(--color-muted-foreground)]">
+                          {draw.usuario_name?.charAt(0) || 'U'}
+                        </AvatarFallback>
+                      </Avatar>
+                      <div className="min-w-0">
+                        <p className="font-medium text-[var(--color-foreground)] truncate">
+                          {draw.usuario_name}
+                        </p>
+                        {/* Uma linha so de apoio, com o que responde "quando e
+                            de onde": o resto vai para a direita, onde o olho
+                            varre a coluna inteira de uma vez. */}
+                        <p className="text-xs text-[var(--color-muted-foreground)] truncate">
+                          {formatDate(draw.data_sorteio)}
+                          {draw.grupo_nome && ` · ${draw.grupo_nome}`}
+                          {draw.sorteado_por_name && ` · por ${draw.sorteado_por_name}`}
+                        </p>
                       </div>
-                    </CardContent>
-                  </Card>
+                    </div>
+
+                    {/* Alinhado a DIREITA e em coluna: a data de apresentacao e
+                        a informacao que se procura varrendo a lista, e ela so
+                        existe em parte dos sorteios — deixa-la no meio do texto
+                        fazia o olho cacar item a item. */}
+                    <div className="flex flex-col items-end gap-[4px] shrink-0">
+                      {draw.data_apresentacao ? (
+                        <Badge variant="outline" className="text-xs whitespace-nowrap">
+                          Apresenta em {formatDate(draw.data_apresentacao)}
+                        </Badge>
+                      ) : (
+                        <span className="text-xs text-[var(--color-muted-foreground)]">
+                          Sem data definida
+                        </span>
+                      )}
+                      {draw.marcado_manual && (
+                        <span className="text-[10px] uppercase tracking-wide text-[var(--color-muted-foreground)]">
+                          marcado a mao
+                        </span>
+                      )}
+                    </div>
+                  </div>
                 ))}
               </div>
             )}
