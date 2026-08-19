@@ -20,6 +20,7 @@ from apps.projects.dev_time_format import format_minutos_uteis, format_segundos_
 
 from .base import BaseReport, FilterDisplay, TableColumn
 from .dev_time_stats import accumulate_card_dev_time, bucket_averages, _new_bucket
+from ..periodo import fim_do_periodo, inicio_do_periodo
 
 
 def _parse_date(v: str | None) -> datetime | None:
@@ -42,8 +43,9 @@ class Report(BaseReport):
     def fetch_data(self) -> dict[str, Any]:
         self.set_progress(10, 'Filtrando cards...')
         now = timezone.now()
-        period_start = _parse_date(self.filters.get('period_start'))
-        period_end = _parse_date(self.filters.get('period_end'))
+        period_start = inicio_do_periodo(self.filters.get('period_start'))
+        # Fronteira ABERTA (inicio do dia seguinte): ver apps/reports/periodo.py.
+        period_end = fim_do_periodo(self.filters.get('period_end'))
 
         base = (
             self.cards_visiveis().select_related('projeto', 'projeto__sprint', 'responsavel')
@@ -64,7 +66,7 @@ class Report(BaseReport):
         if period_start:
             late_delivered_qs = late_delivered_qs.filter(**{f'{date_field}__gte': period_start})
         if period_end:
-            late_delivered_qs = late_delivered_qs.filter(**{f'{date_field}__lte': period_end})
+            late_delivered_qs = late_delivered_qs.filter(**{f'{date_field}__lt': period_end})
 
         # Materializa em chunks com progresso, depois filtra in-memory pra ter
         # certeza que o filtro Python (finalizado_em > data_fim) funcione.

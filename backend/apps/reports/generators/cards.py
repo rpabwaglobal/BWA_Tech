@@ -25,6 +25,7 @@ from apps.projects.models import Card, Project, Sprint
 from apps.projects.dev_time_format import format_minutos_uteis, format_segundos_corridos
 
 from .base import BaseReport, FilterDisplay, TableColumn
+from ..periodo import fim_do_periodo, inicio_do_periodo
 
 
 def _parse_date(value: str | None) -> datetime | None:
@@ -67,7 +68,27 @@ class Report(BaseReport):
             qs = qs.filter(projeto__sprint_id__in=sprint_ids)
         project_id = self.filters.get('project_id')
         if project_id:
-            qs = qs.filter(projeto_id=project_id)
+            # O MESMO PROJETO EXISTE UMA VEZ POR SPRINT.
+            #
+            # A virada de sprint REPLICA o projeto: "Inteligência Artificial"
+            # são dez linhas no acervo real, uma para cada sprint em que ele
+            # seguiu vivo. Filtrar por um `projeto_id` pegava só a instância
+            # escolhida na tela — normalmente a da sprint atual —, e um período
+            # de semanas atrás voltava VAZIO mesmo com dezenove cards
+            # entregues, porque eles pertencem à instância daquela sprint.
+            #
+            # Quem lê o relatório pensa no projeto, não na linha do banco. Então
+            # o filtro alcança todas as instâncias de mesmo nome. Para recortar
+            # uma sprint específica existe o filtro de sprint, que continua
+            # combinando com este.
+            nome_do_projeto = (
+                Project.objects.filter(pk=project_id)
+                .values_list('nome', flat=True).first()
+            )
+            if nome_do_projeto:
+                qs = qs.filter(projeto__nome=nome_do_projeto)
+            else:
+                qs = qs.filter(projeto_id=project_id)
         st = self.filters.get('status')
         if st:
             qs = qs.filter(status=st)
@@ -84,8 +105,9 @@ class Report(BaseReport):
         if prioridade:
             qs = qs.filter(prioridade=prioridade)
 
-        period_start = _parse_date(self.filters.get('period_start'))
-        period_end = _parse_date(self.filters.get('period_end'))
+        period_start = inicio_do_periodo(self.filters.get('period_start'))
+        # Fronteira ABERTA (inicio do dia seguinte): ver apps/reports/periodo.py.
+        period_end = fim_do_periodo(self.filters.get('period_end'))
         # `period_date_type` define se filtra por data de criação ou de
         # entrega (default = created, retrocompatível). Frontend manda
         # 'created' ou 'delivered'.
@@ -96,7 +118,7 @@ class Report(BaseReport):
         if period_start:
             qs = qs.filter(**{f'{date_field}__gte': period_start})
         if period_end:
-            qs = qs.filter(**{f'{date_field}__lte': period_end})
+            qs = qs.filter(**{f'{date_field}__lt': period_end})
 
         # Paginação com progresso: barra evolui de 10→65% conforme as páginas
         # vão sendo carregadas. Mensagem "Exportando cards 245/1340".
