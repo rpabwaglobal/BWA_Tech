@@ -9,14 +9,6 @@ from config.versao import VERSAO_DESCONHECIDA, versao_atual
 
 class VersaoDoSistemaTests(SimpleTestCase):
 
-    def setUp(self):
-        # `versao_atual` e cacheada por lru_cache: sem limpar, o primeiro teste
-        # a rodar congela o valor para os demais.
-        versao_atual.cache_clear()
-
-    def tearDown(self):
-        versao_atual.cache_clear()
-
     def test_le_o_arquivo_version_da_raiz(self):
         raiz = Path(__file__).resolve().parent.parent.parent.parent
         arquivo = raiz / 'VERSION'
@@ -29,6 +21,17 @@ class VersaoDoSistemaTests(SimpleTestCase):
         """MAIOR.MENOR.CORRECAO - e o formato que a tag do git espelha."""
         import re
         self.assertRegex(versao_atual(), r'^\d+\.\d+\.\d+')
+
+    def test_le_o_arquivo_a_cada_chamada_e_nao_congela_o_valor(self):
+        """A primeira versao tinha lru_cache e mentiu na estreia: o arquivo ja
+        dizia 2.1.0 e a API respondia 1.2.0, porque o processo guardara o valor
+        de antes da edicao. O Django nao reinicia por mudanca em arquivo que nao
+        e .py, entao a divergencia sobrevivia ate alguem derrubar o servidor.
+        """
+        primeira = versao_atual()
+        with mock.patch.object(Path, 'read_text', return_value='  9.9.9  '):
+            self.assertEqual(versao_atual(), '9.9.9')
+        self.assertEqual(versao_atual(), primeira)
 
     def test_sem_o_arquivo_devolve_marcador_explicito_e_nao_um_numero_plausivel(self):
         """Um '1.0.0' inventado passaria despercebido e mentiria sobre o que

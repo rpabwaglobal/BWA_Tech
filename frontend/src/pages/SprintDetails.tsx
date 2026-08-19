@@ -195,11 +195,52 @@ export default function SprintDetails() {
     [user?.id, invalidateCardCaches]
   );
 
+  /**
+   * CARD CRIADO OU APAGADO POR QUALQUER UM APARECE SEM F5.
+   *
+   * Mesma lacuna que a pagina do projeto tinha: o backend ja transmitia
+   * `kanban_changed` na criacao do card e o hook ja expunha `onKanbanChanged`
+   * (a documentacao dele diz "criacao/exclusao de card"), mas esta tela so
+   * registrava `onCardMoved`. Movimentacao chegava; criacao passava batido.
+   *
+   * Recarrega o BUNDLE com `force`, e nao so a lista de cards: um card novo
+   * pode vir junto de um projeto novo, e o quadro daqui e montado por projeto.
+   * `invalidateCardCaches` antes porque o bundle passa pelo cache local.
+   *
+   * DEBOUNCE porque um unico movimento dispara DOIS eventos (`card_moved` e
+   * `kanban_changed`), e uma criacao em lote dispararia um por card.
+   */
+  const refetchAgendadoRef = useRef<number | null>(null);
+  const handleKanbanChangedRealtime = useCallback(() => {
+    if (refetchAgendadoRef.current !== null) {
+      window.clearTimeout(refetchAgendadoRef.current);
+    }
+    refetchAgendadoRef.current = window.setTimeout(() => {
+      refetchAgendadoRef.current = null;
+      invalidateCardCaches();
+      void loadDataRef.current?.({ force: true });
+    }, 400);
+  }, [invalidateCardCaches]);
+
+  useEffect(() => {
+    return () => {
+      if (refetchAgendadoRef.current !== null) {
+        window.clearTimeout(refetchAgendadoRef.current);
+      }
+    };
+  }, []);
+
   useSprintKanbanWebSocket({
     sprintId: sprint?.id ?? sprintId ?? null,
     enabled: !!(sprint?.id ?? sprintId),
     onCardMoved: handleCardMovedRealtime,
+    onKanbanChanged: handleKanbanChangedRealtime,
   });
+
+  // `loadData` e declarada mais abaixo neste componente. A ref quebra a
+  // dependencia de ORDEM: o handler do WebSocket e criado aqui em cima e so
+  // dispara depois da montagem, quando a ref ja aponta para a funcao.
+  const loadDataRef = useRef<((options?: { force?: boolean }) => Promise<void>) | null>(null);
 
   const [searchParams] = useSearchParams();
   const [projectKanbanStagesByProjectId, setProjectKanbanStagesByProjectId] = useState<
@@ -524,6 +565,13 @@ export default function SprintDetails() {
 
     await usersPromise;
   };
+
+  // Mantém a ref apontando para a versão mais recente de `loadData`. Roda a
+  // cada render de propósito: `loadData` é recriada a cada um, e uma ref presa
+  // à primeira versão fecharia sobre estado velho.
+  useEffect(() => {
+    loadDataRef.current = loadData;
+  });
 
   const getProjectsForSprint = (sprintId: string) => {
     return projects.filter((p) => {

@@ -15,22 +15,23 @@ export type VersaoDoSistema = {
   version: string;
 };
 
-let emCache: string | null = null;
-
 export const versaoService = {
   /** Devolve a versão, ou string vazia se a API não responder.
+   *
+   * SEM CACHE, pelo mesmo motivo que o backend não cacheia: um SPA fica aberto
+   * por horas e atravessa deploys. Guardar o valor faria a tela mostrar com
+   * confiança a versão de antes do deploy — o erro exato que este indicador
+   * existe para não cometer. É uma requisição minúscula, numa página que quase
+   * ninguém abre duas vezes seguidas.
    *
    * Vazio em vez de "erro" de propósito: a versão é informação de rodapé, e uma
    * falha em buscá-la não merece ocupar a tela de ninguém — quem abriu o perfil
    * foi tratar da própria conta. A tela simplesmente não desenha a linha.
    */
   async obter(): Promise<string> {
-    if (emCache) return emCache;
     try {
       const { data } = await api.get<VersaoDoSistema>('/');
-      const versao = (data?.version ?? '').trim();
-      if (versao) emCache = versao;
-      return versao;
+      return (data?.version ?? '').trim();
     } catch {
       return '';
     }

@@ -869,10 +869,58 @@ export default function ProjectDetails() {
     [user?.id]
   );
 
+  /**
+   * CARD CRIADO (ou apagado) POR QUALQUER UM APARECE SEM F5.
+   *
+   * O backend já transmitia isso: `broadcast_kanban_changed` sai do signal de
+   * criação do card, e o hook já expunha `onKanbanChanged` — a documentação
+   * dele diz, literalmente, "criação/exclusão de card". Esta tela só nunca
+   * registrou o ouvinte: escutava apenas `onCardMoved`, então movimentação
+   * chegava e criação passava batido.
+   *
+   * O evento vem VAZIO de propósito (política do sistema): quem decide o que
+   * cada pessoa enxerga é o queryset escopado do REST, então o cliente refaz a
+   * busca em vez de confiar num payload. Por isso aqui é um refetch, e não um
+   * "insira este card".
+   *
+   * DEBOUNCE porque um único movimento dispara DOIS eventos (`card_moved` e
+   * `kanban_changed`), e uma criação em lote dispararia um por card. Sem ele,
+   * seriam várias buscas idênticas em sequência. A janela também deixa o PATCH
+   * do próprio usuário assentar antes de a lista ser substituída, evitando que
+   * um card recém-arrastado pisque de volta para a coluna antiga.
+   */
+  const refetchAgendadoRef = useRef<number | null>(null);
+  const handleKanbanChangedRealtime = useCallback(() => {
+    if (!id) return;
+    if (refetchAgendadoRef.current !== null) {
+      window.clearTimeout(refetchAgendadoRef.current);
+    }
+    refetchAgendadoRef.current = window.setTimeout(() => {
+      refetchAgendadoRef.current = null;
+      void cardService
+        .getByProject(id)
+        .then((frescos) => setCards(frescos))
+        .catch(() => {
+          // Silêncio proposital: a lista que está na tela continua válida, e um
+          // aviso de erro por uma atualização que a pessoa nem pediu seria
+          // ruído sobre o trabalho dela.
+        });
+    }, 400);
+  }, [id]);
+
+  useEffect(() => {
+    return () => {
+      if (refetchAgendadoRef.current !== null) {
+        window.clearTimeout(refetchAgendadoRef.current);
+      }
+    };
+  }, []);
+
   useSprintKanbanWebSocket({
     sprintId: sprintIdForRealtime,
     enabled: !!sprintIdForRealtime,
     onCardMoved: handleCardMovedRealtime,
+    onKanbanChanged: handleKanbanChangedRealtime,
   });
   const [stages, setStages] = useState<ProjectStage[]>(DEFAULT_PROJECT_STAGES);
   const [users, setUsers] = useState<UserType[]>([]);
