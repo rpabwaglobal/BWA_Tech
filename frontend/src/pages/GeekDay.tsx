@@ -1245,7 +1245,7 @@ export default function GeekDay() {
       {activeTab === 'sorteio' && (
         <div className="flex-1 min-h-0 flex flex-col">
           {/* Área de sorteio */}
-          <Card className="flex-1 min-h-0 flex flex-col">
+          <Card className="card-entra flex-1 min-h-0 flex flex-col">
             <CardContent className="flex-1 min-h-0 overflow-hidden p-6">
               {users.length > 0 ? (
                 <div className="grid grid-cols-1 lg:grid-cols-5 gap-6 h-full">
@@ -1452,7 +1452,7 @@ export default function GeekDay() {
 
       {/* Conteúdo da aba Histórico */}
       {activeTab === 'historico' && (
-        <Card className="flex-1 min-h-0 flex flex-col">
+        <Card className="card-entra flex-1 min-h-0 flex flex-col">
           <CardHeader className="shrink-0">
             <CardTitle>Histórico de Sorteios</CardTitle>
           </CardHeader>
@@ -1463,8 +1463,12 @@ export default function GeekDay() {
               </div>
             ) : (
               <div className="space-y-4">
-                {historico.map((draw) => (
-                  <Card key={draw.id}>
+                {historico.map((draw, iEntrada) => (
+                  <Card
+                    key={draw.id}
+                    className="card-entra"
+                    style={{ animationDelay: `${60 + Math.min(iEntrada, 6) * 45}ms` }}
+                  >
                     <CardContent className="flex items-center justify-between p-4">
                       <div className="flex items-center gap-4">
                         <Avatar className="h-[40px] w-[40px]">

@@ -1209,12 +1209,13 @@ export default function Projects() {
                   </p>
                 ) : (
                   <div className="space-y-[8px] max-h-[400px] overflow-y-auto pr-2">
-                    {sugestoesCards.map((card) => {
+                    {sugestoesCards.map((card, iEntrada) => {
                       const isCreator = card.criado_por && String(card.criado_por) === String(user?.id);
                       return (
                         <div
                           key={card.id}
-                          className="flex items-center justify-between gap-3 p-[12px] border border-[var(--color-border)] rounded-[8px] hover:bg-[var(--color-accent)] transition-colors cursor-pointer min-w-0"
+                          className="card-entra flex items-center justify-between gap-3 p-[12px] border border-[var(--color-border)] rounded-[8px] hover:bg-[var(--color-accent)] transition-colors cursor-pointer min-w-0"
+                          style={{ animationDelay: `${60 + Math.min(iEntrada, 6) * 45}ms` }}
                           onClick={() => openDemandViewDialog(card)}
                         >
                           <div className="flex-1 min-w-0">
@@ -1293,10 +1294,11 @@ export default function Projects() {
                     </p>
                   ) : (
                     <div className="space-y-[8px] max-h-[400px] overflow-y-auto pr-2">
-                      {dateChangeRequests.map((req) => (
+                      {dateChangeRequests.map((req, iEntrada) => (
                         <div
                           key={req.id}
-                          className="flex items-center justify-between gap-3 p-[12px] border border-[var(--color-border)] rounded-[8px] hover:bg-[var(--color-accent)] transition-colors min-w-0"
+                          className="card-entra flex items-center justify-between gap-3 p-[12px] border border-[var(--color-border)] rounded-[8px] hover:bg-[var(--color-accent)] transition-colors min-w-0"
+                          style={{ animationDelay: `${60 + Math.min(iEntrada, 6) * 45}ms` }}
                         >
                           <div className="flex-1 min-w-0">
                             <div className="font-medium text-[var(--color-foreground)] truncate">
@@ -1350,7 +1352,7 @@ export default function Projects() {
                   </p>
                 ) : (
                   <div className="space-y-[8px] max-h-[400px] overflow-y-auto pr-2">
-                    {reopenRequests.map((req) => {
+                    {reopenRequests.map((req, iEntrada) => {
                       // Quem avalia precisa saber que o card ESTÁ fechado e
                       // desde quando: é o fato que justifica (ou não) reabrir.
                       const etapaFechada =
@@ -1359,7 +1361,8 @@ export default function Projects() {
                       return (
                         <div
                           key={req.id}
-                          className="flex items-center justify-between gap-3 p-[12px] border border-[var(--color-border)] rounded-[8px] hover:bg-[var(--color-accent)] transition-colors min-w-0"
+                          className="card-entra flex items-center justify-between gap-3 p-[12px] border border-[var(--color-border)] rounded-[8px] hover:bg-[var(--color-accent)] transition-colors min-w-0"
+                          style={{ animationDelay: `${60 + Math.min(iEntrada, 6) * 45}ms` }}
                         >
                           <div className="flex-1 min-w-0">
                             <div className="font-medium text-[var(--color-foreground)] truncate">
@@ -1507,14 +1510,15 @@ export default function Projects() {
                   </p>
                 ) : (
                   <div className="grid gap-[16px] md:grid-cols-2 lg:grid-cols-3">
-                    {projetosNormais.map((project) => {
+                    {projetosNormais.map((project, iEntrada) => {
                       const totalCards = project.cards_count ?? 0;
                       const cardsEntregues = project.cards_entregues_count ?? 0;
                       return (
                         <Card
                           key={project.id}
+                          style={{ animationDelay: `${60 + Math.min(iEntrada, 6) * 45}ms` }}
                           className={cn(
-                            'cursor-pointer hover:shadow-md transition-shadow',
+                            'card-entra cursor-pointer hover:shadow-md transition-shadow',
                             projectSelectionMode && selectedProjectIds.includes(String(project.id)) &&
                               'ring-2 ring-[var(--color-primary)] border-[var(--color-primary)]',
                           )}
