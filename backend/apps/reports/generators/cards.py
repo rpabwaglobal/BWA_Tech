@@ -15,7 +15,6 @@ Exporta:
 """
 from __future__ import annotations
 
-from datetime import datetime
 from typing import Any
 
 from django.utils import timezone
@@ -26,18 +25,6 @@ from apps.projects.dev_time_format import format_minutos_uteis, format_segundos_
 
 from .base import BaseReport, FilterDisplay, TableColumn
 from ..periodo import fim_do_periodo, inicio_do_periodo
-
-
-def _parse_date(value: str | None) -> datetime | None:
-    if not value:
-        return None
-    try:
-        # Aceita 'YYYY-MM-DD' ou ISO completo
-        if 'T' in value:
-            return datetime.fromisoformat(value.replace('Z', '+00:00'))
-        return datetime.strptime(value, '%Y-%m-%d')
-    except (ValueError, TypeError):
-        return None
 
 
 class Report(BaseReport):

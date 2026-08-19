@@ -1,28 +1,30 @@
 """
 Limites de período dos relatórios, resolvidos de um jeito só.
 
-DOIS DEFEITOS MORAVAM AQUI, e os dois faziam o relatório esconder trabalho que
-existe — que é a pior falha possível num relatório, porque ninguém desconfia de
-um número a menos.
+O DEFEITO QUE MORAVA AQUI: O ÚLTIMO DIA DO PERÍODO NÃO ENTRAVA.
+`datetime.strptime('2026-08-17', '%Y-%m-%d')` devolve `2026-08-17 00:00`, e
+`finalizado_em__lte` disso descarta o dia 17 INTEIRO — porque os campos
+comparados são `DateTimeField`, e quase toda entrega acontece depois da
+meia-noite. Quem pede "até segunda-feira" perde tudo que foi entregue na
+segunda-feira. Medido no acervo real: numa janela de uma semana em Inteligência
+Artificial, 2 cards sumiam só por causa disso; nas Métricas Globais, 5; no
+Executivo, 6.
 
-1. O FIM DO PERÍODO ERA MEIA-NOITE. `datetime.strptime('2026-08-17', '%Y-%m-%d')`
-   devolve `2026-08-17 00:00`, e `finalizado_em__lte` disso descarta o dia 17
-   INTEIRO. Quem pede "até segunda-feira" perde tudo que foi entregue na
-   segunda-feira. Medido no acervo real: numa janela de uma semana em
-   Inteligência Artificial, 2 cards sumiam só por causa disso.
+A saída é um intervalo SEMI-ABERTO: `[início do primeiro dia, início do dia
+seguinte ao último)`, usado com `__lt`. Semi-aberto e não `__lte` do último
+instante porque não existe "último instante" exato — `23:59:59.999999` deixa de
+fora o microssegundo seguinte, e essa é justamente a classe de erro que se quer
+parar de escrever.
 
-2. AS BORDAS ERAM INGÊNUAS, OS CAMPOS SÃO UTC. `finalizado_em` é
-   `DateTimeField` e o banco guarda em UTC; a data que a pessoa escolhe na tela
-   é do fuso dela. Um card finalizado às 22h de 17/08 em São Paulo está gravado
-   como 18/08 01:00 UTC — comparar com um limite ingênuo joga esse card para
-   fora do dia em que ele de fato foi entregue. É a mesma armadilha que já
-   mordeu o cálculo de prazo em outros pontos do sistema.
-
-A saída é um intervalo SEMI-ABERTO no fuso local: `[início do primeiro dia,
-início do dia seguinte ao último)`. Semi-aberto e não `<=` do último instante
-porque não existe "último instante" exato — `23:59:59.999999` deixa de fora o
-microssegundo seguinte, e essa é justamente a classe de erro que se quer parar
-de escrever.
+SOBRE FUSO, PARA NÃO SE PERDER TEMPO COM ISSO DE NOVO: os limites saem daqui
+tz-aware, mas isso NÃO é o que conserta o relatório. Com `USE_TZ=True`, o Django
+já converte um `datetime` ingênuo usando `get_default_timezone()` — que aqui é
+`America/Sao_Paulo`, e não UTC — antes de mandar para o banco. Medido: o mesmo
+filtro com limite ingênuo e com limite aware devolve exatamente os mesmos
+registros. O ganho de devolver aware é outro, e menor: some o `RuntimeWarning`
+de comparação ingênua, e o resultado deixa de depender de um `TIME_ZONE` que
+`config/settings.py` define duas vezes (linha 193 como 'UTC', linha 379 como
+'America/Sao_Paulo' — vale a segunda).
 """
 from datetime import datetime, timedelta
 

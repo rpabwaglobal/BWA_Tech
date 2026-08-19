@@ -5,7 +5,6 @@ Filtros: period_start / period_end (opcional)
 """
 from __future__ import annotations
 
-from datetime import datetime
 from typing import Any
 
 from django.utils import timezone
@@ -21,18 +20,8 @@ from apps.formularios.models import ChamadoSuporte, ChamadoSuporteStatus
 from apps.suggestions.models import ProjectSuggestion
 
 from .base import BaseReport, FilterDisplay, TableColumn
+from ..periodo import fim_do_periodo, inicio_do_periodo
 from .dev_time_stats import aggregate_dev_time
-
-
-def _parse_date(v: str | None) -> datetime | None:
-    if not v:
-        return None
-    try:
-        if 'T' in v:
-            return datetime.fromisoformat(v.replace('Z', '+00:00'))
-        return datetime.strptime(v, '%Y-%m-%d')
-    except (ValueError, TypeError):
-        return None
 
 
 class Report(BaseReport):
@@ -45,8 +34,9 @@ class Report(BaseReport):
     def fetch_data(self) -> dict[str, Any]:
         self.set_progress(20, 'Calculando KPIs...')
         now = timezone.now()
-        period_start = _parse_date(self.filters.get('period_start'))
-        period_end = _parse_date(self.filters.get('period_end'))
+        period_start = inicio_do_periodo(self.filters.get('period_start'))
+        # Fronteira ABERTA (início do dia seguinte): ver apps/reports/periodo.py.
+        period_end = fim_do_periodo(self.filters.get('period_end'))
 
         cards = self.cards_visiveis().filter(projeto__arquivado=False, projeto__is_system=False)
         delivered = cards.filter(status='finalizado', finalizado_em__isnull=False)
@@ -58,7 +48,7 @@ class Report(BaseReport):
         if period_start:
             delivered = delivered.filter(**{f'{date_field}__gte': period_start})
         if period_end:
-            delivered = delivered.filter(**{f'{date_field}__lte': period_end})
+            delivered = delivered.filter(**{f'{date_field}__lt': period_end})
         delivered_list = list(delivered.select_related('projeto'))
 
         # On-time
@@ -103,7 +93,7 @@ class Report(BaseReport):
         if period_start:
             support_qs = support_qs.filter(data_atualizacao__gte=period_start)
         if period_end:
-            support_qs = support_qs.filter(data_atualizacao__lte=period_end)
+            support_qs = support_qs.filter(data_atualizacao__lt=period_end)
         support_resolved = support_qs.count()
 
         date_changes_qs = CardDueDateChangeRequest.objects.filter(
@@ -112,14 +102,14 @@ class Report(BaseReport):
         if period_start:
             date_changes_qs = date_changes_qs.filter(reviewed_at__gte=period_start)
         if period_end:
-            date_changes_qs = date_changes_qs.filter(reviewed_at__lte=period_end)
+            date_changes_qs = date_changes_qs.filter(reviewed_at__lt=period_end)
         date_changes_approved = date_changes_qs.count()
 
         suggestions_qs = ProjectSuggestion.objects.all()
         if period_start:
             suggestions_qs = suggestions_qs.filter(created_at__gte=period_start)
         if period_end:
-            suggestions_qs = suggestions_qs.filter(created_at__lte=period_end)
+            suggestions_qs = suggestions_qs.filter(created_at__lt=period_end)
         projects_proposed = suggestions_qs.count()
 
         self.set_progress(95, 'Finalizando...')

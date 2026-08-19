@@ -17,7 +17,6 @@ Filtros (mutuamente exclusivos — frontend obriga escolher um dos dois modos):
 """
 from __future__ import annotations
 
-from datetime import datetime
 from typing import Any
 
 from django.db.models import F
@@ -33,21 +32,11 @@ from apps.formularios.models import ChamadoSuporte, ChamadoSuporteStatus
 from apps.suggestions.models import ProjectSuggestion
 
 from .base import BaseReport, FilterDisplay, TableColumn
+from ..periodo import fim_do_periodo, inicio_do_periodo
 from .dev_time_stats import accumulate_card_dev_time, aggregate_dev_time, bucket_averages, _new_bucket
 
 # Regra de negócio do app: cards entregues = status finalizado COM finalizado_em.
 CLOSED_STATUS = 'finalizado'
-
-
-def _parse_date(value: str | None) -> datetime | None:
-    if not value:
-        return None
-    try:
-        if 'T' in value:
-            return datetime.fromisoformat(value.replace('Z', '+00:00'))
-        return datetime.strptime(value, '%Y-%m-%d')
-    except (ValueError, TypeError):
-        return None
 
 
 class Report(BaseReport):
@@ -58,8 +47,9 @@ class Report(BaseReport):
 
     def fetch_data(self) -> dict[str, Any]:
         self.set_progress(10, 'Carregando cards...')
-        period_start = _parse_date(self.filters.get('period_start'))
-        period_end = _parse_date(self.filters.get('period_end'))
+        period_start = inicio_do_periodo(self.filters.get('period_start'))
+        # Fronteira ABERTA (início do dia seguinte): ver apps/reports/periodo.py.
+        period_end = fim_do_periodo(self.filters.get('period_end'))
         # `sprint_ids` aceita lista (preferencial) ou valor único (defesa
         # contra um cliente antigo enviando string). Strings vazias e itens
         # não-inteiros são descartados.
@@ -93,7 +83,7 @@ class Report(BaseReport):
         if period_start:
             closed_qs = closed_qs.filter(**{f'{date_field}__gte': period_start})
         if period_end:
-            closed_qs = closed_qs.filter(**{f'{date_field}__lte': period_end})
+            closed_qs = closed_qs.filter(**{f'{date_field}__lt': period_end})
 
         self.set_progress(30, 'Calculando KPIs...')
         closed_cards = list(closed_qs)
@@ -226,7 +216,7 @@ class Report(BaseReport):
         if period_start:
             support_qs = support_qs.filter(data_atualizacao__gte=period_start)
         if period_end:
-            support_qs = support_qs.filter(data_atualizacao__lte=period_end)
+            support_qs = support_qs.filter(data_atualizacao__lt=period_end)
 
         date_changes_qs = CardDueDateChangeRequest.objects.filter(
             status=CardDateChangeRequestStatus.APPROVED,
@@ -234,13 +224,13 @@ class Report(BaseReport):
         if period_start:
             date_changes_qs = date_changes_qs.filter(reviewed_at__gte=period_start)
         if period_end:
-            date_changes_qs = date_changes_qs.filter(reviewed_at__lte=period_end)
+            date_changes_qs = date_changes_qs.filter(reviewed_at__lt=period_end)
 
         suggestions_qs = ProjectSuggestion.objects.all()
         if period_start:
             suggestions_qs = suggestions_qs.filter(created_at__gte=period_start)
         if period_end:
-            suggestions_qs = suggestions_qs.filter(created_at__lte=period_end)
+            suggestions_qs = suggestions_qs.filter(created_at__lt=period_end)
 
         operations = {
             'support_resolved': support_qs.count(),

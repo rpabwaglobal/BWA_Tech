@@ -9,7 +9,6 @@ Mostra entregas, on-time %, tempo em desenvolvimento pessoal, distribuição por
 """
 from __future__ import annotations
 
-from datetime import datetime
 from typing import Any
 
 from django.contrib.auth import get_user_model
@@ -20,18 +19,8 @@ from apps.projects.models import Card, CardArea
 from apps.projects.dev_time_format import format_minutos_uteis, format_segundos_corridos
 
 from .base import BaseReport, FilterDisplay, TableColumn
+from ..periodo import fim_do_periodo, inicio_do_periodo
 from .dev_time_stats import aggregate_dev_time
-
-
-def _parse_date(value: str | None) -> datetime | None:
-    if not value:
-        return None
-    try:
-        if 'T' in value:
-            return datetime.fromisoformat(value.replace('Z', '+00:00'))
-        return datetime.strptime(value, '%Y-%m-%d')
-    except (ValueError, TypeError):
-        return None
 
 
 User = get_user_model()
@@ -50,8 +39,9 @@ class Report(BaseReport):
         self.set_progress(10, 'Carregando usuário...')
         target = User.objects.get(pk=user_id)
 
-        period_start = _parse_date(self.filters.get('period_start'))
-        period_end = _parse_date(self.filters.get('period_end'))
+        period_start = inicio_do_periodo(self.filters.get('period_start'))
+        # Fronteira ABERTA (início do dia seguinte): ver apps/reports/periodo.py.
+        period_end = fim_do_periodo(self.filters.get('period_end'))
 
         qs = (
             self.cards_visiveis().select_related('projeto', 'projeto__sprint')
@@ -72,7 +62,7 @@ class Report(BaseReport):
         if period_start:
             qs = qs.filter(**{f'{date_field}__gte': period_start})
         if period_end:
-            qs = qs.filter(**{f'{date_field}__lte': period_end})
+            qs = qs.filter(**{f'{date_field}__lt': period_end})
         delivered = self.paginate_with_progress(
             qs, label='Carregando entregas do usuário',
             progress_start=15, progress_end=70, chunk_size=100,
