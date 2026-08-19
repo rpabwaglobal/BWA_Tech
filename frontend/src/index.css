@@ -371,13 +371,20 @@
    bolinha girando não diz. `pointer-events: none` para o aviso não capturar o
    clique destinado ao que está atrás dele. */
 .aviso-carregando {
-  /* `fixed`, e nao `absolute`: preso ao VIEWPORT, nao ao bloco de conteudo.
-     Com `absolute` ele centralizava na altura da PAGINA — numa tela alta, como
-     Prioridades ou Metricas, o aviso ficava a meio caminho do scroll, muitas
-     vezes fora do campo de visao. Quem esta esperando olha para o meio do
-     MONITOR. */
-  position: fixed;
-  inset: 0;
+  /* CENTRALIZADO NO CONTEUDO, mas dentro de UMA TELA.
+     Duas tentativas erradas antes desta:
+     - `absolute` com `inset: 0` centralizava na ALTURA DO DOCUMENTO: numa
+       pagina longa o aviso descia para o meio do scroll, fora do campo de
+       visao de quem esta esperando;
+     - `fixed` centralizava no MONITOR, e aí ignorava a barra lateral — o aviso
+       aparecia deslocado para a esquerda do conteudo.
+     A combinação certa é: horizontal preso ao bloco de conteudo (`absolute` +
+     `inset-inline: 0`), e vertical limitado a uma altura de tela, para o centro
+     cair sempre no que está visível. */
+  position: absolute;
+  inset-inline: 0;
+  top: 0;
+  height: min(100%, calc(100vh - 128px));
   display: flex;
   align-items: center;
   justify-content: center;
