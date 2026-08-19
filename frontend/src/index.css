@@ -468,7 +468,7 @@
   z-index: 60;
   background: rgba(0, 0, 0, 0.55);
   backdrop-filter: blur(6px);
-  animation: roleta-fundo-entra 260ms ease-out;
+  animation: roleta-fundo-entra 420ms ease-out;
 }
 @keyframes roleta-fundo-entra {
   from { opacity: 0; }
@@ -488,12 +488,25 @@
   height: min(78vh, 78vw) !important;
   max-width: none !important;
   max-height: none !important;
+  /* A ENTRADA E POR `transform`, NAO POR `width`/`height`.
+     Animar largura e altura forca o navegador a recalcular layout a cada
+     quadro, e num elemento com um canvas dentro isso sai aos solavancos - era
+     o que fazia a expansao parecer dura. `transform` e composto na GPU: o
+     tamanho final ja esta aplicado desde o primeiro quadro (entao o canvas
+     desenha nitido), e o que cresce e a escala.
+
+     620ms com uma curva que desacelera bem no fim: a roleta chega ao lugar
+     assentando, em vez de estalar. */
   transform: translate(-50%, -50%);
-  transition: width 320ms cubic-bezier(0.22, 1, 0.36, 1),
-              height 320ms cubic-bezier(0.22, 1, 0.36, 1);
+  animation: roleta-destaque-entra 620ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+@keyframes roleta-destaque-entra {
+  from { transform: translate(-50%, -50%) scale(0.72); opacity: 0; }
+  60%  { opacity: 1; }
+  to   { transform: translate(-50%, -50%) scale(1); opacity: 1; }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .roleta-destaque-fundo { animation: none; }
-  .roleta-em-destaque { transition: none; }
+  .roleta-em-destaque { animation: none; }
 }

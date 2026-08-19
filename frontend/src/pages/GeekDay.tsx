@@ -1281,12 +1281,14 @@ export default function GeekDay() {
                           roleta para não desfocá-la também. */}
                       {roletaEmDestaque && <div className="roleta-destaque-fundo" />}
                       <div
-                        onTransitionEnd={(e) => {
-                          // Só o fim da transição de TAMANHO conta: o mesmo
-                          // elemento dispara `transitionend` para cada
-                          // propriedade animada, e reagir a todas giraria a
-                          // roleta duas vezes.
-                          if (e.propertyName === 'width') iniciarGiroAposExpandir();
+                        onAnimationEnd={(e) => {
+                          // Só a animação de ENTRADA dispara o giro. O filtro
+                          // pelo nome existe porque este elemento também recebe
+                          // a cascata `.card-entra` no carregamento da página —
+                          // sem ele, a roleta giraria sozinha ao abrir a tela.
+                          if (e.animationName.includes('roleta-destaque-entra')) {
+                            iniciarGiroAposExpandir();
+                          }
                         }}
                         className={cn(
                         // A ALTURA manda, e a largura acompanha.
