@@ -46,6 +46,13 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY --chown=appuser:appuser backend/ ./
 COPY --chown=appuser:appuser --from=frontend-builder /app/frontend/dist /app/frontend/dist
 
+# A VERSÃO ENTRA NA IMAGEM POR UMA LINHA PRÓPRIA.
+# A imagem só leva `backend/`, então o `VERSION` da raiz ficaria de fora e a
+# tela mostraria "desconhecida" justamente em produção, que é onde saber o que
+# está no ar importa. Vai para /app porque `config/versao.py` procura ali como
+# segundo caminho — o primeiro é a raiz do repositório, usada em desenvolvimento.
+COPY --chown=appuser:appuser VERSION /app/VERSION
+
 # Diretórios writáveis pelo usuário não-root.
 RUN mkdir -p /app/backend/media/profiles /app/backend/staticfiles \
     && chown -R appuser:appuser /app/backend/media /app/backend/staticfiles

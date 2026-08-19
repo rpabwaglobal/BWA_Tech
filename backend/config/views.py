@@ -3,6 +3,7 @@ from pathlib import Path
 from django.http import JsonResponse, FileResponse, Http404, HttpResponseNotModified
 from django.conf import settings
 from django.utils.http import http_date, parse_http_date_safe
+from .versao import versao_atual
 from rest_framework.exceptions import AuthenticationFailed
 
 from apps.accounts.authentication import ExpiringTokenAuthentication
@@ -122,7 +123,7 @@ def api_root(request):
     """View raiz da API"""
     return JsonResponse({
         'message': 'Gerenciador de Projetos API',
-        'version': '1.0.0',
+        'version': versao_atual(),
         'endpoints': {
             'users': '/api/users/',
             'sprints': '/api/sprints/',

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useAuth } from '@/context/AuthContext';
-import { hasPermission } from '@/lib/permissions';
+import { abasVisiveisPara, type AbaConfiguracoesKey } from '@/lib/configuracoesAbas';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { GerenciamentoUsuarios } from '@/components/settings/GerenciamentoUsuarios';
@@ -9,18 +9,16 @@ import { GerenciamentoSetores } from '@/components/settings/GerenciamentoSetores
 
 /** Cada aba exige a permissão que a própria API cobra — quem só administra
  * setores não vê a aba de cargos, e vice-versa. O perfil saiu daqui: virou
- * página própria, acessível pela engrenagem no cabeçalho. */
-const TABS = [
-  { key: 'usuarios' as const, label: 'Usuários', perms: ['manage_users', 'manage_user_permissions'] },
-  { key: 'cargos' as const, label: 'Cargos', perms: ['manage_cargos'] },
-  { key: 'setores' as const, label: 'Setores', perms: ['manage_setores'] },
-];
-type TabKey = (typeof TABS)[number]['key'];
+ * página própria, acessível pela engrenagem no cabeçalho.
+ *
+ * A lista foi para `lib/configuracoesAbas` porque o menu lateral precisa da
+ * MESMA resposta para decidir se mostra o item de Configurações. */
+type TabKey = AbaConfiguracoesKey;
 
 export default function Settings() {
   const { user } = useAuth();
 
-  const visiveis = TABS.filter((t) => t.perms.some((p) => hasPermission(user, p)));
+  const visiveis = abasVisiveisPara(user);
 
   const [activeTab, setActiveTab] = useState<TabKey | null>(() => {
     const t = new URLSearchParams(window.location.search).get('tab');

@@ -10,6 +10,7 @@ import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { cn } from '@/lib/utils';
 import { ROUTES, isNavRouteActive } from '@/routes';
 import { hasPermission } from '@/lib/permissions';
+import { podeVerConfiguracoes } from '@/lib/configuracoesAbas';
 
 // `requires`: o item só aparece para quem tem a permissão.
 // `view_content` é o piso de leitura do trabalho — sem ela a API devolve 403 em
@@ -196,7 +197,14 @@ export default function Sidebar() {
                 );
               })}
           </div>
-          {/* Configurações — parte de baixo */}
+          {/* Configurações — parte de baixo.
+              SÓ PARA QUEM ALCANÇA ALGUMA ABA. O item era renderizado sem
+              nenhuma verificação, então quem não administra usuários, cargos
+              nem setores via a opção no menu e, ao clicar, chegava numa página
+              que só dizia que ele não tinha permissão. A condição vem da mesma
+              função que a página usa (`lib/configuracoesAbas`), para as duas
+              não divergirem quando uma aba nova for acrescentada. */}
+          {podeVerConfiguracoes(user) && (
           <div className="mt-auto space-y-[8px]">
             <Link
               to={ROUTES.configuracoes}
@@ -213,6 +221,7 @@ export default function Sidebar() {
               {!collapsed && <span>Configurações</span>}
             </Link>
           </div>
+          )}
         </nav>
 
         {/* User — a foto e o nome levam ao perfil; o botão de sair fica FORA do
