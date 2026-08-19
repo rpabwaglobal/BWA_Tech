@@ -1932,9 +1932,16 @@ function SupportColumn({
         className="flex min-h-0 flex-1 flex-col gap-[8px] overflow-y-auto overscroll-contain p-[8px]"
       >
         <SortableContext items={chamados.map((c) => dragId(c.id))} strategy={verticalListSortingStrategy}>
-          {chamados.map((c) => (
-            <SortableChamadoCard
+          {chamados.map((c, iEntrada) => (
+            // Invólucro para a entrada em cascata: o nó do card carrega o
+            // `transform` do dnd-kit, e animação vence estilo inline — o card
+            // escaparia do dedo se a animação fosse nele.
+            <div
               key={c.id}
+              className="card-entra"
+              style={{ animationDelay: `${60 + Math.min(iEntrada, 6) * 45}ms` }}
+            >
+            <SortableChamadoCard
               chamado={c}
               users={users}
               onOpen={() => onOpen(c)}
@@ -1943,6 +1950,7 @@ function SupportColumn({
               selected={selectedChamadoIds.includes(c.id)}
               onToggleSelected={() => onToggleSelected(c.id)}
             />
+            </div>
           ))}
         </SortableContext>
         {hasMore && (

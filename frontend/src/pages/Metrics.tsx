@@ -39,6 +39,7 @@ import { cn } from '@/lib/utils';
 import { ROUTES } from '@/routes';
 import { cachedFetch, METRICS_BUNDLE_CACHE_KEY } from '@/lib/cachedFetch';
 import { TelaComCarregamento } from '@/components/TelaComCarregamento';
+import { NumeroCrescente } from '@/components/NumeroCrescente';
 
 /** Alias usado em todo o módulo. Slim para todos os cálculos de métricas
  * (sem nested), com campos suficientes para o modal de drill-down. */
@@ -1597,7 +1598,7 @@ export default function Metrics() {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <p className="text-2xl font-bold">{closedCards.length}</p>
+            <p className="text-2xl font-bold"><NumeroCrescente valor={closedCards.length} /></p>
           </CardContent>
         </Card>
         <Card>
@@ -1607,7 +1608,7 @@ export default function Metrics() {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <p className="text-2xl font-bold">{sprints.length}</p>
+            <p className="text-2xl font-bold"><NumeroCrescente valor={sprints.length} /></p>
           </CardContent>
         </Card>
         <Card>
@@ -1618,7 +1619,9 @@ export default function Metrics() {
           </CardHeader>
           <CardContent>
             <p className="text-2xl font-bold">
-              {new Set(closedCards.map((c) => c.responsavel).filter(Boolean)).size}
+              <NumeroCrescente
+                valor={new Set(closedCards.map((c) => c.responsavel).filter(Boolean)).size}
+              />
             </p>
           </CardContent>
         </Card>
@@ -2505,7 +2508,7 @@ export default function Metrics() {
                   Média geral
                 </p>
                 <p className="mt-1 text-3xl font-bold text-[var(--color-foreground)]">
-                  {cycleTimeData.overall} <span className="text-base font-normal text-[var(--color-muted-foreground)]">{cycleTimeData.overall === 1 ? 'Dia' : 'Dias'}</span>
+                  <NumeroCrescente valor={cycleTimeData.overall} /> <span className="text-base font-normal text-[var(--color-muted-foreground)]">{cycleTimeData.overall === 1 ? 'Dia' : 'Dias'}</span>
                 </p>
                 <p className="text-xs text-[var(--color-muted-foreground)]">
                   {cycleTimeData.overallCount} card{cycleTimeData.overallCount === 1 ? '' : 's'} considerado{cycleTimeData.overallCount === 1 ? '' : 's'}

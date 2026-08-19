@@ -623,7 +623,7 @@ export default function Priorities() {
         </Card>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-[16px]">
-          {usersWithCards.map((userData) => {
+          {usersWithCards.map((userData, iEntrada) => {
             // Separar cards em desenvolvimento dos concluídos
             const cardsEmDesenvolvimento = userData.cards.filter(card => !isCompleted(card.status));
             const cardsConcluidos = userData.cards.filter(card => isCompleted(card.status));
@@ -634,7 +634,11 @@ export default function Priorities() {
             const temPrioridadeSemanal = periodo === 'semana' && userData.cards.some(card => card.weekly_priority);
             
             return (
-              <Card key={userData.usuario.id} className="p-[16px] relative">
+              <Card
+                key={userData.usuario.id}
+                className="card-entra p-[16px] relative"
+                style={{ animationDelay: `${60 + Math.min(iEntrada, 6) * 45}ms` }}
+              >
                 {/* Botões de editar/excluir no canto superior direito do card - apenas quando há prioridades definidas e semana não está fechada */}
                 {isSupervisor && periodo === 'semana' && temPrioridadeSemanal && !semanaFechada && (
                   <div className="absolute top-[8px] right-[8px] flex items-center gap-[2px] z-10">

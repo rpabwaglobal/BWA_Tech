@@ -371,13 +371,18 @@
    bolinha girando não diz. `pointer-events: none` para o aviso não capturar o
    clique destinado ao que está atrás dele. */
 .aviso-carregando {
-  position: absolute;
+  /* `fixed`, e nao `absolute`: preso ao VIEWPORT, nao ao bloco de conteudo.
+     Com `absolute` ele centralizava na altura da PAGINA — numa tela alta, como
+     Prioridades ou Metricas, o aviso ficava a meio caminho do scroll, muitas
+     vezes fora do campo de visao. Quem esta esperando olha para o meio do
+     MONITOR. */
+  position: fixed;
   inset: 0;
   display: flex;
   align-items: center;
   justify-content: center;
   pointer-events: none;
-  z-index: 5;
+  z-index: 30;
 }
 
 /* ── Entrada dos cards na coluna, de cima para baixo ─────────────────────

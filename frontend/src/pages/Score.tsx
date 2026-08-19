@@ -401,14 +401,15 @@ export default function Score() {
                 </td>
               </tr>
             ) : (
-              visibleScores.map((score) => {
+              visibleScores.map((score, iEntrada) => {
                 const byCriterion: Record<number, number> = {};
                 for (const v of score.valores) byCriterion[v.criterion] = v.valor;
                 const isExpanded = expanded.has(score.id);
                 return (
                   <Fragment key={score.id}>
                     <tr
-                      className="border-b border-[var(--color-border)] last:border-0 hover:bg-[var(--color-accent)]/40 cursor-pointer"
+                      className="card-entra border-b border-[var(--color-border)] last:border-0 hover:bg-[var(--color-accent)]/40 cursor-pointer"
+                      style={{ animationDelay: `${60 + Math.min(iEntrada, 6) * 45}ms` }}
                       onClick={() => openEdit(score)}
                     >
                       <td className="px-4 py-3 max-w-[280px]">

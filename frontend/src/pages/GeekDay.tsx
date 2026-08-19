@@ -1346,8 +1346,17 @@ export default function GeekDay() {
                           count={availableUsers.length}
                           isEmpty={availableUsers.length === 0}
                         >
-                          {availableUsers.map((user) => (
-                            <DraggableUserCard key={user.id} user={user} isSorted={false} />
+                          {availableUsers.map((user, iEntrada) => (
+                            // Invólucro: o card é arrastável e o nó dele
+                            // recebe transform do dnd — animar ali o faria
+                            // escapar do dedo.
+                            <div
+                              key={user.id}
+                              className="card-entra"
+                              style={{ animationDelay: `${60 + Math.min(iEntrada, 6) * 45}ms` }}
+                            >
+                              <DraggableUserCard user={user} isSorted={false} />
+                            </div>
                           ))}
                         </DroppableList>
 
@@ -1358,8 +1367,17 @@ export default function GeekDay() {
                           count={sortedUsers.length}
                           isEmpty={sortedUsers.length === 0}
                         >
-                          {sortedUsers.map((user) => (
-                            <DraggableUserCard key={user.id} user={user} isSorted={true} />
+                          {sortedUsers.map((user, iEntrada) => (
+                            // Invólucro: o card é arrastável e o nó dele
+                            // recebe transform do dnd — animar ali o faria
+                            // escapar do dedo.
+                            <div
+                              key={user.id}
+                              className="card-entra"
+                              style={{ animationDelay: `${60 + Math.min(iEntrada, 6) * 45}ms` }}
+                            >
+                              <DraggableUserCard user={user} isSorted={true} />
+                            </div>
                           ))}
                         </DroppableList>
                       </div>

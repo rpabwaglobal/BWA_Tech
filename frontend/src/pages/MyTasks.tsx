@@ -566,10 +566,12 @@ function SortableNoteCardWrapper({
   noteId,
   layoutId,
   children,
+  ordemEntrada,
 }: {
   noteId: number;
   layoutId: string;
   children: () => React.ReactNode;
+  ordemEntrada?: number;
 }) {
   const {
     setNodeRef,
@@ -604,7 +606,15 @@ function SortableNoteCardWrapper({
       {...attributes}
       {...(listeners as Record<string, (e: React.SyntheticEvent) => void>)}
     >
-      {children()}
+      {/* A entrada anima AQUI DENTRO, e não no nó de cima: aquele carrega o
+          `transform` do dnd-kit, e animação vence estilo inline na cascata —
+          a nota escaparia do dedo durante o arrasto. */}
+      <div
+        className="card-entra"
+        style={{ animationDelay: `${60 + Math.min(ordemEntrada ?? 0, 6) * 45}ms` }}
+      >
+        {children()}
+      </div>
     </div>
   );
 }
@@ -1983,9 +1993,10 @@ export default function MyTasks() {
                         strategy={noScaleRectSortingStrategy}
                       >
                         <Masonry breakpoints={NOTES_MASONRY_BREAKPOINTS}>
-                          {pinned.map((note) => (
+                          {pinned.map((note, iEntrada) => (
                             <SortableNoteCardWrapper
                               key={note.id}
+                              ordemEntrada={iEntrada}
                               noteId={note.id}
                               layoutId={`note-${note.id}`}
                             >
@@ -2052,9 +2063,10 @@ export default function MyTasks() {
                       strategy={noScaleRectSortingStrategy}
                     >
                       <Masonry breakpoints={NOTES_MASONRY_BREAKPOINTS}>
-                        {others.map((note) => (
+                        {others.map((note, iEntrada) => (
                           <SortableNoteCardWrapper
                             key={note.id}
+                            ordemEntrada={iEntrada}
                             noteId={note.id}
                             layoutId={`note-${note.id}`}
                           >
@@ -2121,9 +2133,14 @@ export default function MyTasks() {
             </div>
           ) : (
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-              {pinnedCards.map((pin) => (
-                <KanbanCardPreview
+              {pinnedCards.map((pin, iEntrada) => (
+                // Invólucro porque `KanbanCardPreview` não recebe className.
+                <div
                   key={pin.id}
+                  className="card-entra"
+                  style={{ animationDelay: `${60 + Math.min(iEntrada, 6) * 45}ms` }}
+                >
+                <KanbanCardPreview
                   card={pin.card_detail}
                   onClick={() => handleOpenCard(pin)}
                   topRightSlot={
@@ -2140,6 +2157,7 @@ export default function MyTasks() {
                     </button>
                   }
                 />
+                </div>
               ))}
             </div>
           )}
