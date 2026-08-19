@@ -59,6 +59,7 @@ import { ROUTES } from '@/routes';
 import type { Project } from '@/services/projectService';
 import type { Card as CardType } from '@/services/cardService';
 import type { Sprint } from '@/services/sprintService';
+import { TelaComCarregamento } from '@/components/TelaComCarregamento';
 import {
   ArrowLeft,
   ArrowDown,
@@ -2698,23 +2699,15 @@ export default function ProjectDetails() {
   }
 
   return (
-    // `relative` para o aviso de carregamento poder se posicionar sobre a área
-    // útil sem tirar o quadro do fluxo.
-    <div className="relative flex flex-col h-[calc(100vh-64px-64px)] min-h-0">
-      {/* O AVISO FICA FORA DO BLOCO DESFOCADO, senão ele mesmo sairia borrado —
-          e um "Carregando cards" ilegível é pior que nenhum. */}
-      {loading && (
-        <div className="aviso-carregando">
-          <div className="flex items-center gap-[10px] rounded-full border border-[var(--color-border)] bg-[var(--color-card)] px-[16px] py-[8px] shadow-sm">
-            <Loader2 className="h-[16px] w-[16px] animate-spin text-[var(--color-primary)]" />
-            <span className="text-sm text-[var(--color-muted-foreground)]">
-              Carregando cards…
-            </span>
-          </div>
-        </div>
-      )}
-
-      <div className={cn('tela-conteudo flex flex-col flex-1 min-h-0', loading && 'tela-carregando')}>
+    // Usa o MESMO componente das outras nove telas. A implementação manual que
+    // vivia aqui nasceu antes dele e ficou para trás: não recebia a entrada de
+    // página nem a saída sincronizada do aviso, e duas implementações do mesmo
+    // comportamento divergem sem ninguém notar.
+    <TelaComCarregamento
+      carregando={loading}
+      mensagem="Carregando cards…"
+      className="flex flex-col h-[calc(100vh-64px-64px)] min-h-0"
+    >
       {/* Banner: projeto arquivado */}
       {project?.arquivado && (
         <div className="mb-[12px] flex items-center justify-between gap-3 rounded-md border border-amber-300 bg-amber-50 dark:border-amber-900 dark:bg-amber-950/40 px-4 py-2 text-sm text-amber-900 dark:text-amber-200">
@@ -4415,8 +4408,7 @@ export default function ProjectDetails() {
           onOpenChange={setCompartilharOpen}
         />
       )}
-      </div>
-    </div>
+    </TelaComCarregamento>
   );
 }
 

@@ -510,3 +510,27 @@
   .roleta-destaque-fundo { animation: none; }
   .roleta-em-destaque { animation: none; }
 }
+
+/* ── Entrada da PÁGINA ao navegar ────────────────────────────────────────
+   A estrutura da tela (cabeçalho, colunas, cartões vazios) tambem entra
+   suavemente, e não com corte seco.
+
+   POR QUE NUM ELEMENTO SEPARADO do `.tela-conteudo`: aquele carrega o estado de
+   desfoque, que anima `opacity` e `filter`. Uma animação de entrada no MESMO
+   elemento disputaria a `opacity` com a transição do desfoque — animação vence
+   transição na cascata, e o resultado seria a tela piscando de volta ao opaco
+   no meio da revelação. Aqui a entrada mora no invólucro externo, e o desfoque
+   no interno: cada um cuida de uma coisa.
+
+   Curta (240ms) e discreta de proposito: isto acontece a CADA navegação, e um
+   efeito longo transforma trocar de página numa espera. */
+@keyframes pagina-entra {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: none; }
+}
+.pagina-entra {
+  animation: pagina-entra 240ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+@media (prefers-reduced-motion: reduce) {
+  .pagina-entra { animation: none; }
+}

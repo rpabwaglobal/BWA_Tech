@@ -54,7 +54,11 @@ export function TelaComCarregamento({
   }, [carregando]);
 
   return (
-    <div className="relative">
+    // `pagina-entra` no invólucro EXTERNO: a estrutura da tela entra suave ao
+    // navegar, mesmo antes de os dados chegarem. Fica separado do
+    // `.tela-conteudo` porque aquele anima `opacity` no desfoque — as duas
+    // animações na mesma propriedade e no mesmo nó fariam a tela piscar.
+    <div className="pagina-entra relative">
       {/* FORA do bloco desfocado, senão o próprio aviso sairia borrado — e um
           aviso ilegível é pior que nenhum.
           RENDERIZADO SEMPRE, e escondido por opacidade. Duas armadilhas
