@@ -525,11 +525,24 @@
    Curta (240ms) e discreta de proposito: isto acontece a CADA navegação, e um
    efeito longo transforma trocar de página numa espera. */
 @keyframes pagina-entra {
-  from { opacity: 0; transform: translateY(6px); }
+  from { opacity: 0; transform: translateY(12px) scale(0.994); }
   to   { opacity: 1; transform: none; }
 }
 .pagina-entra {
-  animation: pagina-entra 240ms cubic-bezier(0.22, 1, 0.36, 1);
+  /* 420ms com uma curva de desaceleracao longa (0.16, 1, 0.3, 1): a maior parte
+     do movimento acontece no comeco e o fim e quase parado, entao a pagina
+     "assenta" em vez de chegar e travar. A 240ms o movimento existia mas
+     terminava antes de o olho acompanhar - lia como piscada, nao como
+     transicao.
+
+     A escala minima (0.994) e o que dá profundidade: um deslocamento sozinho
+     parece um empurrao lateral; com a escala, a tela parece VIR de tras, que e
+     o que se espera ao trocar de pagina. Exagerar aqui vira efeito de
+     apresentacao de slides.
+
+     `both` no fill-mode: sem ele existe um quadro em que o navegador desenha o
+     estado FINAL antes de a animacao comecar, e esse quadro pisca. */
+  animation: pagina-entra 420ms cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 @media (prefers-reduced-motion: reduce) {
   .pagina-entra { animation: none; }
