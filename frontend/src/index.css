@@ -371,20 +371,26 @@
    bolinha girando não diz. `pointer-events: none` para o aviso não capturar o
    clique destinado ao que está atrás dele. */
 .aviso-carregando {
-  /* CENTRALIZADO NO CONTEUDO, mas dentro de UMA TELA.
-     Duas tentativas erradas antes desta:
-     - `absolute` com `inset: 0` centralizava na ALTURA DO DOCUMENTO: numa
-       pagina longa o aviso descia para o meio do scroll, fora do campo de
-       visao de quem esta esperando;
-     - `fixed` centralizava no MONITOR, e aí ignorava a barra lateral — o aviso
-       aparecia deslocado para a esquerda do conteudo.
-     A combinação certa é: horizontal preso ao bloco de conteudo (`absolute` +
-     `inset-inline: 0`), e vertical limitado a uma altura de tela, para o centro
-     cair sempre no que está visível. */
+  /* HORIZONTAL no conteudo, VERTICAL em uma tela. Os dois eixos resolvidos de
+     formas diferentes, porque as perguntas sao diferentes.
+
+     Horizontal: `absolute` + `inset-inline: 0` prende ao bloco de conteudo,
+     entao a barra lateral e respeitada. Com `fixed` o aviso centralizava no
+     monitor e aparecia deslocado para a esquerda do conteudo.
+
+     Vertical: altura de EXATAMENTE uma tela. A tentativa anterior usava
+     `min(100%, calc(100vh - 128px))`, e o `100%` nao resolve contra um pai de
+     altura automatica — a altura virava a do conteudo INTEIRO e, em paginas
+     longas como Metricas, o centro caia no meio de milhares de pixels, muito
+     abaixo do que esta na tela. Uma tela fixa resolve: no momento do
+     carregamento o scroll esta no topo, entao este retangulo E a area visivel.
+
+     128px = cabecalho (64) + o respiro do <main> (64), o mesmo desconto que as
+     paginas usam em `h-[calc(100vh-64px-64px)]`. */
   position: absolute;
   inset-inline: 0;
   top: 0;
-  height: min(100%, calc(100vh - 128px));
+  height: calc(100vh - 128px);
   display: flex;
   align-items: center;
   justify-content: center;
