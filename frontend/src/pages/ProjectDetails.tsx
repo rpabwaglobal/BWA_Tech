@@ -486,9 +486,23 @@ function KanbanColumn({
             </div>
           ) : (
             <SortableContext items={cards.map((c) => c.id)} strategy={verticalListSortingStrategy}>
-              {cards.map((card) => (
-                <KanbanCard
+              {cards.map((card, indice) => (
+                // INVÓLUCRO só para a animação de entrada. Ela não pode ir no
+                // card: aquele nó recebe o `transform` do dnd-kit durante o
+                // arrasto, e animação vence estilo inline na cascata — o card
+                // escaparia do dedo enquanto anima.
+                //
+                // O atraso é limitado a 10 posições: 65 ms por card numa coluna
+                // de quarenta daria vários segundos até o último, e a entrada
+                // deixaria de parecer suave para parecer lenta. Os 140 ms de
+                // base deixam o desfoque da tela começar a sair antes de os
+                // cards chegarem, para as duas coisas não competirem.
+                <div
                   key={card.id}
+                  className="card-entra"
+                  style={{ animationDelay: `${140 + Math.min(indice, 10) * 65}ms` }}
+                >
+                <KanbanCard
                   card={card}
                   onClick={() => onCardClick(card)}
                   onDelete={(e) => onCardDelete(e, card.id)}
@@ -507,6 +521,7 @@ function KanbanColumn({
                   onTogglePin={onTogglePin}
                   pedidoFeedback={pedidosFeedback?.[String(card.id)] ?? null}
                 />
+                </div>
               ))}
             </SortableContext>
           )}
@@ -2659,15 +2674,17 @@ export default function ProjectDetails() {
     }
   };
 
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center h-[256px]">
-        <Loader2 className="h-[32px] w-[32px] animate-spin text-[var(--color-primary)]" />
-      </div>
-    );
-  }
-
-  if (!project) {
+  // O RETORNO ANTECIPADO DO CARREGAMENTO SAIU DAQUI.
+  //
+  // Antes a página inteira era trocada por um spinner e, quando os dados
+  // chegavam, o layout aparecia do nada. Agora ela renderiza desde o primeiro
+  // quadro — cabeçalho, colunas, filtros — desfocada e vazia, e fica nítida
+  // quando os cards chegam. Ver `.tela-conteudo` no index.css.
+  //
+  // Por isso o guarda de "não encontrado" ganhou `!loading`: sem ele, o projeto
+  // ainda não carregado dispararia a tela de erro no primeiro render de toda
+  // visita.
+  if (!loading && !project) {
     return (
       <div className="flex flex-col items-center justify-center h-[256px]">
         <p className="text-lg font-medium text-[var(--color-foreground)]">
@@ -2681,7 +2698,23 @@ export default function ProjectDetails() {
   }
 
   return (
-    <div className="flex flex-col h-[calc(100vh-64px-64px)] min-h-0">
+    // `relative` para o aviso de carregamento poder se posicionar sobre a área
+    // útil sem tirar o quadro do fluxo.
+    <div className="relative flex flex-col h-[calc(100vh-64px-64px)] min-h-0">
+      {/* O AVISO FICA FORA DO BLOCO DESFOCADO, senão ele mesmo sairia borrado —
+          e um "Carregando cards" ilegível é pior que nenhum. */}
+      {loading && (
+        <div className="aviso-carregando">
+          <div className="flex items-center gap-[10px] rounded-full border border-[var(--color-border)] bg-[var(--color-card)] px-[16px] py-[8px] shadow-sm">
+            <Loader2 className="h-[16px] w-[16px] animate-spin text-[var(--color-primary)]" />
+            <span className="text-sm text-[var(--color-muted-foreground)]">
+              Carregando cards…
+            </span>
+          </div>
+        </div>
+      )}
+
+      <div className={cn('tela-conteudo flex flex-col flex-1 min-h-0', loading && 'tela-carregando')}>
       {/* Banner: projeto arquivado */}
       {project?.arquivado && (
         <div className="mb-[12px] flex items-center justify-between gap-3 rounded-md border border-amber-300 bg-amber-50 dark:border-amber-900 dark:bg-amber-950/40 px-4 py-2 text-sm text-amber-900 dark:text-amber-200">
@@ -2743,7 +2776,11 @@ export default function ProjectDetails() {
               <div className="flex-1">
                 <div className="flex flex-col gap-[4px]">
                   <h1 className="text-2xl font-bold text-[var(--color-foreground)]">
-                    {project.nome}
+                    {/* Espaço fixo enquanto o projeto não chegou: sem ele o
+                        cabeçalho nasce com altura zero e SALTA quando o nome
+                        aparece — justamente o pulo que a tela desfocada existe
+                        para evitar. */}
+                    {project?.nome ?? ' '}
                   </h1>
                   {/* A linha da sprint some no fluxo de monitoramento: a sprint
                       que o segura é técnica e fecha daqui a ~100 anos, então
@@ -2756,7 +2793,7 @@ export default function ProjectDetails() {
                     </span>
                   )}
                 </div>
-                {project.descricao && (
+                {project?.descricao && (
                   <p className="text-sm text-[var(--color-muted-foreground)] mt-[4px]">
                     {project.descricao}
                   </p>
@@ -2859,7 +2896,7 @@ export default function ProjectDetails() {
           </div>
           {/* Botão de deletar projeto (apenas para admin/supervisor e projetos inviabilizados) */}
           {(() => {
-            const projectStatus = (project.status || '').toLowerCase();
+            const projectStatus = (project?.status || '').toLowerCase();
             const isInviabilizado = projectStatus === 'inviabilizado';
             const podeExcluirProjeto = hasPermission(user, 'delete_projects');
             const shouldShow = isInviabilizado && podeExcluirProjeto;
@@ -4378,6 +4415,7 @@ export default function ProjectDetails() {
           onOpenChange={setCompartilharOpen}
         />
       )}
+      </div>
     </div>
   );
 }

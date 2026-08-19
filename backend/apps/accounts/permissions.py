@@ -352,3 +352,83 @@ def permissoes_concediveis_por(user):
     if user.is_superuser:
         return set(todos)
     return {c for c in todos if user.has_perm(f'accounts.{c}')}
+
+
+def permissoes_por_usuario(usuarios) -> dict:
+    """`{user_id: [codenames]}` para uma lista de usuários, em POUCAS consultas.
+
+    A versão por linha custa caro numa listagem: `UserSerializer.get_permissions`
+    percorre o catálogo inteiro chamando `has_perm`, e cada usuário novo obriga
+    o Django a carregar as permissões dele. Medido em `/api/users/` com 15
+    usuários vistos por uma conta que gerencia usuários: 49 consultas e ~616 ms
+    — e como a tela do projeto espera as quatro chamadas dela em `Promise.all`,
+    esse era o piso do carregamento, mesmo num projeto com ZERO cards.
+
+    ESTE RESOLVEDOR PRECISA CONCORDAR COM `has_perm`, SEMPRE. Ele não é uma
+    aproximação: reproduz os três backends que a plataforma tem, na mesma ordem
+    em que eles concedem (a união do que qualquer um conceder):
+
+      1. `ModelBackend`      — `user_permissions` e grupos; superusuário leva tudo
+      2. `AdminRolePermission` — `role == 'admin'` leva o catálogo inteiro
+      3. `CargoPermission`   — o que estiver em `Cargo.permissoes_padrao`
+
+    Usuário INATIVO recebe lista vazia: é o que o Django faz em `has_perm`, e os
+    outros dois backends também exigem `is_active`.
+
+    O teste `PermissoesEmMassaTests` compara o resultado desta função com o laço
+    de `has_perm` para TODOS os usuários do banco — se algum dia os backends
+    mudarem e esta função ficar para trás, ele quebra.
+    """
+    from django.contrib.auth.models import Permission
+    from .models import Cargo
+
+    usuarios = list(usuarios or [])
+    if not usuarios:
+        return {}
+
+    catalogo = {codename for codename, _label, _area in PERMISSION_CATALOG}
+
+    # 1 consulta: o catálogo de cargos inteiro (dezenas de linhas).
+    try:
+        por_cargo = {
+            codename: set(template) if isinstance(template, list) else set()
+            for codename, template in Cargo.objects.values_list('codename', 'permissoes_padrao')
+        }
+    except DatabaseError:
+        logger.warning('Cargos indisponíveis ao resolver permissões em massa')
+        por_cargo = {}
+
+    # 1 consulta: TODAS as permissões diretas dos usuários desta página.
+    ids = [u.pk for u in usuarios]
+    diretas: dict = {}
+    for user_id, codename in Permission.objects.filter(
+        user__in=ids, content_type__app_label='accounts'
+    ).values_list('user__id', 'codename'):
+        diretas.setdefault(user_id, set()).add(codename)
+
+    # 1 consulta: permissões vindas de GRUPO.
+    for user_id, codename in Permission.objects.filter(
+        group__user__in=ids, content_type__app_label='accounts'
+    ).values_list('group__user__id', 'codename'):
+        diretas.setdefault(user_id, set()).add(codename)
+
+    resultado = {}
+    for u in usuarios:
+        if not u.is_active:
+            resultado[u.pk] = []
+            continue
+        if u.is_superuser:
+            resultado[u.pk] = sorted(catalogo)
+            continue
+
+        concedidas = set(diretas.get(u.pk, set()))
+        papel = getattr(u, 'role', None)
+        if papel == 'admin':
+            concedidas |= catalogo
+        concedidas |= por_cargo.get(papel, set())
+
+        # Só o que o catálogo declara: permissão de outro app (ou órfã de uma
+        # versão antiga) não é assunto desta lista.
+        resultado[u.pk] = sorted(concedidas & catalogo)
+
+    return resultado

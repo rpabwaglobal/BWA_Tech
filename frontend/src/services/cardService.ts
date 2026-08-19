@@ -263,7 +263,13 @@ export const cardService = {
   async getByProject(projectId: string, options?: { includeSuggestions?: boolean }): Promise<Card[]> {
     const includeSuggestions = !!options?.includeSuggestions;
     const allCards: Card[] = [];
-    let nextUrl: string | null = `/cards/?projeto=${projectId}`;
+    // `page_size` alto de propósito: o quadro precisa de TODOS os cards para
+    // desenhar as colunas, e o laço abaixo busca as páginas em SEQUÊNCIA — uma
+    // esperando a outra. Com a página padrão de 20, um projeto de 56 cards
+    // custava três idas ao servidor. O backend limita em 200 (ver
+    // config/paginacao.py), então o laço continua aqui para o caso raro de
+    // passar disso.
+    let nextUrl: string | null = `/cards/?projeto=${projectId}&page_size=200`;
     
     // Fazer requisições paginadas até obter todos os cards do projeto
     while (nextUrl) {

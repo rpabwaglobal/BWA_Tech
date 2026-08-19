@@ -1346,8 +1346,26 @@ class CardViewSet(CompartilhamentoSetorMixin, viewsets.ModelViewSet):
     
     def get_queryset(self):
         """Aplica filtros de permissão baseados no usuário"""
+        # AS RELAÇÕES DO `projeto_detail` TAMBÉM PRECISAM VIR JUNTO.
+        #
+        # `CardSerializer` embute um `ProjectSerializer` INTEIRO em cada card
+        # (`projeto_detail`), e aquele serializer lê setor, compartilhamentos,
+        # gerente, desenvolvedor e quem arquivou. Sem estas linhas, cada card da
+        # página dispara uma consulta para cada um desses — e como uma página
+        # traz 20 cards do MESMO projeto, o banco respondia 20 vezes a mesma
+        # pergunta.
+        #
+        # Medido antes: 185 consultas e 1516 ms para uma página de 20 cards, com
+        # 120 delas indo buscar `accounts_setorcatalogo`. É o que fazia a página
+        # do projeto levar segundos abrindo — e pior, o front busca as páginas em
+        # SEQUÊNCIA, então o custo se multiplicava pelo número de páginas.
         queryset = Card.objects.select_related(
-            'projeto', 'projeto__sprint', 'criado_por', 'responsavel', 'score'
+            'projeto', 'projeto__sprint', 'projeto__setor',
+            'projeto__gerente_atribuido', 'projeto__desenvolvedor',
+            'projeto__arquivado_por',
+            'criado_por', 'responsavel', 'score', 'setor',
+        ).prefetch_related(
+            'projeto__setores_compartilhados', 'setores_compartilhados',
         ).annotate(events_count=Count('events'))
         # Cards de projetos arquivados somem do app inteiro em queries
         # genéricas (Kanban global, Prioridades). EXCEÇÃO: quando o cliente

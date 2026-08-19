@@ -257,7 +257,9 @@ REST_FRAMEWORK = {
     'DEFAULT_PERMISSION_CLASSES': [
         'rest_framework.permissions.IsAuthenticated',
     ],
-    'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
+    # `page_size` negociável pelo cliente, com teto. Ver config/paginacao.py:
+    # sem isso a tela do projeto precisava percorrer as páginas em sequência.
+    'DEFAULT_PAGINATION_CLASS': 'config.paginacao.PaginacaoPadrao',
     'PAGE_SIZE': 20,
     # Rate limiting (proteção contra brute force / spam / enumeration).
     # Escopos customizados ativados explicitamente em login/register/recover/recovery-attempt.

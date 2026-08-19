@@ -11,7 +11,7 @@ from .models import (
     CARGO_CHOICES_CACHE_KEY, SETOR_CHOICES_CACHE_KEY,
 )
 from .permission_catalog import PERMISSION_CATALOG
-from .permissions import ids_que_participam_do_trabalho
+from .permissions import ids_que_participam_do_trabalho, permissoes_por_usuario
 from .profile_picture_utils import get_profile_picture_url
 from .image_processing import process_profile_picture
 from .scoping import SETOR_PADRAO_CODENAME, setor_padrao_do_sistema
@@ -207,10 +207,49 @@ class UserSerializer(serializers.ModelSerializer):
         )
         if not pode_ver:
             return []
+
+        # RESOLVE A PÁGINA INTEIRA DE UMA VEZ, e não usuário por usuário.
+        #
+        # O laço `has_perm` por linha custava uma carga de permissões por
+        # usuário: medido em `/api/users/` com 15 usuários vistos por uma conta
+        # que gerencia usuários, 49 consultas e ~616 ms. E como a tela do projeto
+        # espera as quatro chamadas dela em `Promise.all`, esse número era o PISO
+        # do carregamento — inclusive num projeto sem card nenhum.
+        #
+        # `permissoes_por_usuario` reproduz os três backends de autorização e é
+        # comparada com `has_perm` em `tests_permissoes_massa`, usuário por
+        # usuário: desempenho aqui não pode custar exatidão, porque o que esta
+        # lista descreve é o mapa de poderes de cada pessoa.
+        mapa = self._mapa_de_permissoes()
+        if mapa is not None:
+            return mapa.get(obj.pk, [])
+
+        # Sem como descobrir o conjunto sendo serializado (uso avulso do
+        # serializer), volta ao caminho por linha — correto, só mais caro.
         return sorted(
             codename for codename, _label, _area in PERMISSION_CATALOG
             if obj.has_perm(f'accounts.{codename}')
         )
+
+    def _mapa_de_permissoes(self):
+        """`{user_id: [codenames]}` de todos os usuários desta serialização.
+
+        Em `many=True` o DRF cria UM serializer filho para a lista inteira, e é
+        o pai (`ListSerializer`) que guarda a queryset — daí a busca por
+        `self.parent.instance`. O resultado fica no próprio serializer, então a
+        resolução acontece uma vez por resposta.
+        """
+        if hasattr(self, '_cache_mapa_permissoes'):
+            return self._cache_mapa_permissoes
+
+        origem = self.parent.instance if self.parent is not None else self.instance
+        if origem is None:
+            self._cache_mapa_permissoes = None
+            return None
+
+        usuarios = list(origem) if hasattr(origem, '__iter__') else [origem]
+        self._cache_mapa_permissoes = permissoes_por_usuario(usuarios)
+        return self._cache_mapa_permissoes
 
     def get_participa_do_trabalho(self, obj):
         """Esta pessoa enxerga sprint/projeto/card? (isto é: tem `view_content`)
