@@ -56,15 +56,21 @@ export function TelaComCarregamento({
   return (
     <div className="relative">
       {/* FORA do bloco desfocado, senão o próprio aviso sairia borrado — e um
-          aviso ilegível é pior que nenhum. */}
-      {carregando && (
-        <div className="aviso-carregando">
-          <div className="flex items-center gap-[10px] rounded-full border border-[var(--color-border)] bg-[var(--color-card)] px-[16px] py-[8px] shadow-sm">
-            <Loader2 className="h-[16px] w-[16px] animate-spin text-[var(--color-primary)]" />
-            <span className="text-sm text-[var(--color-muted-foreground)]">{mensagem}</span>
-          </div>
+          aviso ilegível é pior que nenhum.
+          RENDERIZADO SEMPRE, e escondido por opacidade. Duas armadilhas
+          evitadas aqui: com a condição `carregando` a mensagem sumia assim que
+          os dados chegavam e a tela seguia borrada pela duração da cascata — o
+          intervalo lia como travamento; e com `{!revelado && ...}` o nó
+          DESMONTAVA no mesmo quadro em que a classe de saída era aplicada, então
+          a transição nunca chegava a rodar. Controlado por opacidade, ele
+          desbota exatamente junto com o desfoque. `pointer-events: none` já
+          impede que o nó invisível atrapalhe o clique. */}
+      <div className={cn('aviso-carregando', revelado && 'aviso-saindo')}>
+        <div className="flex items-center gap-[10px] rounded-full border border-[var(--color-border)] bg-[var(--color-card)] px-[16px] py-[8px] shadow-sm">
+          <Loader2 className="h-[16px] w-[16px] animate-spin text-[var(--color-primary)]" />
+          <span className="text-sm text-[var(--color-muted-foreground)]">{mensagem}</span>
         </div>
-      )}
+      </div>
 
       <div className={cn('tela-conteudo', !revelado && 'tela-carregando', className)}>
         {children}

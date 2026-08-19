@@ -396,6 +396,24 @@
   justify-content: center;
   pointer-events: none;
   z-index: 30;
+  /* MESMA transicao do conteudo, para os dois sairem JUNTOS.
+     Antes o aviso simplesmente desmontava quando os dados chegavam, enquanto o
+     desfoque ainda levava a duracao da cascata para sair — a mensagem sumia e a
+     tela continuava borrada, o que lia como travamento. Agora ele desbota no
+     mesmo tempo e com a mesma curva. */
+  transition: opacity 340ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* O aviso já cumpriu o papel: desbota junto com o desfoque. Fica montado
+   durante a saida (desmontar cancelaria a transicao no primeiro quadro). */
+.aviso-carregando.aviso-saindo {
+  opacity: 0;
+  /* `visibility` com atraso igual ao da transicao: some da arvore de
+     acessibilidade DEPOIS de desbotar, para o leitor de tela nao continuar
+     anunciando "carregando" numa pagina que ja carregou. */
+  visibility: hidden;
+  transition: opacity 340ms cubic-bezier(0.22, 1, 0.36, 1),
+              visibility 0s linear 340ms;
 }
 
 /* ── Entrada dos cards na coluna, de cima para baixo ─────────────────────
