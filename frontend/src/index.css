@@ -547,3 +547,85 @@
 @media (prefers-reduced-motion: reduce) {
   .pagina-entra { animation: none; }
 }
+
+/* ===========================================================================
+   ARRASTAR CARDS NO KANBAN
+
+   O arrasto tinha as pecas certas — `DragOverlay` com um clone seguindo o dedo —
+   e nenhuma camada de animacao: o clone NASCIA pronto, ja girado e com sombra
+   cheia, e o card de origem simplesmente ficava invisivel. Duas consequencias
+   que so aparecem quando se usa: nao ha o instante de "peguei", e a lacuna
+   deixada para tras nao se identifica como destino, e um buraco.
+
+   ONDE CADA ANIMACAO PODE MORAR. O no que o dnd-kit posiciona recebe um
+   `transform` inline a cada quadro. Animacao CSS VENCE estilo inline na
+   cascata, entao animar `transform` naquele no faz o card escapar do dedo — o
+   projeto ja aprendeu isso na entrada em cascata dos cards, que por isso vive
+   num involucro. Aqui vale a mesma regra: a animacao de levantar fica no FILHO
+   do overlay, nunca no no posicionado.
+   =========================================================================== */
+
+@keyframes card-levanta {
+  from {
+    transform: scale(1) rotate(0deg);
+    box-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+  }
+  to {
+    transform: scale(1.03) rotate(2deg);
+    box-shadow: 0 25px 50px -12px rgb(0 0 0 / 0.35);
+  }
+}
+
+/* O clone que segue o dedo. A escala de 1.03 e a inclinacao de 2 graus sao
+   pequenas de proposito: o suficiente para o card descolar do plano da pagina,
+   sem virar truque. O que de fato da o peso e a sombra longa, que sugere
+   altura. */
+.card-arrastado {
+  animation: card-levanta 200ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
+  cursor: grabbing;
+}
+
+/* O LUGAR DE ONDE O CARD SAIU, mostrado como destino e nao como buraco.
+   O card de origem continua ocupando o espaco (e o que segura a lacuna aberta),
+   mas some por completo — entao a lista parecia ter um vazio inexplicavel. Com
+   o contorno tracejado, o mesmo espaco passa a dizer "e aqui que ele cai".
+   `visibility` nos filhos, e nao `display: none`: a altura tem de continuar
+   sendo a do card, senao a lacuna encolhe e a lista inteira pula. */
+.card-fantasma {
+  background-color: transparent !important;
+  border: 2px dashed color-mix(in oklab, var(--color-primary) 55%, transparent) !important;
+  border-radius: 8px;
+  box-shadow: none !important;
+}
+.card-fantasma > * {
+  visibility: hidden;
+}
+
+/* A COLUNA QUE VAI RECEBER. O realce anterior mudava borda e fundo por
+   `transition-colors`; o anel adiciona a leitura de "alvo ativo" sem mexer no
+   tamanho da caixa — mudar largura ou padding aqui empurraria as colunas
+   vizinhas no meio do arrasto. */
+.coluna-recebendo {
+  border-color: var(--color-primary) !important;
+  background-color: color-mix(in oklab, var(--color-primary) 7%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--color-primary) 35%, transparent);
+}
+
+/* Enquanto arrasta, o cursor e o mesmo em toda a pagina.
+   Sem isto o cursor volta a ser seta assim que o ponteiro sai de cima do card —
+   e durante um arrasto ele sai o tempo todo, porque o card real fica parado e
+   quem se move e o clone. A selecao de texto tambem precisa morrer: arrastar
+   por cima de um titulo selecionava o texto no caminho. */
+body.arrastando,
+body.arrastando * {
+  cursor: grabbing !important;
+  user-select: none !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .card-arrastado {
+    animation: none;
+    transform: rotate(2deg);
+    box-shadow: 0 25px 50px -12px rgb(0 0 0 / 0.35);
+  }
+}

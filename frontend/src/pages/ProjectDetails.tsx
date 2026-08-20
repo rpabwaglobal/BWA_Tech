@@ -33,6 +33,11 @@ import {
 import { userService } from '@/services/userService';
 import type { User as UserType } from '@/services/userService';
 import {
+  ANIMACAO_DE_SOLTAR,
+  MEDICAO_DO_ARRASTO,
+  marcarArrastoNoDocumento,
+} from '@/lib/arrastar';
+import {
   DndContext,
   DragOverlay,
   PointerSensor,
@@ -272,7 +277,11 @@ function DragOverlayCard({
   return (
     <div
       className={cn(
-        'p-[12px] bg-[var(--color-kanban-card)] rounded-[8px] border-l-[3px] shadow-2xl opacity-95 rotate-2 w-[300px]',
+        // `card-arrastado` faz o clone LEVANTAR: escala e inclinação entram
+        // em 200ms em vez de já nascerem prontas. Antes eram `rotate-2` e
+        // `shadow-2xl` fixos — o clone aparecia no ar, sem o instante de
+        // "peguei" que faz o gesto parecer físico.
+        'card-arrastado p-[12px] bg-[var(--color-kanban-card)] rounded-[8px] border-l-[3px] w-[300px]',
         !showPriorityColorsOnCards && 'border-l-[var(--color-border)]',
       )}
       style={showPriorityColorsOnCards ? getPriorityStyle(card.prioridade, card.id) : undefined}
@@ -466,9 +475,18 @@ function KanbanColumn({
 
   return (
     <div className="flex-shrink-0 w-[320px] flex flex-col h-full">
-      <div ref={setNodeRef} className={`rounded-[12px] border-2 border-[var(--color-border)] ${stage.color}/30 transition-colors flex flex-col h-full ${
-        isOver ? 'border-[var(--color-primary)] bg-[var(--color-primary)]/5' : ''
-      }`}>
+      {/* `transition-all` e não `transition-colors`: o realce de "vai receber"
+          agora inclui um anel interno (box-shadow), que sem transição aparecia
+          de um quadro para o outro enquanto a cor deslizava — dois tempos para
+          o mesmo evento. */}
+      <div
+        ref={setNodeRef}
+        className={cn(
+          'rounded-[12px] border-2 border-[var(--color-border)] transition-all duration-200 flex flex-col h-full',
+          `${stage.color}/30`,
+          isOver && 'coluna-recebendo',
+        )}
+      >
         <div className="p-[16px] border-b border-[var(--color-border)] flex-shrink-0">
           <div className="flex items-center justify-between">
             <h3 className="font-semibold text-[var(--color-foreground)]">
@@ -622,7 +640,10 @@ function KanbanCard({
   const style = {
     transform: CSS.Transform.toString(transform),
     transition: isDragging ? 'none' : transition,
-    opacity: isDragging ? 0 : isCardFinished ? 0.7 : disabled ? 0.6 : 1,
+    // Sem `opacity: 0` no arrasto: o card vira o SLOT tracejado (`card-fantasma`
+    // abaixo), que ocupa o mesmo espaço mas se identifica como destino em vez
+    // de virar um buraco na lista.
+    opacity: isCardFinished ? 0.7 : disabled ? 0.6 : 1,
   };
 
   return (
@@ -630,15 +651,25 @@ function KanbanCard({
       ref={setNodeRef}
       style={{
         ...style,
-        ...(showPriorityColorsOnCards ? getPriorityStyle(card.prioridade, card.id) : {}),
+        // A cor de prioridade é INLINE, então venceria o contorno tracejado do
+        // fantasma. Enquanto arrasta ela não se aplica — e o slot fica com a
+        // aparência de destino, não com a de um card sem conteúdo.
+        ...(showPriorityColorsOnCards && !isDragging
+          ? getPriorityStyle(card.prioridade, card.id)
+          : {}),
       }}
       {...(!isDragDisabled ? attributes : {})}
       {...(!isDragDisabled ? listeners : {})}
       className={cn(
-        'p-[12px] bg-[var(--color-kanban-card)] rounded-[8px] border-l-[3px] shadow-sm hover:shadow-md transition-shadow cursor-pointer group',
+        'p-[12px] bg-[var(--color-kanban-card)] rounded-[8px] border-l-[3px] shadow-sm hover:shadow-md transition-shadow group',
+        // `cursor-grab` só onde arrastar é possível: o cursor é a única pista
+        // de que o card se move, e mostrá-lo num card travado promete algo que
+        // não acontece.
+        isDragDisabled ? 'cursor-pointer' : 'cursor-grab',
         !showPriorityColorsOnCards && 'border-l-[var(--color-border)]',
         selected && 'ring-2 ring-[var(--color-primary)] border-[var(--color-primary)]',
         excludedFromBulkMove && 'cursor-not-allowed opacity-50',
+        isDragging && 'card-fantasma',
       )}
       title={
         excludedFromBulkMove
@@ -1339,6 +1370,15 @@ export default function ProjectDetails() {
     const { active } = event;
     const card = cards.find((c) => c.id.toString() === active.id.toString());
     setActiveCard(card || null);
+    marcarArrastoNoDocumento(true);
+  };
+
+  /** Esc, ou soltar fora de qualquer coluna. NÃO passa por `onDragEnd`, e sem
+   *  este handler a página inteira ficaria com o cursor de "agarrado" para
+   *  sempre — até a próxima recarga. */
+  const handleDragCancel = () => {
+    setActiveCard(null);
+    marcarArrastoNoDocumento(false);
   };
 
   const handleDragOver = (event: { active: { id: string | number }; over: { id: string | number } | null }) => {
@@ -1515,6 +1555,10 @@ export default function ProjectDetails() {
   const handleDragEnd = async (event: { active: { id: string | number }; over: { id: string | number } | null }) => {
     const { active, over } = event;
     setActiveCard(null);
+    // Antes de qualquer `return` e de qualquer `await`: esta função sai por
+    // meia dúzia de caminhos (sprint fechada, card finalizado, destino
+    // inválido) e todos precisam devolver o cursor.
+    marcarArrastoNoDocumento(false);
 
     // Bloquear drag and drop se sprint estiver finalizada
     if (sprintIsFinished) {
@@ -2984,9 +3028,11 @@ export default function ProjectDetails() {
         <DndContext
           sensors={sensors}
           collisionDetection={pointerWithin}
+          measuring={MEDICAO_DO_ARRASTO}
           onDragStart={handleDragStart}
           onDragOver={handleDragOver}
           onDragEnd={handleDragEnd}
+          onDragCancel={handleDragCancel}
         >
           <div className="flex gap-[16px] overflow-x-auto pb-[16px] flex-1 min-h-0">
             {stages.map((stage) => (
@@ -3023,7 +3069,7 @@ export default function ProjectDetails() {
               />
             ))}
           </div>
-          <DragOverlay>
+          <DragOverlay dropAnimation={ANIMACAO_DE_SOLTAR}>
             {activeCard ? (
               <DragOverlayCard
                 card={activeCard}

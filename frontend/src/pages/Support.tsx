@@ -9,6 +9,11 @@ import {
   type ReactNode,
 } from 'react';
 import {
+  ANIMACAO_DE_SOLTAR,
+  MEDICAO_DO_ARRASTO,
+  marcarArrastoNoDocumento,
+} from '@/lib/arrastar';
+import {
   DndContext,
   DragOverlay,
   PointerSensor,
@@ -1027,6 +1032,13 @@ export default function Support() {
     const found = items.find((x) => x.id === id);
     if (found && chamadoEncerradoNoQuadro(found)) return;
     setActiveDrag(found ?? null);
+    marcarArrastoNoDocumento(true);
+  };
+
+  /** Esc, ou soltar fora de qualquer coluna — não passa por `onDragEnd`. */
+  const handleDragCancel = () => {
+    setActiveDrag(null);
+    marcarArrastoNoDocumento(false);
   };
 
   const applyPatchAndRefresh = useCallback(
@@ -1085,6 +1097,9 @@ export default function Support() {
 
   const handleDragEnd = async (e: DragEndEvent) => {
     setActiveDrag(null);
+    // Antes dos `return` de destino inválido, senão o cursor de "agarrado"
+    // fica na página até a recarga.
+    marcarArrastoNoDocumento(false);
     const overId = e.over?.id;
     if (!overId) return;
 
@@ -1588,8 +1603,10 @@ export default function Support() {
           <DndContext
             sensors={sensors}
             collisionDetection={closestCorners}
+            measuring={MEDICAO_DO_ARRASTO}
             onDragStart={handleDragStart}
             onDragEnd={(ev) => void handleDragEnd(ev)}
+            onDragCancel={handleDragCancel}
           >
             <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
               <div className="flex min-h-0 min-w-0 w-full flex-1 items-stretch gap-[14px] overflow-x-auto overflow-y-hidden">
@@ -1613,7 +1630,11 @@ export default function Support() {
                   />
                 ))}
               </div>
-              <DragOverlay dropAnimation={null}>
+              {/* Tinha `dropAnimation={null}`: o clone simplesmente SUMIA ao
+                  soltar, e o card reaparecia no destino sem nada ligando as duas
+                  posições. Agora ele aterrissa, como no quadro do projeto — os
+                  dois quadros divergiam sem que ninguém tivesse decidido isso. */}
+              <DragOverlay dropAnimation={ANIMACAO_DE_SOLTAR}>
                 {activeDrag ? (
                   <SupportCardPreview chamado={activeDrag} users={assignUsers} />
                 ) : null}
@@ -1906,11 +1927,11 @@ function SupportColumn({
       className={cn(
         'flex h-full min-h-0 min-w-[220px] flex-1 flex-col overflow-hidden rounded-[12px] border border-[var(--color-border)]',
         empty ? 'bg-transparent' : 'bg-[var(--color-card)]',
-        isOver &&
-          cn(
-            'border-[var(--color-primary)] ring-2 ring-[var(--color-primary)]/20',
-            empty && 'bg-[var(--color-muted)]/10',
-          ),
+        // O mesmo realce do quadro do projeto, para os dois responderem igual
+        // ao ponteiro. `transition-all` porque o anel interno é box-shadow: sem
+        // ele o anel aparecia de um quadro para o outro enquanto a cor deslizava.
+        'transition-all duration-200',
+        isOver && 'coluna-recebendo',
       )}
     >
       <div
@@ -2040,7 +2061,10 @@ function SortableChamadoCard({
   const style = {
     transform: CSS.Transform.toString(transform),
     transition,
-    opacity: isDragging ? 0.45 : 1,
+    // Era `opacity: 0.45`: o card ficava meio apagado no lugar de origem
+    // enquanto o clone o acompanhava, então havia DOIS cards do mesmo ticket na
+    // tela. Agora o original vira o slot tracejado (`card-fantasma`), que marca
+    // o destino em vez de duplicar o card.
   };
 
   // Parser do "nome do robô" e da descrição limpa.
@@ -2064,6 +2088,7 @@ function SortableChamadoCard({
           ? 'cursor-pointer'
           : 'touch-none cursor-grab hover:border-[var(--color-primary)]/40 active:cursor-grabbing',
         selected && 'border-2 border-[var(--color-primary)]',
+        isDragging && 'card-fantasma',
       )}
       {...(!bloqueado && !selectionMode
         ? { ...attributes, ...listeners }
@@ -2151,7 +2176,7 @@ function SupportCardPreview({ chamado, users }: { chamado: ChamadoSuporte; users
   const sol = (chamado.responsavel_solucao ?? '').trim();
   const ped = (chamado.responsavel ?? '').trim();
   return (
-    <div className="w-[260px] rounded-[10px] border border-[var(--color-border)] bg-[var(--color-card)] p-[10px] shadow-lg">
+    <div className="card-arrastado w-[260px] rounded-[10px] border border-[var(--color-border)] bg-[var(--color-card)] p-[10px]">
       <div className="flex items-start justify-between gap-[8px]">
         <div className="min-w-0 flex-1 text-[13px] font-semibold line-clamp-2">{tituloItemMotivo(chamado)}</div>
         <span className="shrink-0 text-[11px] font-semibold tabular-nums text-[var(--color-muted-foreground)]">
