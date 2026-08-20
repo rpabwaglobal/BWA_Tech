@@ -8,6 +8,7 @@ import {
   type MouseEvent,
   type ReactNode,
 } from 'react';
+import { createPortal } from 'react-dom';
 import {
   ANIMACAO_DE_SOLTAR,
   MEDICAO_DO_ARRASTO,
@@ -1630,15 +1631,24 @@ export default function Support() {
                   />
                 ))}
               </div>
-              {/* Tinha `dropAnimation={null}`: o clone simplesmente SUMIA ao
+              {/* Portal pelo mesmo motivo do quadro do projeto: o clone é
+                  `position: fixed` com coordenadas de viewport, e a tela vive
+                  dentro de `.pagina-entra`, cuja animação de `transform` cria um
+                  containing block — as coordenadas passariam a ser medidas a
+                  partir da área de conteúdo, deslocando o card 288px à direita.
+
+                  Tinha `dropAnimation={null}`: o clone simplesmente SUMIA ao
                   soltar, e o card reaparecia no destino sem nada ligando as duas
                   posições. Agora ele aterrissa, como no quadro do projeto — os
                   dois quadros divergiam sem que ninguém tivesse decidido isso. */}
-              <DragOverlay dropAnimation={ANIMACAO_DE_SOLTAR}>
-                {activeDrag ? (
-                  <SupportCardPreview chamado={activeDrag} users={assignUsers} />
-                ) : null}
-              </DragOverlay>
+              {createPortal(
+                <DragOverlay dropAnimation={ANIMACAO_DE_SOLTAR}>
+                  {activeDrag ? (
+                    <SupportCardPreview chamado={activeDrag} users={assignUsers} />
+                  ) : null}
+                </DragOverlay>,
+                document.body,
+              )}
             </div>
           </DndContext>
         )}

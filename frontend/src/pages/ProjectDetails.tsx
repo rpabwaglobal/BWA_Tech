@@ -32,6 +32,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { userService } from '@/services/userService';
 import type { User as UserType } from '@/services/userService';
+import { createPortal } from 'react-dom';
 import {
   ANIMACAO_DE_SOLTAR,
   MEDICAO_DO_ARRASTO,
@@ -3088,15 +3089,34 @@ export default function ProjectDetails() {
               />
             ))}
           </div>
-          <DragOverlay dropAnimation={ANIMACAO_DE_SOLTAR}>
-            {activeCard ? (
-              <DragOverlayCard
-                card={activeCard}
-                users={users}
-                showPriorityColorsOnCards={showPriorityColorsOnCards}
-              />
-            ) : null}
-          </DragOverlay>
+          {/* O CLONE VAI PARA O `body`, E NAO FICA ONDE NASCEU.
+              `PositionedOverlay` usa `position: fixed` com `top`/`left` em
+              coordenadas de VIEWPORT (core.esm.js:3630-3667). Mas `fixed` só se
+              resolve contra o viewport quando NENHUM ancestral cria um
+              containing block — e `transform`, `filter` e afins criam.
+              A tela inteira vive dentro de `.pagina-entra`, que roda uma
+              animação de `transform` com `fill-mode: both`. Enquanto ela está
+              em efeito, o navegador trata o elemento como containing block, e
+              as coordenadas do clone passam a ser medidas a partir da ÁREA DE
+              CONTEÚDO em vez do viewport. A conta bate com o sintoma: barra
+              lateral de 256px + `p-[32px]` do `main` = 288px de deslocamento
+              para a direita, que é o card sair de debaixo do dedo.
+              `createPortal` tira o nó dessa árvore no DOM sem tirá-lo da árvore
+              do React — o `DndContext` continua enxergando o overlay. É o mesmo
+              caminho que `ui/dialog.tsx` já usa, e é por isso que os diálogos
+              nunca apareceram deslocados. */}
+          {createPortal(
+            <DragOverlay dropAnimation={ANIMACAO_DE_SOLTAR}>
+              {activeCard ? (
+                <DragOverlayCard
+                  card={activeCard}
+                  users={users}
+                  showPriorityColorsOnCards={showPriorityColorsOnCards}
+                />
+              ) : null}
+            </DragOverlay>,
+            document.body,
+          )}
         </DndContext>
       </div>
 
