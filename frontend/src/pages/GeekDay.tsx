@@ -464,6 +464,240 @@ function GerenciarGruposDialog({ open, onOpenChange, onChanged }: GerenciarGrupo
   );
 }
 
+
+/* ─── Helpers puros, no escopo do módulo ───────────────────────────────
+   Estavam dentro de `GeekDay`, recriados a cada render sem precisar: não
+   leem estado nenhum. Subiram junto com os dois componentes de arrasto, que
+   dependiam deles — um componente de módulo não enxerga o corpo da função.
+   ───────────────────────────────────────────────────────────────────── */
+const getRoleDisplayName = (role: string): string => {
+  switch (role) {
+    case 'supervisor':
+      return 'Supervisor';
+    case 'gerente':
+      return 'Gerente de Projeto';
+    case 'desenvolvedor':
+      return 'Desenvolvedor';
+    case 'dados':
+      return 'Dados';
+    case 'processos':
+      return 'Processos';
+    case 'admin':
+      return 'Admin';
+    default:
+      return role.charAt(0).toUpperCase() + role.slice(1);
+  }
+};
+
+const getUserDisplayName = (user: GeekDayUserStatus) => {
+  if (user.first_name && user.last_name) {
+    return `${user.first_name} ${user.last_name}`;
+  } else if (user.first_name) {
+    return user.first_name;
+  } else if (user.last_name) {
+    return user.last_name;
+  }
+  return user.username;
+};
+
+/** Rótulo do cargo para exibir. Prefere o `role_display` que o backend já
+ * manda pronto (vem do catálogo, então cobre cargos criados pelo admin); o
+ * mapa fixo abaixo é só retaguarda. O CODENAME (`role`) continua sendo o que
+ * decide cor e ordem na roleta. */
+const rotuloCargo = (u: GeekDayUserStatus): string =>
+  u.role_display || getRoleDisplayName(u.role || 'desenvolvedor');
+
+
+/* ─── Os dois componentes de arrasto, NO ESCOPO DO MÓDULO ─────────────────
+
+   Eles viviam dentro do corpo de `GeekDay`, como arrow functions. Isso os
+   recriava a cada render: o `type` do elemento React mudava, e o React
+   DESTRUÍA e REMONTAVA as duas listas inteiras em vez de atualizá-las.
+
+   Duas consequências, e a segunda é correção e não estética:
+
+   1. `handleDragStart` chama `setActiveId` e `setDragging` — ou seja, o próprio
+      ato de pegar um card dispara um render, e portanto a remontagem. Cada item
+      está embrulhado em `.card-entra`, que é `backwards` e mantém opacity 0
+      durante todo o atraso. Nó novo = a animação recomeça: as duas colunas
+      apagavam e voltavam em onda por até ~750ms NO INSTANTE em que o dedo
+      segurava o card. De novo ao soltar, e uma terceira vez quando o `setUsers`
+      chegava.
+
+   2. O scroller com `overflow-y-auto` vive dentro de `DroppableList`. Nó DOM
+      novo significa `scrollTop` de volta a zero: numa lista rolada, ela saltava
+      para o topo no mesmo quadro do "pegar". O card de origem saía de debaixo do
+      cursor e o `closestCorners` passava a enxergar outros alvos — o card podia
+      ser solto no lugar errado.
+
+   O arrasto em si sobrevivia à remontagem (o dnd-kit guarda o último nó em
+   `useCachedNode` e congela o rect do invólucro), por isso o sintoma era visual
+   e de precisão de destino, e não "o arrasto não funciona".
+   ───────────────────────────────────────────────────────────────────────── */
+
+const DraggableUserCard = ({
+  user,
+  isSorted,
+  isSupervisor,
+}: {
+  user: GeekDayUserStatus;
+  isSorted: boolean;
+  /** Vem por prop porque este componente saiu de dentro de `GeekDay`: no
+   *  escopo do módulo ele não enxerga mais o corpo daquela função. */
+  isSupervisor: boolean;
+}) => {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ 
+    id: user.id, 
+    disabled: !isSupervisor 
+  });
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+  };
+
+  const canDrag = isSupervisor;
+
+  if (isSorted) {
+    return (
+      <div
+        ref={setNodeRef}
+        style={style}
+        {...attributes}
+        {...listeners}
+        className={cn(
+          "rounded-xl border border-[var(--color-border)] bg-[var(--color-card)] hover:bg-[var(--color-accent)] transition-colors",
+          !canDrag ? 'opacity-50 cursor-not-allowed' : 'cursor-move'
+        )}
+      >
+        <CardContent className="flex items-center gap-3 p-[10px]">
+          <Avatar className="h-[40px] w-[40px]">
+            {user.profile_picture_url ? (
+              <AvatarImage src={user.profile_picture_url} alt={getUserDisplayName(user)} />
+            ) : null}
+            <AvatarFallback className="bg-[var(--color-muted)] text-[var(--color-muted-foreground)]">
+              {user.first_name?.charAt(0) || user.username?.charAt(0) || 'U'}
+            </AvatarFallback>
+          </Avatar>
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2">
+              <p className="font-medium text-sm truncate text-green-500">
+                {getUserDisplayName(user)}
+              </p>
+              <Check className="h-4 w-4 text-green-500 shrink-0" strokeWidth={3} />
+            </div>
+            <p className="text-xs text-green-500 truncate">
+              {rotuloCargo(user)}
+            </p>
+            {/* Está aqui só por causa do sorteio DESTE ciclo: não participa
+                mais do trabalho, então pode sair da lista mas não volta para
+                a fila. Sem esta linha o gestor arrastaria o card de volta e
+                o veria sumir, sem entender o porquê. */}
+            {!participaDoTrabalho(user) && (
+              <p className="text-[11px] text-[var(--color-muted-foreground)] truncate">
+                Não participa do sorteio — arraste para desfazer
+              </p>
+            )}
+          </div>
+        </CardContent>
+      </div>
+    );
+  }
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={style}
+      {...attributes}
+      {...listeners}
+      className={cn(
+        "rounded-xl border border-[var(--color-border)] bg-[var(--color-card)] text-[var(--color-card-foreground)] shadow hover:shadow-md transition-shadow",
+        !canDrag ? 'opacity-50 cursor-not-allowed' : 'cursor-move'
+      )}
+    >
+      <CardContent className="flex items-center gap-3 p-4">
+        <Avatar className="h-[40px] w-[40px]">
+          {user.profile_picture_url ? (
+            <AvatarImage src={user.profile_picture_url} alt={getUserDisplayName(user)} />
+          ) : null}
+          <AvatarFallback className="bg-[var(--color-muted)] text-[var(--color-muted-foreground)]">
+            {user.first_name?.charAt(0) || user.username?.charAt(0) || 'U'}
+          </AvatarFallback>
+        </Avatar>
+        <div className="flex-1 min-w-0">
+          <p className="font-medium text-sm truncate">
+            {getUserDisplayName(user)}
+          </p>
+          <p className="text-xs text-[var(--color-muted-foreground)] truncate">
+            {rotuloCargo(user)}
+          </p>
+        </div>
+      </CardContent>
+    </div>
+  );
+};
+
+// Componente de área droppable
+const DroppableList = ({
+  id,
+  title,
+  count,
+  children,
+  isEmpty,
+  isSupervisor,
+}: {
+  id: string;
+  title: string;
+  count: number;
+  children: React.ReactNode;
+  isEmpty: boolean;
+  /** Vem por prop porque este componente saiu de dentro de `GeekDay`: no
+   *  escopo do módulo ele não enxerga mais o corpo daquela função. */
+  isSupervisor: boolean;
+}) => {
+  const { setNodeRef, isOver } = useDroppable({ 
+    id,
+    disabled: !isSupervisor
+  });
+
+  return (
+    <Card 
+      ref={setNodeRef} 
+      className={cn(
+        "flex flex-col min-h-0 h-full",
+        isOver && isSupervisor ? 'ring-2 ring-[var(--color-primary)]' : ''
+      )}
+    >
+      <CardHeader className="shrink-0 pb-3">
+        <CardTitle className="text-base">{title} ({count})</CardTitle>
+      </CardHeader>
+      <CardContent className="flex-1 min-h-0 overflow-hidden pt-0">
+        <div className="space-y-1 h-full overflow-y-auto pr-2">
+          {isEmpty ? (
+            <div className="flex flex-col items-center justify-center py-8 text-center">
+              <p className="text-sm text-[var(--color-muted-foreground)]">
+                {id === 'available-list' 
+                  ? 'Todos os usuários já foram sorteados!'
+                  : 'Nenhum usuário sorteado ainda'}
+              </p>
+            </div>
+          ) : (
+            children
+          )}
+        </div>
+      </CardContent>
+    </Card>
+  );
+};
+
 export default function GeekDay() {
   const { user } = useAuth();
   const [activeTab, setActiveTab] = useState<'sorteio' | 'historico'>('sorteio');
@@ -948,191 +1182,10 @@ export default function GeekDay() {
   };
 
   // Componente de card arrastável
-  const DraggableUserCard = ({ user, isSorted }: { user: GeekDayUserStatus; isSorted: boolean }) => {
-    const {
-      attributes,
-      listeners,
-      setNodeRef,
-      transform,
-      transition,
-      isDragging,
-    } = useSortable({ 
-      id: user.id, 
-      disabled: !isSupervisor 
-    });
 
-    const style = {
-      transform: CSS.Transform.toString(transform),
-      transition,
-      opacity: isDragging ? 0.5 : 1,
-    };
 
-    const canDrag = isSupervisor;
 
-    if (isSorted) {
-      return (
-        <div
-          ref={setNodeRef}
-          style={style}
-          {...attributes}
-          {...listeners}
-          className={cn(
-            "rounded-xl border border-[var(--color-border)] bg-[var(--color-card)] hover:bg-[var(--color-accent)] transition-colors",
-            !canDrag ? 'opacity-50 cursor-not-allowed' : 'cursor-move'
-          )}
-        >
-          <CardContent className="flex items-center gap-3 p-[10px]">
-            <Avatar className="h-[40px] w-[40px]">
-              {user.profile_picture_url ? (
-                <AvatarImage src={user.profile_picture_url} alt={getUserDisplayName(user)} />
-              ) : null}
-              <AvatarFallback className="bg-[var(--color-muted)] text-[var(--color-muted-foreground)]">
-                {user.first_name?.charAt(0) || user.username?.charAt(0) || 'U'}
-              </AvatarFallback>
-            </Avatar>
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2">
-                <p className="font-medium text-sm truncate text-green-500">
-                  {getUserDisplayName(user)}
-                </p>
-                <Check className="h-4 w-4 text-green-500 shrink-0" strokeWidth={3} />
-              </div>
-              <p className="text-xs text-green-500 truncate">
-                {rotuloCargo(user)}
-              </p>
-              {/* Está aqui só por causa do sorteio DESTE ciclo: não participa
-                  mais do trabalho, então pode sair da lista mas não volta para
-                  a fila. Sem esta linha o gestor arrastaria o card de volta e
-                  o veria sumir, sem entender o porquê. */}
-              {!participaDoTrabalho(user) && (
-                <p className="text-[11px] text-[var(--color-muted-foreground)] truncate">
-                  Não participa do sorteio — arraste para desfazer
-                </p>
-              )}
-            </div>
-          </CardContent>
-        </div>
-      );
-    }
 
-    return (
-      <div
-        ref={setNodeRef}
-        style={style}
-        {...attributes}
-        {...listeners}
-        className={cn(
-          "rounded-xl border border-[var(--color-border)] bg-[var(--color-card)] text-[var(--color-card-foreground)] shadow hover:shadow-md transition-shadow",
-          !canDrag ? 'opacity-50 cursor-not-allowed' : 'cursor-move'
-        )}
-      >
-        <CardContent className="flex items-center gap-3 p-4">
-          <Avatar className="h-[40px] w-[40px]">
-            {user.profile_picture_url ? (
-              <AvatarImage src={user.profile_picture_url} alt={getUserDisplayName(user)} />
-            ) : null}
-            <AvatarFallback className="bg-[var(--color-muted)] text-[var(--color-muted-foreground)]">
-              {user.first_name?.charAt(0) || user.username?.charAt(0) || 'U'}
-            </AvatarFallback>
-          </Avatar>
-          <div className="flex-1 min-w-0">
-            <p className="font-medium text-sm truncate">
-              {getUserDisplayName(user)}
-            </p>
-            <p className="text-xs text-[var(--color-muted-foreground)] truncate">
-              {rotuloCargo(user)}
-            </p>
-          </div>
-        </CardContent>
-      </div>
-    );
-  };
-
-  // Componente de área droppable
-  const DroppableList = ({ 
-    id, 
-    title, 
-    count, 
-    children, 
-    isEmpty 
-  }: { 
-    id: string; 
-    title: string; 
-    count: number; 
-    children: React.ReactNode;
-    isEmpty: boolean;
-  }) => {
-    const { setNodeRef, isOver } = useDroppable({ 
-      id,
-      disabled: !isSupervisor
-    });
-
-    return (
-      <Card 
-        ref={setNodeRef} 
-        className={cn(
-          "flex flex-col min-h-0 h-full",
-          isOver && isSupervisor ? 'ring-2 ring-[var(--color-primary)]' : ''
-        )}
-      >
-        <CardHeader className="shrink-0 pb-3">
-          <CardTitle className="text-base">{title} ({count})</CardTitle>
-        </CardHeader>
-        <CardContent className="flex-1 min-h-0 overflow-hidden pt-0">
-          <div className="space-y-1 h-full overflow-y-auto pr-2">
-            {isEmpty ? (
-              <div className="flex flex-col items-center justify-center py-8 text-center">
-                <p className="text-sm text-[var(--color-muted-foreground)]">
-                  {id === 'available-list' 
-                    ? 'Todos os usuários já foram sorteados!'
-                    : 'Nenhum usuário sorteado ainda'}
-                </p>
-              </div>
-            ) : (
-              children
-            )}
-          </div>
-        </CardContent>
-      </Card>
-    );
-  };
-
-  const getUserDisplayName = (user: GeekDayUserStatus) => {
-    if (user.first_name && user.last_name) {
-      return `${user.first_name} ${user.last_name}`;
-    } else if (user.first_name) {
-      return user.first_name;
-    } else if (user.last_name) {
-      return user.last_name;
-    }
-    return user.username;
-  };
-
-  /** Rótulo do cargo para exibir. Prefere o `role_display` que o backend já
-   * manda pronto (vem do catálogo, então cobre cargos criados pelo admin); o
-   * mapa fixo abaixo é só retaguarda. O CODENAME (`role`) continua sendo o que
-   * decide cor e ordem na roleta. */
-  const rotuloCargo = (u: GeekDayUserStatus): string =>
-    u.role_display || getRoleDisplayName(u.role || 'desenvolvedor');
-
-  const getRoleDisplayName = (role: string): string => {
-    switch (role) {
-      case 'supervisor':
-        return 'Supervisor';
-      case 'gerente':
-        return 'Gerente de Projeto';
-      case 'desenvolvedor':
-        return 'Desenvolvedor';
-      case 'dados':
-        return 'Dados';
-      case 'processos':
-        return 'Processos';
-      case 'admin':
-        return 'Admin';
-      default:
-        return role.charAt(0).toUpperCase() + role.slice(1);
-    }
-  };
 
   const getUserInitials = (user: GeekDayUserStatus) => {
     if (user.first_name && user.last_name) {
@@ -1395,6 +1448,7 @@ export default function GeekDay() {
                           title="Participantes"
                           count={availableUsers.length}
                           isEmpty={availableUsers.length === 0}
+                          isSupervisor={isSupervisor}
                         >
                           {availableUsers.map((user, iEntrada) => (
                             // Invólucro: o card é arrastável e o nó dele
@@ -1405,7 +1459,7 @@ export default function GeekDay() {
                               className="card-entra"
                               style={{ animationDelay: `${60 + Math.min(iEntrada, 6) * 45}ms` }}
                             >
-                              <DraggableUserCard user={user} isSorted={false} />
+                              <DraggableUserCard user={user} isSorted={false} isSupervisor={isSupervisor} />
                             </div>
                           ))}
                         </DroppableList>
@@ -1416,6 +1470,7 @@ export default function GeekDay() {
                           title="Já Sorteados"
                           count={sortedUsers.length}
                           isEmpty={sortedUsers.length === 0}
+                          isSupervisor={isSupervisor}
                         >
                           {sortedUsers.map((user, iEntrada) => (
                             // Invólucro: o card é arrastável e o nó dele
@@ -1426,7 +1481,7 @@ export default function GeekDay() {
                               className="card-entra"
                               style={{ animationDelay: `${60 + Math.min(iEntrada, 6) * 45}ms` }}
                             >
-                              <DraggableUserCard user={user} isSorted={true} />
+                              <DraggableUserCard user={user} isSorted={true} isSupervisor={isSupervisor} />
                             </div>
                           ))}
                         </DroppableList>
