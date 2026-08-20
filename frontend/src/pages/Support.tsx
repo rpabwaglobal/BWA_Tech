@@ -2176,7 +2176,11 @@ function SupportCardPreview({ chamado, users }: { chamado: ChamadoSuporte; users
   const sol = (chamado.responsavel_solucao ?? '').trim();
   const ped = (chamado.responsavel ?? '').trim();
   return (
-    <div className="card-arrastado w-[260px] rounded-[10px] border border-[var(--color-border)] bg-[var(--color-card)] p-[10px]">
+    // `w-full`: o involucro do clone ja tem a largura do card medido. Aqui a
+    // divergencia era pior que a do outro quadro, porque as colunas do Suporte
+    // sao FLUIDAS (`flex-1 min-w-[220px]`) — os 260px fixos erravam por uma
+    // margem que mudava com o tamanho da janela e com o numero de colunas.
+    <div className="card-arrastado w-full rounded-[10px] border border-[var(--color-border)] bg-[var(--color-card)] p-[10px]">
       <div className="flex items-start justify-between gap-[8px]">
         <div className="min-w-0 flex-1 text-[13px] font-semibold line-clamp-2">{tituloItemMotivo(chamado)}</div>
         <span className="shrink-0 text-[11px] font-semibold tabular-nums text-[var(--color-muted-foreground)]">

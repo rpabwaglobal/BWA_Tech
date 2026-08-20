@@ -281,7 +281,21 @@ function DragOverlayCard({
         // em 200ms em vez de já nascerem prontas. Antes eram `rotate-2` e
         // `shadow-2xl` fixos — o clone aparecia no ar, sem o instante de
         // "peguei" que faz o gesto parecer físico.
-        'card-arrastado p-[12px] bg-[var(--color-kanban-card)] rounded-[8px] border-l-[3px] w-[300px]',
+        // `w-full` E NAO UMA LARGURA FIXA — e o que mantem o clone debaixo
+        // do dedo.
+        //
+        // `PositionedOverlay` do dnd-kit dimensiona o INVOLUCRO do clone com o
+        // retangulo medido do card de origem: `width: rect.width`, `top`,
+        // `left` (core.esm.js:3663-3667). O involucro ja e exatamente o card.
+        // Uma largura fixa no filho ignora isso: o card real aqui tem 284px
+        // (coluna de 320 menos `border-2` e `p-[16px]`), e o clone declarava
+        // 300 — 16px transbordando para a DIREITA, porque um bloco se alinha a
+        // esquerda do involucro. O card saia de debaixo do ponteiro no instante
+        // em que era pego.
+        //
+        // `w-full` resolve para qualquer largura de coluna, inclusive as
+        // fluidas, sem ninguem ter de manter dois numeros em sincronia.
+        'card-arrastado w-full p-[12px] bg-[var(--color-kanban-card)] rounded-[8px] border-l-[3px]',
         !showPriorityColorsOnCards && 'border-l-[var(--color-border)]',
       )}
       style={showPriorityColorsOnCards ? getPriorityStyle(card.prioridade, card.id) : undefined}
