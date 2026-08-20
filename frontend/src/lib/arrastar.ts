@@ -61,6 +61,60 @@ export const ANIMACAO_DE_SOLTAR: DropAnimation = {
 };
 
 /**
+ * A queda do arrasto "estilingue", no kanban do projeto.
+ *
+ * Mais longa que a do Suporte (460ms contra 260) porque aqui o voo tem MAIS
+ * COISA acontecendo: além de percorrer a distância, o card desfaz a torção,
+ * solta o puxão do elástico e a faixa tracejada se apaga. Nos 260ms do outro
+ * quadro essas três coisas se atropelariam.
+ *
+ * A curva passa do ponto de propósito (o `1.24` no terceiro parâmetro): o card
+ * chega, ultrapassa um pouco e volta. É o que o desenho faz com a função
+ * `1 + 2.4(p-1)³ + 1.5(p-1)²`, que sobe até ~1.08 na metade do caminho.
+ *
+ * `className.dragOverlay` NÃO é decoração aqui — é o sinal. Não existe evento de
+ * "a animação de soltar começou", e `ArrastoEstilingue` precisa saber disso a
+ * cada quadro para desfazer a torção junto. Ele lê essa classe no invólucro;
+ * perguntar ao React custaria um render por quadro.
+ */
+export const ANIMACAO_DE_SOLTAR_ESTILINGUE: DropAnimation = {
+  duration: 460,
+  easing: 'cubic-bezier(0.34, 1.24, 0.48, 1)',
+  sideEffects: defaultDropAnimationSideEffects({
+    className: { dragOverlay: 'card-pousando' },
+    styles: { active: { opacity: '0' } },
+  }),
+};
+
+/**
+ * O card ASSENTA no destino, depois que a lista já se reorganizou.
+ *
+ * Isto não é CSS na montagem porque o card não remonta ao mudar de coluna — é o
+ * mesmo nó, com a mesma `key`, aparecendo noutro lugar. Uma animação declarada
+ * na classe só rodaria uma vez e nunca mais. Aqui a animação é DISPARADA no
+ * momento em que o movimento se confirma, que é quando ela tem significado.
+ *
+ * `requestAnimationFrame` duplo: o primeiro devolve o controle depois que o
+ * React aplicou a mudança no DOM, o segundo garante que o navegador já calculou
+ * o novo layout. Sem esperar, a animação rodaria sobre a posição ANTIGA e o
+ * efeito seria um tremor no lugar errado.
+ */
+export function assentarCard(cardId: string | number) {
+  if (window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches) return;
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      const no = document.querySelector<HTMLElement>(
+        `[data-card-id="${CSS.escape(String(cardId))}"]`,
+      );
+      no?.classList.add('card-assentando');
+      no?.addEventListener('animationend', () => no.classList.remove('card-assentando'), {
+        once: true,
+      });
+    });
+  });
+}
+
+/**
  * Quando o dnd-kit remede as colunas.
  *
  * O padrão (`WhileDragging`) mede uma vez, ao começar o arrasto. Num kanban

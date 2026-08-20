@@ -591,20 +591,42 @@
    o contorno tracejado, o mesmo espaco passa a dizer "e aqui que ele cai".
    `visibility` nos filhos, e nao `display: none`: a altura tem de continuar
    sendo a do card, senao a lacuna encolhe e a lista inteira pula. */
+@keyframes slot-entra {
+  from { opacity: 0; transform: scale(0.97); }
+  to   { opacity: 1; transform: scale(1); }
+}
+
 .card-fantasma {
+  /* O SLOT É DESENHADO NUM PSEUDOELEMENTO, e não no próprio card.
+     Duas razões, e a primeira é a que importa:
+
+     1. A ANIMAÇÃO DE ENTRADA ANIMA `transform`, e o dnd-kit escreve `transform`
+        INLINE neste mesmo nó — inclusive no card ativo, porque
+        `verticalListSortingStrategy` devolve deslocamento para ele também
+        (sortable.esm.js:221). Animação vence estilo inline na cascata: por
+        180ms o card deixaria de seguir a reorganização da lista. É a mesma
+        armadilha que fez a entrada em cascata dos cards morar num invólucro.
+     2. Sendo `absolute`, o pseudoelemento está fora do fluxo — a borda tracejada
+        não soma altura nenhuma, então a lista não pula ao começar o arrasto. */
+  position: relative;
   background-color: transparent !important;
-  /* OUTLINE, E NAO BORDER. O card em repouso so tem borda a esquerda (o
-     preflight do Tailwind zera as outras), e a altura dele e do conteudo. Trocar
-     por `border: 2px` nos quatro lados somava 2px em cima e 2px embaixo: a lista
-     inteira dava um pulo de 4px no instante em que o arrasto comecava — o
-     oposto do que este redesenho existe para fazer. `outline` nao entra no box
-     model, e o offset negativo o traz para dentro do lugar da borda. */
-  outline: 2px dashed color-mix(in oklab, var(--color-primary) 55%, transparent);
-  outline-offset: -2px;
   border-color: transparent !important;
-  border-radius: 8px;
   box-shadow: none !important;
 }
+.card-fantasma::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 8px;
+  border: 2px dashed color-mix(in oklab, var(--color-primary) 55%, transparent);
+  background: color-mix(in oklab, var(--color-primary) 5%, transparent);
+  /* 180ms: tempo de o olho registrar que o espaço ficou reservado, sem competir
+     com o card que acabou de subir. */
+  animation: slot-entra 180ms ease both;
+}
+/* `visibility` e não `display: none`: a altura tem de continuar sendo a do card,
+   senão a lacuna encolhe e a lista inteira pula. O pseudoelemento não é filho,
+   então não é atingido por esta regra. */
 .card-fantasma > * {
   visibility: hidden;
 }
@@ -614,9 +636,11 @@
    tamanho da caixa — mudar largura ou padding aqui empurraria as colunas
    vizinhas no meio do arrasto. */
 .coluna-recebendo {
+  /* O anel POR FORA (e não `inset`) é o do desenho: ele contorna a coluna como
+     um halo, o que a destaca sem parecer que a borda engrossou. */
   border-color: var(--color-primary) !important;
   background-color: color-mix(in oklab, var(--color-primary) 7%, transparent);
-  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--color-primary) 35%, transparent);
+  box-shadow: 0 0 0 5px color-mix(in oklab, var(--color-primary) 12%, transparent);
 }
 
 /* Enquanto arrasta, o cursor e o mesmo em toda a pagina.
@@ -647,7 +671,35 @@ body.arrastando * {
   animation: card-pousa 260ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
 }
 
+/* A PRESSÃO ANTES DO ARRASTO. O card afunda 2,5% ao ser pressionado e volta se
+   o dedo sair sem arrastar. É o retorno tátil que diz "peguei" antes de qualquer
+   movimento — sem ele, um clique e um arrasto começam idênticos.
+   `:active` e não JS: o navegador já sabe quando o botão está pressionado, e a
+   volta ao soltar sai de graça. */
+.card-arrastavel {
+  transition: transform 130ms ease-out;
+}
+.card-arrastavel:active {
+  transform: scale(0.975);
+}
+
+/* O ASSENTAMENTO, depois que o card chega ao destino. Ele passa do ponto e
+   volta — gira 6 graus, corrige para -2 e para em zero. É o que transforma
+   "o card apareceu na outra coluna" em "o card foi parar ali". */
+@keyframes card-assenta {
+  0%   { transform: perspective(900px) rotateY(6deg) scale(1.05); }
+  55%  { transform: perspective(900px) rotateY(-2deg) scale(0.99); }
+  100% { transform: perspective(900px) rotateY(0deg) scale(1); }
+}
+.card-assentando {
+  animation: card-assenta 380ms cubic-bezier(0.3, 1.2, 0.4, 1);
+}
+
 @media (prefers-reduced-motion: reduce) {
+  .card-arrastavel { transition: none; }
+  .card-arrastavel:active { transform: none; }
+  .card-assentando { animation: none; }
+  .card-fantasma { animation: none; }
   .card-pousando .card-arrastado { animation: none; }
   .card-arrastado {
     animation: none;

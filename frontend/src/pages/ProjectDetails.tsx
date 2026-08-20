@@ -34,10 +34,12 @@ import { userService } from '@/services/userService';
 import type { User as UserType } from '@/services/userService';
 import { createPortal } from 'react-dom';
 import {
-  ANIMACAO_DE_SOLTAR,
+  ANIMACAO_DE_SOLTAR_ESTILINGUE,
   MEDICAO_DO_ARRASTO,
+  assentarCard,
   marcarArrastoNoDocumento,
 } from '@/lib/arrastar';
+import { ArrastoEstilingue } from '@/components/kanban/ArrastoEstilingue';
 import {
   DndContext,
   DragOverlay,
@@ -278,10 +280,13 @@ function DragOverlayCard({
   return (
     <div
       className={cn(
-        // `card-arrastado` faz o clone LEVANTAR: escala e inclinação entram
-        // em 200ms em vez de já nascerem prontas. Antes eram `rotate-2` e
-        // `shadow-2xl` fixos — o clone aparecia no ar, sem o instante de
-        // "peguei" que faz o gesto parecer físico.
+        // SEM `card-arrastado` AQUI. Aquela classe anima `transform`, e neste
+        // quadro quem escreve o transform do clone é `ArrastoEstilingue`, a cada
+        // quadro — as duas no mesmo nó brigariam, e a animação venceria o estilo
+        // inline (a mesma armadilha que já mordeu a entrada em cascata dos
+        // cards). A sombra fica, porque ela não é transform.
+        // O kanban do Suporte continua usando `card-arrastado`: lá não há
+        // estilingue.
         // `w-full` E NAO UMA LARGURA FIXA — e o que mantem o clone debaixo
         // do dedo.
         //
@@ -296,7 +301,7 @@ function DragOverlayCard({
         //
         // `w-full` resolve para qualquer largura de coluna, inclusive as
         // fluidas, sem ninguem ter de manter dois numeros em sincronia.
-        'card-arrastado w-full p-[12px] bg-[var(--color-kanban-card)] rounded-[8px] border-l-[3px]',
+        'w-full p-[12px] bg-[var(--color-kanban-card)] rounded-[8px] border-l-[3px] shadow-[0_16px_34px_rgba(30,25,45,.3)]',
         !showPriorityColorsOnCards && 'border-l-[var(--color-border)]',
       )}
       style={showPriorityColorsOnCards ? getPriorityStyle(card.prioridade, card.id) : undefined}
@@ -664,6 +669,10 @@ function KanbanCard({
   return (
     <div
       ref={setNodeRef}
+      // `data-card-id` é como `assentarCard` encontra este nó depois que a lista
+      // se reorganizou. O card não remonta ao mudar de coluna, então não há
+      // evento de montagem para pendurar a animação de chegada.
+      data-card-id={card.id}
       style={{
         ...style,
         // A cor de prioridade é INLINE, então venceria o contorno tracejado do
@@ -685,7 +694,7 @@ function KanbanCard({
         // navegador trata o gesto no card como ROLAGEM e o arrasto simplesmente
         // não acontece em tela de toque — a coluna desliza no lugar do card. O
         // quadro do Suporte já tinha isso; este ficou sem.
-        isDragDisabled ? 'cursor-pointer' : 'touch-none cursor-grab',
+        isDragDisabled ? 'cursor-pointer' : 'card-arrastavel touch-none cursor-grab',
         !showPriorityColorsOnCards && 'border-l-[var(--color-border)]',
         selected && 'ring-2 ring-[var(--color-primary)] border-[var(--color-primary)]',
         excludedFromBulkMove && 'cursor-not-allowed opacity-50',
@@ -1179,7 +1188,10 @@ export default function ProjectDetails() {
   const sensors = useSensors(
     useSensor(PointerSensor, {
       activationConstraint: {
-        distance: 5,
+        // 4px é o limiar do desenho. Abaixo disso o gesto ainda é um CLIQUE — e
+        // o card só afunda, sem sair do lugar. É o que separa abrir um card de
+        // começar a movê-lo, e por isso não pode ser zero.
+        distance: 4,
       },
     })
   );
@@ -1643,6 +1655,11 @@ export default function ProjectDetails() {
       setCards((prevCards) =>
         prevCards.map((c) => (c.id.toString() === cardId ? { ...c, status: newStageId } : c)),
       );
+      // O card já está na coluna nova: é AQUI que ele assenta. Disparado
+      // após a atualização otimista e não depois do `await`, porque a
+      // animação acompanha o que a pessoa VÊ — esperar o servidor a faria
+      // rodar centenas de milissegundos depois de o card já estar parado.
+      assentarCard(card.id);
 
       try {
         await cardService.update(card.id, { status: newStageId });
@@ -1769,6 +1786,11 @@ export default function ProjectDetails() {
           c.id.toString() === cardId ? { ...c, status: newStageId, ...updateData } : c
         )
       );
+      // O card já está na coluna nova: é AQUI que ele assenta. Disparado
+      // após a atualização otimista e não depois do `await`, porque a
+      // animação acompanha o que a pessoa VÊ — esperar o servidor a faria
+      // rodar centenas de milissegundos depois de o card já estar parado.
+      assentarCard(card.id);
 
       try {
         await cardService.update(card.id, updateData);
@@ -1812,6 +1834,11 @@ export default function ProjectDetails() {
         c.id.toString() === cardId ? { ...c, ...updateData } : c
       )
     );
+    // O card já está na coluna nova: é AQUI que ele assenta. Disparado
+    // após a atualização otimista e não depois do `await`, porque a
+    // animação acompanha o que a pessoa VÊ — esperar o servidor a faria
+    // rodar centenas de milissegundos depois de o card já estar parado.
+    assentarCard(card.id);
 
     try {
       // Atualizar o status do card na API
@@ -3106,13 +3133,19 @@ export default function ProjectDetails() {
               caminho que `ui/dialog.tsx` já usa, e é por isso que os diálogos
               nunca apareceram deslocados. */}
           {createPortal(
-            <DragOverlay dropAnimation={ANIMACAO_DE_SOLTAR}>
+            <DragOverlay dropAnimation={ANIMACAO_DE_SOLTAR_ESTILINGUE}>
               {activeCard ? (
-                <DragOverlayCard
-                  card={activeCard}
-                  users={users}
-                  showPriorityColorsOnCards={showPriorityColorsOnCards}
-                />
+                // `ArrastoEstilingue` fica ENTRE o overlay e o card: o dnd-kit
+                // posiciona o invólucro de forma rígida, e é no filho que o
+                // atraso elástico e a torção são aplicados. O clone em si
+                // continua sendo o mesmo card de sempre.
+                <ArrastoEstilingue>
+                  <DragOverlayCard
+                    card={activeCard}
+                    users={users}
+                    showPriorityColorsOnCards={showPriorityColorsOnCards}
+                  />
+                </ArrastoEstilingue>
               ) : null}
             </DragOverlay>,
             document.body,
