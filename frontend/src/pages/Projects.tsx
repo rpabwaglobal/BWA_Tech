@@ -32,7 +32,6 @@ import {
   Clock,
   XCircle,
   AlertCircle,
-  Eye,
   Loader2,
   Pencil,
   Trash2,
@@ -43,6 +42,9 @@ import {
   Search,
   AlertTriangle,
   RotateCcw,
+  Lightbulb,
+  CalendarClock,
+  ChevronRight,
 } from 'lucide-react';
 import { cn, normalizeExternalUrl } from '@/lib/utils';
 import { Avatar, AvatarImage, AvatarFallback } from '@/components/ui/avatar';
@@ -57,6 +59,43 @@ import { TelaComCarregamento } from '@/components/TelaComCarregamento';
 /** Abas do painel de Pendências. Fora do useState para o cast do
  *  `onValueChange` do Radix (que entrega `string`) ter um alvo tipado. */
 type PendingTab = 'demandas' | 'datas' | 'reaberturas';
+
+/**
+ * As três portas de entrada do painel, com o que cada uma significa.
+ *
+ * FORA DO COMPONENTE, e como dados: os três caminhos têm exatamente a mesma
+ * anatomia (ícone, nome, o que acontece depois), e escritos como três blocos de
+ * JSX repetidos era só questão de tempo até um deles ganhar um espaçamento ou
+ * uma variante diferente dos outros — foi o que aconteceu com a versão
+ * anterior, em que o primeiro botão era `primary` e os outros dois `outline`.
+ *
+ * AS DESCRIÇÕES DIZEM O QUE ACONTECE EM SEGUIDA, e não o que o botão é. "Vai
+ * para a fila de avaliação" é a informação que falta a quem está decidindo;
+ * "cria uma demanda" a pessoa já sabe, porque acabou de ler o nome.
+ */
+const OPCOES_DE_CRIACAO = [
+  {
+    chave: 'demanda' as const,
+    Icone: Lightbulb,
+    titulo: 'Criar uma demanda',
+    descricao:
+      'Um pedido de trabalho novo. Entra na fila "Demandas a avaliar", e quem avalia aceita — escolhendo sprint e projeto — ou recusa.',
+  },
+  {
+    chave: 'data' as const,
+    Icone: CalendarClock,
+    titulo: 'Solicitar ajuste de data',
+    descricao:
+      'Pedir uma nova data de entrega para um card que já existe. A data só muda depois que alguém com permissão aprova.',
+  },
+  {
+    chave: 'reabertura' as const,
+    Icone: RotateCcw,
+    titulo: 'Solicitar reabertura de card',
+    descricao:
+      'Trazer de volta um card já fechado, com um novo prazo. Também passa por aprovação antes de o card voltar a "A Desenvolver".',
+  },
+];
 
 /**
  * Visual das abas de Pendências, copiado das abas da página de Prioridades
@@ -2426,44 +2465,56 @@ export default function Projects() {
       </Dialog>
 
       {/* Modal de escolha: criar demanda vs solicitar data */}
+      {/* AS TRÊS PORTAS DE ENTRADA DO PAINEL, explicadas.
+          Antes eram três botões de 112px de altura com um rótulo centralizado e
+          nada mais — e o primeiro vinha em `primary` enquanto os outros dois
+          eram `outline`, o que lia como "esta já está escolhida" num diálogo em
+          que nada está escolhido ainda. Pior: os rótulos não diziam o que cada
+          caminho FAZ. "Solicitar ajuste de data" e "Solicitar reabertura" são
+          pedidos que vão para uma fila de aprovação, e isso não aparecia em
+          lugar nenhum; quem clicava descobria depois.
+          Agora são linhas de mesmo peso visual, com ícone, nome e uma frase
+          dizendo o que acontece em seguida. O formato é o mesmo das listas do
+          painel logo acima (borda, canto de 8px, realce no hover), para o
+          diálogo não parecer de outro sistema. */}
       <Dialog open={createDemandChoiceOpen} onOpenChange={setCreateDemandChoiceOpen}>
-        <DialogContent>
+        <DialogContent className="max-w-[560px]">
           <DialogHeader>
             <DialogTitle>O que você quer criar?</DialogTitle>
-            <DialogDescription>Escolha uma opção</DialogDescription>
+            <DialogDescription>
+              As três opções abrem um pedido que passa por avaliação antes de virar trabalho.
+            </DialogDescription>
           </DialogHeader>
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mt-4">
-            <Button
-              className="h-28 w-full rounded-[12px] px-4 py-3 text-sm"
-              onClick={() => {
-                setCreateDemandChoiceOpen(false);
-                openSuggestionDialog();
-              }}
-            >
-              Criar uma demanda
-            </Button>
-            <Button
-              variant="outline"
-              className="h-28 w-full rounded-[12px] px-4 py-3 text-sm"
-              onClick={() => {
-                setCreateDemandChoiceOpen(false);
-                setDateChangeRequestModalOpen(true);
-              }}
-            >
-              Solicitar ajuste de data
-            </Button>
-            {/* Terceira porta de entrada: pedir reabertura sem precisar abrir o
-                card fechado no kanban, do mesmo jeito que o ajuste de data. */}
-            <Button
-              variant="outline"
-              className="h-28 w-full rounded-[12px] px-4 py-3 text-sm"
-              onClick={() => {
-                setCreateDemandChoiceOpen(false);
-                setReopenPickerOpen(true);
-              }}
-            >
-              Solicitar reabertura de card
-            </Button>
+
+          <div className="mt-[8px] flex flex-col gap-[8px]">
+            {OPCOES_DE_CRIACAO.map(({ chave, Icone, titulo, descricao }, i) => (
+              <button
+                key={chave}
+                type="button"
+                onClick={() => {
+                  setCreateDemandChoiceOpen(false);
+                  if (chave === 'demanda') openSuggestionDialog();
+                  else if (chave === 'data') setDateChangeRequestModalOpen(true);
+                  else setReopenPickerOpen(true);
+                }}
+                // `card-entra` com atraso crescente: as três opções entram em
+                // cascata, do mesmo jeito que as listas do painel — é a mesma
+                // animação, não uma segunda inventada para este diálogo.
+                className="card-entra group flex w-full items-center gap-[14px] rounded-[8px] border border-[var(--color-border)] p-[14px] text-left transition-colors hover:bg-[var(--color-accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-ring)]"
+                style={{ animationDelay: `${60 + i * 45}ms` }}
+              >
+                <span className="flex h-[40px] w-[40px] shrink-0 items-center justify-center rounded-[10px] bg-[var(--color-primary)]/10 text-[var(--color-primary)]">
+                  <Icone className="h-[20px] w-[20px]" />
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block font-medium text-[var(--color-foreground)]">{titulo}</span>
+                  <span className="mt-[2px] block text-sm text-[var(--color-muted-foreground)]">
+                    {descricao}
+                  </span>
+                </span>
+                <ChevronRight className="h-[16px] w-[16px] shrink-0 text-[var(--color-muted-foreground)] transition-transform group-hover:translate-x-[2px]" />
+              </button>
+            ))}
           </div>
         </DialogContent>
       </Dialog>
