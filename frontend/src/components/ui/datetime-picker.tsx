@@ -87,6 +87,9 @@ const DateTimePicker = React.forwardRef<HTMLInputElement, DateTimePickerProps>(
   ({ className, value = '', onChange, disabled, suggestedDate, pickerTitle, somenteData = false, ...props }, ref) => {
     const tituloDoDialogo =
       pickerTitle ?? (somenteData ? 'Selecionar data' : 'Selecionar data e hora');
+    // Um texto só para o botão do ícone: `title` sozinho é o último recurso do
+    // cálculo de nome acessível, então vai também como `aria-label`.
+    const acaoDoBotao = somenteData ? 'Escolher data' : 'Escolher data e hora';
     const [isOpen, setIsOpen] = React.useState(false);
     const [selectedDate, setSelectedDate] = React.useState<Date | null>(() => {
       const parsed = parseISO(value);
@@ -135,6 +138,25 @@ const DateTimePicker = React.forwardRef<HTMLInputElement, DateTimePickerProps>(
      * de mês passaria a cair nele.
      */
     const mesAncorado = (d: Date) => new Date(d.getFullYear(), d.getMonth(), 1);
+
+    /**
+     * O foco volta para o rótulo central depois de trocar de painel.
+     *
+     * Escolher um mês ou um ano DESMONTA o próprio botão que estava focado, e
+     * o foco cai em `document.body`: quem navega por teclado perde o lugar e
+     * recomeça do início do diálogo a cada escolha. O rótulo é o ponto certo
+     * para voltar, porque é o controle que trouxe a pessoa até ali.
+     */
+    const rotuloRef = React.useRef<HTMLButtonElement>(null);
+    const jaMontou = React.useRef(false);
+    React.useEffect(() => {
+      // Não rouba o foco na primeira renderização — só depois de uma TROCA.
+      if (!jaMontou.current) {
+        jaMontou.current = true;
+        return;
+      }
+      rotuloRef.current?.focus();
+    }, [modo]);
 
     // ABRIR CAI NO MÊS DA DATA JÁ ESCOLHIDA, e não no mês corrente.
     //
@@ -189,23 +211,24 @@ const DateTimePicker = React.forwardRef<HTMLInputElement, DateTimePickerProps>(
     }, [isOpen, value]);
 
     const handleConfirm = () => {
-      if (!selectedDate) {
-        // Se não há data selecionada, usar a data de hoje
-        const today = new Date();
-        today.setHours(selectedTime.hours, selectedTime.minutes, 0, 0);
-        const isoValue = formatToISO(today, somenteData);
-        
-        const syntheticEvent = {
-          target: {
-            value: isoValue,
-          },
-        } as React.ChangeEvent<HTMLInputElement>;
-        
-        onChange?.(syntheticEvent);
-        setIsOpen(false);
-        return;
-      }
-      
+      // SEM DIA ESCOLHIDO, NÃO SE GRAVA NADA.
+      //
+      // Aqui havia um atalho: "se não há data selecionada, usar hoje". Só que
+      // abrir o diálogo com o campo vazio DESLIGA a seleção de propósito (o
+      // efeito logo acima), justamente para que "nada escolhido" apareça como
+      // nada escolhido — e então confirmar gravava hoje, contradizendo a
+      // própria grade, que não tinha nenhum dia marcado.
+      //
+      // Era alcançável antes, mas só para quem abrisse e confirmasse sem
+      // clicar. Com a navegação por mês e ano virou caminho curto e plausível:
+      // dá para ir até Janeiro/2025, olhar a grade vazia, clicar em "Confirmar"
+      // e o campo passar a exibir a data de HOJE. Num filtro de período isso é
+      // um valor errado que ninguém tem motivo para desconfiar.
+      //
+      // O botão fica desabilitado neste estado, então este `return` é a segunda
+      // barreira — e não a única.
+      if (!selectedDate) return;
+
       const date = new Date(selectedDate);
       date.setHours(selectedTime.hours, selectedTime.minutes, 0, 0);
       const isoValue = formatToISO(date, somenteData);
@@ -374,7 +397,15 @@ const DateTimePicker = React.forwardRef<HTMLInputElement, DateTimePickerProps>(
       const today = new Date();
       setCurrentMonth(mesAncorado(today));
       setSelectedDate(today);
-      setSelectedTime({ hours: today.getHours(), minutes: today.getMinutes() });
+      // A HORA NÃO É REDEFINIDA AQUI.
+      //
+      // Este botão fica entre ← e →, na barra de navegação, e é usado para se
+      // situar no mês corrente. Ele também fazia
+      // `setSelectedTime(agora.getHours(), agora.getMinutes())` — e como a hora
+      // escolhida sobrevive à troca de dia, clicar em "Hoje" e depois escolher
+      // outro dia gravava o prazo no RELÓGIO DO MOMENTO em vez das 18:00 que o
+      // fluxo de prazo assume por padrão. Um card com entrega 25/08 18:00
+      // virava 25/08 10:49 sem ninguém tocar no seletor de hora.
     };
 
     const displayValue = formatToDisplay(value);
@@ -411,7 +442,8 @@ const DateTimePicker = React.forwardRef<HTMLInputElement, DateTimePickerProps>(
             onClick={() => !disabled && setIsOpen(true)}
             disabled={disabled}
             className="absolute right-[12px] top-1/2 -translate-y-1/2 text-[var(--color-muted-foreground)] transition-colors hover:text-[var(--color-foreground)] disabled:opacity-50"
-            title="Escolher data e hora"
+            title={acaoDoBotao}
+            aria-label={acaoDoBotao}
           >
             <Calendar className="h-[20px] w-[20px] shrink-0" aria-hidden />
           </button>
@@ -445,14 +477,24 @@ const DateTimePicker = React.forwardRef<HTMLInputElement, DateTimePickerProps>(
                           todo calendário usa, e evita dois seletores extras
                           disputando espaço num diálogo estreito. */}
                       <button
+                        ref={rotuloRef}
                         type="button"
                         onClick={() =>
                           setModo(modo === 'dias' ? 'meses' : modo === 'meses' ? 'anos' : 'meses')
                         }
                         className="flex items-center gap-1 rounded-[6px] px-1.5 py-0.5 text-center text-sm font-semibold text-[var(--color-foreground)] transition-colors hover:bg-[var(--color-accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-ring)]"
+                        // COMPÕE o nome acessível em vez de SUBSTITUIR o texto
+                        // visível. Um `aria-label` vence o conteúdo do botão, e
+                        // com só a ação ("Escolher mês e ano") o mês e o ano na
+                        // tela deixavam de ser anunciados — e não há outra fonte
+                        // deles no diálogo, porque as células de dia trazem só o
+                        // número e o título é genérico.
                         aria-label={
-                          modo === 'dias' ? 'Escolher mês e ano'
-                            : modo === 'meses' ? 'Escolher ano' : 'Voltar para os meses'
+                          modo === 'dias'
+                            ? `${monthNames[currentMonth.getMonth()]} ${currentMonth.getFullYear()}, escolher mês e ano`
+                            : modo === 'meses'
+                              ? `${currentMonth.getFullYear()}, escolher ano`
+                              : `${primeiroAnoDaPagina} a ${primeiroAnoDaPagina + PAGINA_DE_ANOS - 1}, voltar para os meses`
                         }
                       >
                         {modo === 'dias' && `${monthNames[currentMonth.getMonth()]} ${currentMonth.getFullYear()}`}
@@ -492,9 +534,13 @@ const DateTimePicker = React.forwardRef<HTMLInputElement, DateTimePickerProps>(
                   </div>
 
                   {/* A GRADE MOSTRA O QUE O MODO PEDIR: dias, meses ou anos.
-                      Os três ocupam o mesmo espaço, então o diálogo não muda
-                      de tamanho ao trocar de painel — trocar de painel e ver
-                      a caixa saltar faria parecer que outra coisa abriu. */}
+                      A ALTURA MÍNIMA É O QUE SEGURA A CAIXA NO LUGAR. Sem ela
+                      os painéis têm alturas diferentes — a grade de dias tem
+                      cabeçalho de semana e 5 ou 6 linhas; meses e anos têm 4 —
+                      e o diálogo encolhia visivelmente ao trocar de painel, o
+                      que parece que outra coisa abriu. O valor cobre a grade de
+                      dias de 6 linhas, que é a mais alta das três. */}
+                  <div className="min-h-[218px] sm:min-h-[266px]">
                   {modo === 'dias' && (
                     <div className="grid grid-cols-7 gap-0.5 sm:gap-1">
                       {weekDays.map((day) => (
@@ -611,6 +657,7 @@ const DateTimePicker = React.forwardRef<HTMLInputElement, DateTimePickerProps>(
                       })}
                     </div>
                   )}
+                  </div>
 
                   {/* LEGENDA SÓ DO QUE PODE ACONTECER, e só no painel de dias:
                       ela descreve as cores das células de DIA. Nos painéis de
@@ -758,8 +805,12 @@ const DateTimePicker = React.forwardRef<HTMLInputElement, DateTimePickerProps>(
                   >
                     Limpar
                   </Button>
+                  {/* Desabilitado enquanto nada estiver escolhido: sem isto o
+                      botão parecia aceitar uma grade vazia. Quem quer esvaziar
+                      o campo tem o "Limpar" ao lado. */}
                   <Button
                     onClick={handleConfirm}
+                    disabled={!selectedDate}
                     className="h-9 flex-1 text-sm sm:h-10"
                   >
                     Confirmar
