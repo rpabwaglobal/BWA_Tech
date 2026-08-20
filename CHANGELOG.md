@@ -39,6 +39,64 @@ antes de reverter, e reverta a migração antes do código.
 
 ---
 
+## 2.2.0
+
+Data: 20/08/2026 · migração de banco: **não**
+
+### Relatórios
+
+- **O relatório de cards deixou de esconder entregas.** Filtrar por período e
+  por projeto voltava vazio: o mesmo projeto existe uma vez por sprint, e o
+  filtro pegava só a instância da sprint atual. Selecionar um projeto agora
+  alcança todas as instâncias dele; para recortar uma sprint, o filtro de sprint
+  continua ali. Num caso real, 0 cards viraram 19.
+- **O último dia do período passou a entrar.** Quem pedia "até segunda" perdia
+  tudo que foi entregue na segunda. O mesmo defeito vivia no Executivo, nas
+  Métricas Globais, em Atrasos & Gargalos e no Por Usuário: numa janela de um
+  mês, 6 entregas e 2 aprovações de mudança de data reapareceram nos KPIs, e
+  cinco pessoas voltaram a ter uma entrega no relatório individual.
+- **Os campos de data usam o calendário do sistema.** Antes abriam o seletor do
+  navegador, que aparecia no canto superior esquerdo da janela.
+
+### Calendário (data de entrega, prazos, filtros)
+
+- **Dá para escolher mês e ano.** Antes era uma seta por mês — doze cliques para
+  voltar um ano.
+- **Abrir cai no mês da data já escolhida**, e não no mês corrente. Um card com
+  entrega em dezembro abria o calendário em agosto, sem nada marcado.
+- **A navegação parou de pular meses.** Com uma data de fim de mês na tela,
+  fevereiro era inalcançável pela seta.
+
+### Demandas
+
+- **Aceitar e recusar, lado a lado.** A avaliação só tinha "Avaliar", que abre o
+  formulário de sprint e projeto — ou seja, só dava para aceitar. Recusar arquiva
+  a demanda em "Projetos Descartados" e a encerra, sem apagar nada: autor,
+  descrição e histórico ficam, e ela volta mudando de projeto.
+- **A confirmação parou de mentir.** Ela prometia arquivamento ao autor da
+  demanda, para quem a ação apagava o card.
+- **O modal de "Criar Demanda" explica cada caminho.** Eram três botões grandes
+  só com o nome, e nada dizia que ajuste de data e reabertura são pedidos que vão
+  para uma fila de aprovação.
+
+### Desempenho e carregamento
+
+- **O dashboard abre em uma requisição.** Eram cerca de quarenta, em sequência.
+  Medido: 6,53 s até o conteúdo principal, contra ~360 ms agora.
+- **A página do projeto abre mais rápido**, e a lista de usuários deixou de
+  custar sete vezes mais para quem é administrador.
+- **Carregamento com a tela desfocada em dez páginas**, com o conteúdo entrando
+  em cascata e os números subindo até o valor final, em vez de uma bolinha
+  girando sobre a tela vazia. Transição suave ao trocar de página.
+- **Card criado aparece no quadro sem recarregar a página.**
+
+### Geek Day
+
+- A roleta deixou de ser cortada, expande sobre a página antes de girar, e o
+  histórico de sorteios seguiu o padrão visual do resto do sistema.
+
+---
+
 ## 2.1.0
 
 Data: 19/08/2026 · migração de banco: **não**
