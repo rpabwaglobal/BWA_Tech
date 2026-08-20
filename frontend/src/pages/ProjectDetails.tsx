@@ -9,7 +9,6 @@ import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { DateInput } from '@/components/ui/date-input';
 import { DateTimePicker } from '@/components/ui/datetime-picker';
 import { RequestDueDateChangeModal } from '@/components/RequestDueDateChangeModal';
 import { RequestCardReopenModal } from '@/components/RequestCardReopenModal';

@@ -11,7 +11,6 @@ import { isProjetoMonitoramento } from '@/lib/monitoramentoFeedback';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
-import { DateInput } from '@/components/ui/date-input';
 import { DateTimePicker } from '@/components/ui/datetime-picker';
 import { Textarea } from '@/components/ui/textarea';
 import { UserSelect } from '@/components/ui/user-select';

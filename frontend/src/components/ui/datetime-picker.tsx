@@ -16,6 +16,24 @@ export interface DateTimePickerProps
   suggestedDate?: string; // YYYY-MM-DDTHH:mm format - Data sugerida baseada em dias úteis
   /** Título do diálogo (calendário + hora). */
   pickerTitle?: string;
+  /**
+   * Só a data, sem hora — para quem escolhe um DIA e não um instante.
+   *
+   * Existe para que um filtro de período possa usar ESTE calendário, e não um
+   * segundo. Os relatórios usavam um campo que abria o seletor nativo do
+   * navegador, e o navegador o ancorava no canto superior esquerdo da janela,
+   * longe do campo clicado. Copiar este componente para uma versão sem hora
+   * criaria dois calendários para manter em sincronia — já era o caso de
+   * `date-picker.tsx`, que ficou para trás e ainda pinta "hoje" com
+   * `bg-green-100` fixo, ilegível no tema escuro.
+   *
+   * Muda três coisas: o valor sai como `YYYY-MM-DD` (sem `T`), o seletor de
+   * hora some, e o realce de INTERVALO é desligado. O intervalo aqui significa
+   * "os dias daqui até o prazo", que é leitura de prazo de card; num filtro de
+   * período ele pintaria dias que não têm nada a ver com o que está sendo
+   * escolhido.
+   */
+  somenteData?: boolean;
 }
 
 // Converte YYYY-MM-DDTHH:mm para DD/MM/YYYY HH:mm
@@ -34,14 +52,16 @@ const formatToDisplay = (isoDateTime: string): string => {
   return dateStr;
 };
 
-// Converte Date para YYYY-MM-DDTHH:mm
-const formatToISO = (date: Date): string => {
+// Converte Date para YYYY-MM-DDTHH:mm — ou só YYYY-MM-DD em modo somenteData.
+const formatToISO = (date: Date, somenteData = false): string => {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, '0');
   const day = String(date.getDate()).padStart(2, '0');
+  const dataISO = `${year}-${month}-${day}`;
+  if (somenteData) return dataISO;
   const hours = String(date.getHours()).padStart(2, '0');
   const minutes = String(date.getMinutes()).padStart(2, '0');
-  return `${year}-${month}-${day}T${hours}:${minutes}`;
+  return `${dataISO}T${hours}:${minutes}`;
 };
 
 // Converte YYYY-MM-DDTHH:mm para Date
@@ -64,7 +84,9 @@ const parseISO = (isoDateTime: string): Date | null => {
 };
 
 const DateTimePicker = React.forwardRef<HTMLInputElement, DateTimePickerProps>(
-  ({ className, value = '', onChange, disabled, suggestedDate, pickerTitle = 'Selecionar data e hora', ...props }, ref) => {
+  ({ className, value = '', onChange, disabled, suggestedDate, pickerTitle, somenteData = false, ...props }, ref) => {
+    const tituloDoDialogo =
+      pickerTitle ?? (somenteData ? 'Selecionar data' : 'Selecionar data e hora');
     const [isOpen, setIsOpen] = React.useState(false);
     const [selectedDate, setSelectedDate] = React.useState<Date | null>(() => {
       const parsed = parseISO(value);
@@ -112,7 +134,7 @@ const DateTimePicker = React.forwardRef<HTMLInputElement, DateTimePickerProps>(
         // Se não há data selecionada, usar a data de hoje
         const today = new Date();
         today.setHours(selectedTime.hours, selectedTime.minutes, 0, 0);
-        const isoValue = formatToISO(today);
+        const isoValue = formatToISO(today, somenteData);
         
         const syntheticEvent = {
           target: {
@@ -127,7 +149,7 @@ const DateTimePicker = React.forwardRef<HTMLInputElement, DateTimePickerProps>(
       
       const date = new Date(selectedDate);
       date.setHours(selectedTime.hours, selectedTime.minutes, 0, 0);
-      const isoValue = formatToISO(date);
+      const isoValue = formatToISO(date, somenteData);
       
       const syntheticEvent = {
         target: {
@@ -204,6 +226,9 @@ const DateTimePicker = React.forwardRef<HTMLInputElement, DateTimePickerProps>(
 
     const isInRange = (day: number | null, month: Date) => {
       if (day === null) return false;
+      // "Intervalo" = os dias daqui até o prazo. É leitura de PRAZO DE CARD;
+      // num filtro de período pintaria dias sem relação com a escolha.
+      if (somenteData) return false;
       
       const today = new Date();
       today.setHours(0, 0, 0, 0);
@@ -279,9 +304,13 @@ const DateTimePicker = React.forwardRef<HTMLInputElement, DateTimePickerProps>(
       <>
         <div className="relative">
           <input
+            // O componente é `forwardRef` e a `ref` chegava aqui para ser
+            // DESCARTADA — quem a passasse não conseguiria focar o campo, sem
+            // aviso nenhum. O irmão `date-picker.tsx` já a repassava.
+            ref={ref}
             type="text"
             readOnly
-            placeholder="Clique para selecionar data e hora"
+            placeholder={somenteData ? 'Clique para selecionar a data' : 'Clique para selecionar data e hora'}
             className={cn(
               'flex h-[42px] w-full rounded-[10px] border border-[var(--color-input)] bg-[var(--color-card)] px-[14px] pr-[80px] py-[8px] text-sm shadow-sm ring-offset-[var(--color-background)] transition-[box-shadow,border-color]',
               'placeholder:text-[var(--color-muted-foreground)]',
@@ -315,7 +344,7 @@ const DateTimePicker = React.forwardRef<HTMLInputElement, DateTimePickerProps>(
             onClose={() => setIsOpen(false)}
           >
             <DialogHeader className="shrink-0 border-b border-[var(--color-border)] bg-[var(--color-muted)]/25 px-5 py-3 sm:px-6 sm:py-4">
-              <DialogTitle className="text-base font-semibold">{pickerTitle}</DialogTitle>
+              <DialogTitle className="text-base font-semibold">{tituloDoDialogo}</DialogTitle>
             </DialogHeader>
 
             <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-5 py-4 [-webkit-overflow-scrolling:touch] sm:px-6">
@@ -399,31 +428,42 @@ const DateTimePicker = React.forwardRef<HTMLInputElement, DateTimePickerProps>(
                     ))}
                   </div>
 
-                  {/* Legenda */}
+                  {/* LEGENDA SÓ DO QUE PODE ACONTECER.
+                      Ela listava os quatro estados sempre — inclusive "Sugerida"
+                      em telas que nunca passam `suggestedDate`, e "Intervalo"
+                      onde o intervalo está desligado. Legenda que descreve cor
+                      que não aparece é pior que legenda nenhuma: manda procurar
+                      algo que não existe. */}
                   <div className="flex flex-wrap items-center justify-center gap-x-2 gap-y-1.5 border-t border-[var(--color-border)] pt-2">
-                    <div className="flex items-center gap-1.5">
-                      <div className="h-3 w-3 shrink-0 rounded border border-emerald-500/50 bg-emerald-500/15 dark:bg-emerald-500/25" />
-                      <span className="text-[11px] text-[var(--color-muted-foreground)] sm:text-xs">Hoje</span>
-                    </div>
-                    <span className="text-[11px] text-[var(--color-border)] sm:text-xs">|</span>
-                    <div className="flex items-center gap-1.5">
-                      <div className="h-3 w-3 shrink-0 rounded bg-[var(--color-muted)]/90 dark:bg-[var(--color-muted)]/50" />
-                      <span className="text-[11px] text-[var(--color-muted-foreground)] sm:text-xs">Intervalo</span>
-                    </div>
-                    <span className="text-[11px] text-[var(--color-border)] sm:text-xs">|</span>
-                    <div className="flex items-center gap-1.5">
-                      <div className="h-3 w-3 shrink-0 rounded border-2 border-[var(--color-primary)]/70 bg-[var(--color-primary)]/15" />
-                      <span className="text-[11px] text-[var(--color-muted-foreground)] sm:text-xs">Sugerida</span>
-                    </div>
-                    <span className="text-[11px] text-[var(--color-border)] sm:text-xs">|</span>
-                    <div className="flex items-center gap-1.5">
-                      <div className="h-3 w-3 shrink-0 rounded bg-[var(--color-primary)] shadow-sm" />
-                      <span className="text-[11px] text-[var(--color-muted-foreground)] sm:text-xs">Selecionada</span>
-                    </div>
+                    {[
+                      { chave: 'hoje', mostra: true, rotulo: 'Hoje',
+                        classe: 'border border-emerald-500/50 bg-emerald-500/15 dark:bg-emerald-500/25' },
+                      { chave: 'intervalo', mostra: !somenteData, rotulo: 'Intervalo',
+                        classe: 'bg-[var(--color-muted)]/90 dark:bg-[var(--color-muted)]/50' },
+                      { chave: 'sugerida', mostra: !!suggestedDateObj, rotulo: 'Sugerida',
+                        classe: 'border-2 border-[var(--color-primary)]/70 bg-[var(--color-primary)]/15' },
+                      { chave: 'selecionada', mostra: true, rotulo: 'Selecionada',
+                        classe: 'bg-[var(--color-primary)] shadow-sm' },
+                    ]
+                      .filter((item) => item.mostra)
+                      .map((item, indice) => (
+                        <React.Fragment key={item.chave}>
+                          {indice > 0 && (
+                            <span className="text-[11px] text-[var(--color-border)] sm:text-xs">|</span>
+                          )}
+                          <div className="flex items-center gap-1.5">
+                            <div className={cn('h-3 w-3 shrink-0 rounded', item.classe)} />
+                            <span className="text-[11px] text-[var(--color-muted-foreground)] sm:text-xs">
+                              {item.rotulo}
+                            </span>
+                          </div>
+                        </React.Fragment>
+                      ))}
                   </div>
                 </div>
 
-                {/* Seletor de Hora */}
+                {/* Seletor de Hora — some quando só a data importa. */}
+                {!somenteData && (
                 <div className="rounded-[10px] border border-[var(--color-border)] bg-[var(--color-muted)]/20 p-3 dark:bg-[var(--color-muted)]/15 sm:p-4">
                   <div className="mb-2 flex items-center gap-2 text-sm font-semibold text-[var(--color-foreground)]">
                     <Clock className="h-3.5 w-3.5 shrink-0 text-[var(--color-primary)] sm:h-4 sm:w-4" aria-hidden />
@@ -518,6 +558,7 @@ const DateTimePicker = React.forwardRef<HTMLInputElement, DateTimePickerProps>(
                     </div>
                   </div>
                 </div>
+                )}
 
                 {/* Botões de ação */}
                 <div className="flex items-center justify-between gap-2 border-t border-[var(--color-border)] pt-3 sm:gap-3 sm:pt-4">

@@ -6,7 +6,7 @@ import {
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
-import { DateInput } from '@/components/ui/date-input';
+import { DateTimePicker } from '@/components/ui/datetime-picker';
 import { FilterSelect } from '@/components/ui/filter-select';
 import { FilterMultiSelect } from '@/components/ui/filter-multi-select';
 import { cn } from '@/lib/utils';
@@ -837,11 +837,25 @@ function renderFilter(
             value={(filters['period_date_type'] as string) || 'created'}
             onChange={(v) => setFilter('period_date_type', v)}
           />
-          <DateInput
+          {/* O MESMO CALENDÁRIO DA DATA DE ENTREGA DE UM CARD, em modo só-data.
+              Antes eram campos que abriam o seletor NATIVO do navegador — e o
+              navegador o ancorava no canto superior esquerdo da janela, longe
+              do campo clicado, porque o `DateInput` dispara `showPicker()` num
+              input temporário posicionado em `fixed` sem coordenada nenhuma.
+              Fora do lugar, e com a cara do sistema operacional em vez da do
+              BWA Tech.
+              `somenteData` desliga a hora e o realce de intervalo: aqui se
+              escolhe um DIA, e o intervalo daquele componente significa "os
+              dias até o prazo", que é leitura de card e não de filtro. */}
+          <DateTimePicker
+            somenteData
+            pickerTitle="Início do período"
             value={(filters['period_start'] as string) ?? ''}
             onChange={(e) => setFilter('period_start', e.target.value)}
           />
-          <DateInput
+          <DateTimePicker
+            somenteData
+            pickerTitle="Fim do período"
             value={(filters['period_end'] as string) ?? ''}
             onChange={(e) => setFilter('period_end', e.target.value)}
           />
