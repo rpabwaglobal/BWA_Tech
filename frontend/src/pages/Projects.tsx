@@ -148,6 +148,20 @@ export default function Projects() {
   // Delete/Alert dialogs
   const [discardDialogOpen, setDiscardDialogOpen] = useState(false);
   const [demandToDiscard, setDemandToDiscard] = useState<any>(null);
+  /**
+   * QUAL DAS DUAS SAÍDAS o diálogo de confirmação está prestes a executar.
+   *
+   * As duas passam pelo mesmo diálogo, mas fazem coisas OPOSTAS: 'deletar' é o
+   * autor retirando a própria demanda, e apaga o card; 'recusar' é o avaliador
+   * negando, e arquiva o card em "Projetos Descartados".
+   *
+   * Antes a escolha era inferida de QUEM clicou (`card.criado_por === user.id`),
+   * o que funcionava só porque avaliador não tinha botão nenhum. Com "Recusar"
+   * na tela, um avaliador que também fosse o autor da demanda recusaria e o
+   * código DELETARIA o card — perda silenciosa de dados por uma coincidência de
+   * identidade. A intenção agora é declarada por quem clica, não deduzida.
+   */
+  const [demandAction, setDemandAction] = useState<'deletar' | 'recusar'>('deletar');
   const [discardLoading, setDiscardLoading] = useState(false);
   const [createDemandChoiceOpen, setCreateDemandChoiceOpen] = useState(false);
   const [dateChangeRequestModalOpen, setDateChangeRequestModalOpen] = useState(false);
@@ -688,9 +702,42 @@ export default function Projects() {
 
   const confirmDiscardDemand = async () => {
     if (!demandToDiscard) return;
-    await handleDiscardDemand(demandToDiscard);
+    if (demandAction === 'recusar') {
+      await handleRejectDemand(demandToDiscard);
+    } else {
+      await handleDiscardDemand(demandToDiscard);
+    }
     setDiscardDialogOpen(false);
     setDemandToDiscard(null);
+  };
+
+  /** O nome entre aspas, ou um genérico quando o estado ainda não chegou. */
+  const nomeDaDemanda = demandToDiscard?.nome
+    ? `a demanda "${demandToDiscard.nome}"`
+    : 'esta demanda';
+
+  /**
+   * Recusa a demanda: sai da fila de avaliação e fica arquivada.
+   *
+   * Uma chamada só, e o servidor faz o resto — ver `cardService.recusarDemanda`
+   * para o porquê de não ser um `update` daqui.
+   */
+  const handleRejectDemand = async (card: CardType) => {
+    setDiscardLoading(true);
+    try {
+      await cardService.recusarDemanda(card.id);
+      // A demanda sai da lista, que é "cards de Sugestões em a_desenvolver".
+      setCards((prevCards) => prevCards.filter((c) => c.id !== card.id));
+      setDemandViewDialogOpen(false);
+    } catch (e) {
+      // A mensagem do backend diz o que aconteceu de verdade — demanda já
+      // avaliada por outra pessoa, projeto fora do alcance do setor —, e é
+      // muito mais útil que um "erro ao recusar" genérico.
+      setAlertMessage(mensagemDeErroDoBackend(e, 'Erro ao recusar demanda.'));
+      setAlertDialogOpen(true);
+    } finally {
+      setDiscardLoading(false);
+    }
   };
 
   const handleDiscardDemand = async (card: CardType) => {
@@ -1252,6 +1299,7 @@ export default function Projects() {
                                   onClick={(e) => {
                                     e.stopPropagation();
                                     setDemandToDiscard(card);
+                                    setDemandAction('deletar');
                                     setDiscardDialogOpen(true);
                                   }}
                                   title="Deletar demanda"
@@ -1261,18 +1309,41 @@ export default function Projects() {
                                 </Button>
                               </>
                             )}
+                            {/* AS DUAS SAÍDAS DA AVALIAÇÃO, LADO A LADO.
+                                Antes existia só "Avaliar", que abre o formulário
+                                de sprint e projeto — ou seja, só dava para
+                                ACEITAR. Recusar exigia conhecer o caminho
+                                escondido de descarte, disponível apenas para o
+                                autor da demanda.
+                                A ordem e as variantes copiam as abas irmãs
+                                ("Solicitações de data" e "Reaberturas"), logo
+                                abaixo nesta mesma tela: negar à esquerda em
+                                `outline`, ação primária à direita. Três filas de
+                                aprovação no mesmo painel têm de se parecer. */}
                             {canEvaluateDemands && (
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  openEvaluationDialog(card);
-                                }}
-                              >
-                                <Eye className="h-4 w-4 mr-2" />
-                                Avaliar
-                              </Button>
+                              <>
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setDemandToDiscard(card);
+                                    setDemandAction('recusar');
+                                    setDiscardDialogOpen(true);
+                                  }}
+                                >
+                                  Recusar
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    openEvaluationDialog(card);
+                                  }}
+                                >
+                                  Aceitar
+                                </Button>
+                              </>
                             )}
                           </div>
                         </div>
@@ -2061,6 +2132,14 @@ export default function Projects() {
           <DialogFooter>
             <div className="flex items-center justify-between w-full">
               <div className="flex gap-2">
+                {/* FECHAR FICA DE ESTE LADO, longe de "Aceitar" e "Recusar".
+                    Encostado neles, era o terceiro botão de uma fileira em que
+                    os outros dois DECIDEM o destino da demanda — e sair da
+                    leitura não é uma terceira decisão. Separado, o par de
+                    decisões fica sozinho no canto de ação. */}
+                <Button type="button" variant="outline" onClick={() => setDemandViewDialogOpen(false)}>
+                  Fechar
+                </Button>
                 {/* Botões de editar/deletar apenas para o criador */}
                 {selectedDemand && selectedDemand.criado_por && String(selectedDemand.criado_por) === String(user?.id) && (
                   <>
@@ -2081,6 +2160,7 @@ export default function Projects() {
                       variant="destructive"
                       onClick={() => {
                         setDemandToDiscard(selectedDemand);
+                        setDemandAction('deletar');
                         setDiscardDialogOpen(true);
                         setDemandViewDialogOpen(false);
                       }}
@@ -2092,20 +2172,34 @@ export default function Projects() {
                 )}
               </div>
               <div className="flex gap-2">
-                <Button type="button" variant="outline" onClick={() => setDemandViewDialogOpen(false)}>
-                  Fechar
-                </Button>
-                {/* Botão Avaliar apenas para supervisor (demandas) */}
+                {/* As mesmas duas saídas da lista, para quem abriu a demanda
+                    para ler antes de decidir — que é justamente quando a decisão
+                    acontece. Ter "Aceitar" aqui e só "Recusar" na lista (ou o
+                    contrário) obrigaria a fechar o diálogo para negar. */}
                 {selectedDemand && canEvaluateDemands && (
-                  <Button
-                    type="button"
-                    onClick={() => {
-                      setDemandViewDialogOpen(false);
-                      openEvaluationDialog(selectedDemand);
-                    }}
-                  >
-                    Avaliar e Atribuir
-                  </Button>
+                  <>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => {
+                        setDemandToDiscard(selectedDemand);
+                        setDemandAction('recusar');
+                        setDiscardDialogOpen(true);
+                        setDemandViewDialogOpen(false);
+                      }}
+                    >
+                      Recusar
+                    </Button>
+                    <Button
+                      type="button"
+                      onClick={() => {
+                        setDemandViewDialogOpen(false);
+                        openEvaluationDialog(selectedDemand);
+                      }}
+                    >
+                      Aceitar
+                    </Button>
+                  </>
                 )}
               </div>
             </div>
@@ -2633,12 +2727,20 @@ export default function Projects() {
           setDiscardDialogOpen(false);
           setDemandToDiscard(null);
         }}>
+          {/* O TEXTO SEGUE A INTENÇÃO, porque as duas saídas fazem coisas
+              opostas e a confirmação é a última chance de perceber isso.
+              Este diálogo dizia sempre "será movida para Projetos Descartados"
+              — e era exibido APENAS para o autor da demanda, para quem o código
+              executa `cardService.delete`. Ou seja: prometia arquivamento e
+              apagava, exatamente para quem não podia recuperar depois. */}
           <DialogHeader>
-            <DialogTitle>Confirmar Descarte</DialogTitle>
+            <DialogTitle>
+              {demandAction === 'recusar' ? 'Recusar demanda' : 'Deletar demanda'}
+            </DialogTitle>
             <DialogDescription>
-              {demandToDiscard
-                ? `Tem certeza que deseja descartar a demanda "${demandToDiscard.nome}"? Ela será movida para "Projetos Descartados".`
-                : 'Tem certeza que deseja descartar esta demanda? Ela será movida para "Projetos Descartados".'}
+              {demandAction === 'recusar'
+                ? `Recusar ${nomeDaDemanda}? Ela sai da fila de avaliação e fica arquivada em "Projetos Descartados" — dá para recuperar depois.`
+                : `Deletar ${nomeDaDemanda}? Esta ação não pode ser desfeita.`}
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
@@ -2662,10 +2764,10 @@ export default function Projects() {
               {discardLoading ? (
                 <>
                   <Loader2 className="mr-[8px] h-[16px] w-[16px] animate-spin" />
-                  Descartando...
+                  {demandAction === 'recusar' ? 'Recusando...' : 'Deletando...'}
                 </>
               ) : (
-                'Descartar'
+                demandAction === 'recusar' ? 'Recusar' : 'Deletar'
               )}
             </Button>
           </DialogFooter>

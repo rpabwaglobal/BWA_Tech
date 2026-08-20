@@ -42,8 +42,9 @@ from .models import (
     ScoreHistoryAction,
     SetorSolicitante,
 )
-from .services import (finalizar_sprint_replicacao, get_sprint_ids_atribuiveis,
-                       reancorar_card_na_sprint, sprint_em_andamento_do_setor)
+from .services import (_norm_nome_projeto, finalizar_sprint_replicacao,
+                       get_sprint_ids_atribuiveis, reancorar_card_na_sprint,
+                       sprint_em_andamento_do_setor)
 from apps.accounts.profile_picture_utils import get_profile_picture_url
 from apps.accounts.models import Role
 from apps.accounts.permissions import PodeVerConteudo, HasPerm, NaoVisitanteEscreve
@@ -1395,6 +1396,111 @@ class CardViewSet(CompartilhamentoSetorMixin, viewsets.ModelViewSet):
             raise PermissionDenied(FEEDBACK_SOMENTE_LEITURA)
         checar_escrita_no_pai(self.request.user, projeto)
         serializer.save(criado_por=self.request.user)
+
+    # Nome dos dois projetos sistemicos deste fluxo. Vivem aqui como constante
+    # porque o nome E o identificador: nao ha flag no card dizendo "isto e uma
+    # demanda" — a fila da tela e "cards de Sugestoes com status a_desenvolver".
+    PROJETO_DAS_DEMANDAS = 'sugestões'
+    PROJETO_DOS_DESCARTADOS = 'Projetos Descartados'
+
+    @action(detail=True, methods=['post'], url_path='recusar')
+    def recusar(self, request, pk=None):
+        """Recusa uma demanda: arquiva em "Projetos Descartados" e a encerra.
+
+        POR QUE ISTO E UMA ACTION E NAO UM PATCH DO CLIENTE.
+
+        A tela ja sabia mover um card para "Projetos Descartados" sozinha, com
+        dois `cardService`, e essa versao tinha dois furos que so apareceriam em
+        producao:
+
+        1. O PROJETO NASCERIA COMUM. "Projetos Descartados" NAO EXISTE no banco
+           (conferido: zero linhas), entao a primeira recusa o criaria — e
+           `ProjectSerializer` trata `is_system` como somente leitura, de
+           proposito. O projeto nasceria contando como projeto de trabalho, e
+           toda demanda recusada viraria card aberto em relatorio e dashboard,
+           para sempre. Aqui ele nasce com a marca certa, porque quem cria e o
+           servidor.
+        2. A PERMISSAO ERA SO DA TELA. O botao ficava escondido por
+           `manage_projects` no cliente; o backend via apenas "alguem editou um
+           card". Agora a regra esta do lado que decide.
+
+        O STATUS TAMBEM MUDA, e nao so o projeto. Mover para "Projetos
+        Descartados" mantendo `a_desenvolver` deixaria a demanda recusada
+        eternamente na conta de trabalho em aberto: o dashboard so descarta um
+        projeto quando ELE e a sprint sao sistemicos, e a sprint aqui e real.
+        `inviabilizado` ja e, neste sistema, o encerramento sem entrega
+        (`CARD_STATUS_FECHADOS`) — e uma demanda recusada e exatamente isso.
+        Sem essa linha, cada recusa seria um numero a mais em todo painel.
+
+        A recusa NAO apaga nada: o card continua inteiro, com autor, descricao e
+        historico, e volta a fila movendo-o de projeto.
+        """
+        if not request.user.has_perm('accounts.manage_projects'):
+            return Response(
+                {'detail': 'Você não tem permissão para recusar demandas.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        card = self.get_object()
+        # O card vem por id do cliente: quem escreve nele precisa ALCANCAR o
+        # projeto onde ele mora, e nao so ter a permissao global acima.
+        checar_escrita_no_pai(request.user, card.projeto)
+
+        # A ACTION SO VALE PARA DEMANDA. Esta checagem e o que impede o endpoint
+        # de virar um "encerre qualquer card" com nome simpatico.
+        projeto = card.projeto
+        if not projeto or _norm_nome_projeto(projeto.nome) != self.PROJETO_DAS_DEMANDAS:
+            return Response(
+                {'detail': 'Só é possível recusar demandas — este card não está '
+                           'na fila de demandas a avaliar.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if card.status != CardStatus.A_DESENVOLVER:
+            # Duplo clique, ou duas pessoas avaliando a mesma fila.
+            return Response(
+                {'detail': 'Esta demanda já foi avaliada.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        with transaction.atomic():
+            # O descarte acompanha a sprint da demanda, em vez de um deposito
+            # unico: e o mesmo desenho de "Sugestoes" e "Suporte", que existem
+            # uma vez por sprint, e mantem a recusa perto do ciclo em que ela
+            # aconteceu.
+            descartados = (
+                Project.objects.filter(sprint=projeto.sprint)
+                .filter(nome__iexact=self.PROJETO_DOS_DESCARTADOS)
+                .first()
+            )
+            if descartados is None:
+                descartados = Project.objects.create(
+                    nome=self.PROJETO_DOS_DESCARTADOS,
+                    descricao='Demandas recusadas na avaliação.',
+                    sprint=projeto.sprint,
+                    setor=projeto.setor,
+                    is_system=True,
+                )
+            elif not descartados.is_system:
+                # A REPLICACAO DE SPRINT NAO CARREGA `is_system` (conferido:
+                # "Sugestoes" e "Suporte" chegam marcados ate a sprint 10 e
+                # desmarcados da 11 em diante). Sem esta linha, a copia feita na
+                # virada voltaria a contar como projeto de trabalho e a recusa
+                # tornaria a poluir os numeros — o defeito que esta action
+                # existe para nao ter.
+                descartados.is_system = True
+                descartados.save(update_fields=['is_system', 'updated_at'])
+
+            card.projeto = descartados
+            card.status = CardStatus.INVIABILIZADO
+            card.save(update_fields=['projeto', 'status', 'updated_at'])
+
+        # A fila da tela e derivada de cards, mas o painel de Demandas /
+        # Solicitacoes e UM so e recarrega inteiro no mesmo evento — o mesmo
+        # aviso que as filas de data e de reabertura usam.
+        _avisar_painel_de_solicitacoes(card, sempre_ids=(card.criado_por_id,))
+
+        serializer = self.get_serializer(card)
+        return Response(serializer.data, status=status.HTTP_200_OK)
 
     @action(detail=False, methods=['get'], url_path='metrics', permission_classes=[HasPerm('view_metrics')])
     def metrics(self, request):

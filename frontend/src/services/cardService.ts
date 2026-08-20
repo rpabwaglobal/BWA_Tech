@@ -422,4 +422,19 @@ export const cardService = {
   async delete(id: string): Promise<void> {
     await api.delete(`/cards/${id}/`);
   },
+
+  /**
+   * Recusa uma demanda da fila "Demandas a avaliar".
+   *
+   * O servidor arquiva o card em "Projetos Descartados" e o encerra como
+   * inviabilizado. NÃO é um `update` disfarçado: o projeto de descarte precisa
+   * nascer marcado como sistêmico, e `is_system` é somente leitura na API de
+   * projetos — de propósito. Feito daqui com dois `update`, cada recusa criaria
+   * um projeto comum e passaria a contar como trabalho em aberto em relatório e
+   * dashboard. A regra de quem pode recusar também mora lá.
+   */
+  async recusarDemanda(id: string): Promise<Card> {
+    const response = await api.post(`/cards/${id}/recusar/`);
+    return response.data;
+  },
 };
