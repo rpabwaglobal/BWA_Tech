@@ -1,5 +1,5 @@
 import * as React from "react";
-import { Calendar, Clock } from "lucide-react";
+import { Calendar, ChevronDown, Clock } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -103,6 +103,65 @@ const DateTimePicker = React.forwardRef<HTMLInputElement, DateTimePickerProps>(
       return { hours: 18, minutes: 0 };
     });
     const [currentMonth, setCurrentMonth] = React.useState(new Date());
+    /**
+     * O QUE A GRADE ESTÁ MOSTRANDO: dias, meses ou anos.
+     *
+     * Sem isto, chegar a uma data distante era clicar em ← uma vez por mês —
+     * doze cliques para voltar um ano. Num filtro de relatório, que é onde se
+     * pede "de janeiro até março", isso é o uso NORMAL e não o excepcional.
+     *
+     * O painel troca no lugar, dentro da mesma caixa, em vez de abrir um
+     * dropdown. O corpo do diálogo tem `overflow-y-auto`, e um menu posicionado
+     * por `absolute` (como o `FilterSelect` do projeto) seria CORTADO por ele —
+     * seria preciso um portal, com o z-index e o fechamento por clique-fora que
+     * vêm junto. Trocar o conteúdo da grade não tem nenhum desses problemas, e
+     * é o gesto que todo calendário usa.
+     */
+    const [modo, setModo] = React.useState<'dias' | 'meses' | 'anos'>('dias');
+
+    /**
+     * O MÊS EXIBIDO, SEMPRE ANCORADO NO DIA 1.
+     *
+     * `currentMonth` só responde "que mês a grade mostra" — o dia escolhido
+     * mora em `selectedDate`. Mas ele guardava um dia de verdade, e
+     * `setMonth`/`setFullYear` TRANSBORDAM quando o dia não existe no destino:
+     *   new Date(2026, 0, 31).setMonth(1)  ->  03/03/2026
+     * Ou seja, com 31/01 na tela, a seta → pulava fevereiro inteiro; fevereiro
+     * ficava INALCANÇÁVEL pela navegação.
+     *
+     * Isso já existia, mas era quase invisível enquanto o mês exibido começava
+     * sempre em `new Date()` — só quebrava se hoje fosse dia 29, 30 ou 31. Ao
+     * passar a abrir no mês da data já escolhida, todo card com entrega em fim
+     * de mês passaria a cair nele.
+     */
+    const mesAncorado = (d: Date) => new Date(d.getFullYear(), d.getMonth(), 1);
+
+    // ABRIR CAI NO MÊS DA DATA JÁ ESCOLHIDA, e não no mês corrente.
+    //
+    // `currentMonth` nascia como `new Date()` e nunca era sincronizado com
+    // `value`: um card com entrega em 15/12 abria o calendário em AGOSTO, e o
+    // dia selecionado não aparecia em lugar nenhum — quem reabrisse para
+    // conferir a data via um mês qualquer, sem nada marcado. O irmão
+    // `date-picker.tsx` já fazia essa sincronia; este ficou sem.
+    //
+    // Feito na ABERTURA, e não num efeito de `value`: enquanto o diálogo está
+    // aberto, quem navega para outro mês tem de continuar lá.
+    //
+    // Reabrir também volta para os dias — quem abre quer escolher uma data, não
+    // continuar de onde parou no painel de anos da vez passada.
+    React.useEffect(() => {
+      if (!isOpen) return;
+      setModo('dias');
+      setCurrentMonth(mesAncorado(parseISO(value) || new Date()));
+    }, [isOpen, value]);
+
+    // A página de anos tem 12 posições, alinhadas em múltiplos de 12 para que
+    // ← e → sempre andem uma página inteira, sem sobreposição.
+    const PAGINA_DE_ANOS = 12;
+    const primeiroAnoDaPagina =
+      Math.floor(currentMonth.getFullYear() / PAGINA_DE_ANOS) * PAGINA_DE_ANOS;
+    const anosDaPagina = Array.from(
+      { length: PAGINA_DE_ANOS }, (_, i) => primeiroAnoDaPagina + i);
     
     // Parse da data sugerida
     const suggestedDateObj = suggestedDate ? parseISO(suggestedDate) : null;
@@ -282,7 +341,7 @@ const DateTimePicker = React.forwardRef<HTMLInputElement, DateTimePickerProps>(
     const weekDays = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
 
     const navigateMonth = (direction: 'prev' | 'next') => {
-      const newMonth = new Date(currentMonth);
+      const newMonth = mesAncorado(currentMonth);
       if (direction === 'prev') {
         newMonth.setMonth(newMonth.getMonth() - 1);
       } else {
@@ -291,9 +350,29 @@ const DateTimePicker = React.forwardRef<HTMLInputElement, DateTimePickerProps>(
       setCurrentMonth(newMonth);
     };
 
+    /** ← e → andam na unidade do que está na tela: mês, ano ou página de anos. */
+    const navegar = (direcao: 'prev' | 'next') => {
+      if (modo === 'dias') return navigateMonth(direcao);
+      const passo = direcao === 'prev' ? -1 : 1;
+      // Ancorado pelo mesmo motivo: 29/02 de um bissexto + 1 ano vira 01/03.
+      const nova = mesAncorado(currentMonth);
+      nova.setFullYear(
+        nova.getFullYear() + (modo === 'meses' ? passo : passo * PAGINA_DE_ANOS));
+      setCurrentMonth(nova);
+    };
+
+    /** `setMonth` numa data de dia 31 pula o mês curto (31/03 -> 01/05 em abril).
+     *  Ancorar no dia 1 antes de trocar mês ou ano evita esse salto. */
+    const irPara = ({ mes, ano }: { mes?: number; ano?: number }) => {
+      const nova = mesAncorado(currentMonth);
+      if (ano !== undefined) nova.setFullYear(ano);
+      if (mes !== undefined) nova.setMonth(mes);
+      setCurrentMonth(nova);
+    };
+
     const goToToday = () => {
       const today = new Date();
-      setCurrentMonth(today);
+      setCurrentMonth(mesAncorado(today));
       setSelectedDate(today);
       setSelectedTime({ hours: today.getHours(), minutes: today.getMinutes() });
     };
@@ -355,19 +434,48 @@ const DateTimePicker = React.forwardRef<HTMLInputElement, DateTimePickerProps>(
                     <Button
                       variant="outline"
                       size="sm"
-                      onClick={() => navigateMonth('prev')}
+                      onClick={() => navegar('prev')}
                       className="h-7 w-7 shrink-0 p-0"
                     >
                       ←
                     </Button>
                     <div className="flex min-w-0 flex-wrap items-center justify-center gap-1.5">
-                      <span className="text-center text-sm font-semibold text-[var(--color-foreground)]">
-                        {monthNames[currentMonth.getMonth()]} {currentMonth.getFullYear()}
-                      </span>
+                      {/* O RÓTULO É O CONTROLE. Clicar em "Agosto 2026" abre os
+                          meses; clicar em "2026" abre os anos. É o gesto que
+                          todo calendário usa, e evita dois seletores extras
+                          disputando espaço num diálogo estreito. */}
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setModo(modo === 'dias' ? 'meses' : modo === 'meses' ? 'anos' : 'meses')
+                        }
+                        className="flex items-center gap-1 rounded-[6px] px-1.5 py-0.5 text-center text-sm font-semibold text-[var(--color-foreground)] transition-colors hover:bg-[var(--color-accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-ring)]"
+                        aria-label={
+                          modo === 'dias' ? 'Escolher mês e ano'
+                            : modo === 'meses' ? 'Escolher ano' : 'Voltar para os meses'
+                        }
+                      >
+                        {modo === 'dias' && `${monthNames[currentMonth.getMonth()]} ${currentMonth.getFullYear()}`}
+                        {modo === 'meses' && currentMonth.getFullYear()}
+                        {modo === 'anos' && `${primeiroAnoDaPagina} – ${primeiroAnoDaPagina + PAGINA_DE_ANOS - 1}`}
+                        <ChevronDown
+                          className={cn(
+                            'h-3.5 w-3.5 shrink-0 text-[var(--color-muted-foreground)] transition-transform',
+                            modo !== 'dias' && 'rotate-180',
+                          )}
+                          aria-hidden
+                        />
+                      </button>
                       <Button
                         variant="ghost"
                         size="sm"
-                        onClick={goToToday}
+                        onClick={() => {
+                          goToToday();
+                          // Sem isto, "Hoje" no painel de anos mudava a data por
+                          // baixo e deixava a pessoa olhando anos, sem sinal de
+                          // que algo tinha sido selecionado.
+                          setModo('dias');
+                        }}
                         className="h-6 px-2 text-xs"
                       >
                         Hoje
@@ -376,64 +484,144 @@ const DateTimePicker = React.forwardRef<HTMLInputElement, DateTimePickerProps>(
                     <Button
                       variant="outline"
                       size="sm"
-                      onClick={() => navigateMonth('next')}
+                      onClick={() => navegar('next')}
                       className="h-7 w-7 shrink-0 p-0"
                     >
                       →
                     </Button>
                   </div>
 
-                  <div className="grid grid-cols-7 gap-0.5 sm:gap-1">
-                    {weekDays.map((day) => (
-                      <div
-                        key={day}
-                        className="py-1 text-center text-[10px] font-medium text-[var(--color-muted-foreground)] sm:text-xs"
-                      >
-                        {day}
-                      </div>
-                    ))}
-                    {getDaysInMonth(currentMonth).map((day, index) => (
-                      <button
-                        key={index}
-                        type="button"
-                        onClick={() => day !== null && handleDayClick(day)}
-                        disabled={day === null}
-                        className={cn(
-                          'h-7 w-7 rounded-[6px] text-xs transition-colors sm:h-8 sm:w-8 sm:rounded-[8px] sm:text-sm',
-                          day === null && 'cursor-default',
-                          day !== null && 'hover:bg-[var(--color-accent)]',
-                          isSelected(day, currentMonth) &&
-                            'bg-[var(--color-primary)] font-semibold text-[var(--color-primary-foreground)] shadow-sm hover:bg-[var(--color-primary)]/92',
-                          isToday(day, currentMonth) &&
+                  {/* A GRADE MOSTRA O QUE O MODO PEDIR: dias, meses ou anos.
+                      Os três ocupam o mesmo espaço, então o diálogo não muda
+                      de tamanho ao trocar de painel — trocar de painel e ver
+                      a caixa saltar faria parecer que outra coisa abriu. */}
+                  {modo === 'dias' && (
+                    <div className="grid grid-cols-7 gap-0.5 sm:gap-1">
+                      {weekDays.map((day) => (
+                        <div
+                          key={day}
+                          className="py-1 text-center text-[10px] font-medium text-[var(--color-muted-foreground)] sm:text-xs"
+                        >
+                          {day}
+                        </div>
+                      ))}
+                      {getDaysInMonth(currentMonth).map((day, index) => (
+                        <button
+                          key={index}
+                          type="button"
+                          onClick={() => day !== null && handleDayClick(day)}
+                          disabled={day === null}
+                          className={cn(
+                            'h-7 w-7 rounded-[6px] text-xs transition-colors sm:h-8 sm:w-8 sm:rounded-[8px] sm:text-sm',
+                            day === null && 'cursor-default',
+                            day !== null && 'hover:bg-[var(--color-accent)]',
+                            isSelected(day, currentMonth) &&
+                              'bg-[var(--color-primary)] font-semibold text-[var(--color-primary-foreground)] shadow-sm hover:bg-[var(--color-primary)]/92',
+                            isToday(day, currentMonth) &&
+                              !isSelected(day, currentMonth) &&
+                              'border border-emerald-500/45 bg-emerald-500/12 font-semibold text-emerald-900 dark:border-emerald-400/40 dark:bg-emerald-500/18 dark:text-emerald-100',
+                            isSuggested(day, currentMonth) &&
+                              !isSelected(day, currentMonth) &&
+                              'border-2 border-[var(--color-primary)]/55 bg-[var(--color-primary)]/12 font-semibold text-[var(--color-foreground)]',
+                            isInRange(day, currentMonth) &&
+                              !isSelected(day, currentMonth) &&
+                              !isSuggested(day, currentMonth) &&
+                              !isToday(day, currentMonth) &&
+                              'bg-[var(--color-muted)]/90 text-[var(--color-foreground)] dark:bg-[var(--color-muted)]/50',
                             !isSelected(day, currentMonth) &&
-                            'border border-emerald-500/45 bg-emerald-500/12 font-semibold text-emerald-900 dark:border-emerald-400/40 dark:bg-emerald-500/18 dark:text-emerald-100',
-                          isSuggested(day, currentMonth) &&
-                            !isSelected(day, currentMonth) &&
-                            'border-2 border-[var(--color-primary)]/55 bg-[var(--color-primary)]/12 font-semibold text-[var(--color-foreground)]',
-                          isInRange(day, currentMonth) &&
-                            !isSelected(day, currentMonth) &&
-                            !isSuggested(day, currentMonth) &&
-                            !isToday(day, currentMonth) &&
-                            'bg-[var(--color-muted)]/90 text-[var(--color-foreground)] dark:bg-[var(--color-muted)]/50',
-                          !isSelected(day, currentMonth) &&
-                            !isToday(day, currentMonth) &&
-                            !isSuggested(day, currentMonth) &&
-                            !isInRange(day, currentMonth) &&
-                            day !== null &&
-                            'text-[var(--color-foreground)]',
-                        )}
-                      >
-                        {day}
-                      </button>
-                    ))}
-                  </div>
+                              !isToday(day, currentMonth) &&
+                              !isSuggested(day, currentMonth) &&
+                              !isInRange(day, currentMonth) &&
+                              day !== null &&
+                              'text-[var(--color-foreground)]',
+                          )}
+                        >
+                          {day}
+                        </button>
+                      ))}
+                    </div>
+                  )}
 
-                  {/* LEGENDA SÓ DO QUE PODE ACONTECER.
+                  {modo === 'meses' && (
+                    <div className="grid grid-cols-3 gap-1.5">
+                      {monthNames.map((nome, indice) => {
+                        const ehOMesAtual =
+                          indice === new Date().getMonth() &&
+                          currentMonth.getFullYear() === new Date().getFullYear();
+                        const ehOEscolhido =
+                          !!selectedDate &&
+                          indice === selectedDate.getMonth() &&
+                          currentMonth.getFullYear() === selectedDate.getFullYear();
+                        return (
+                          <button
+                            key={nome}
+                            type="button"
+                            onClick={() => {
+                              irPara({ mes: indice });
+                              // Escolher o mês devolve aos dias: ninguém abre
+                              // este painel para parar nele.
+                              setModo('dias');
+                            }}
+                            className={cn(
+                              'h-9 rounded-[8px] text-xs font-medium transition-colors hover:bg-[var(--color-accent)] sm:text-sm',
+                              ehOEscolhido
+                                ? 'bg-[var(--color-primary)] text-[var(--color-primary-foreground)] shadow-sm hover:bg-[var(--color-primary)]/92'
+                                : ehOMesAtual
+                                  ? 'border border-emerald-500/45 bg-emerald-500/12 font-semibold text-emerald-900 dark:border-emerald-400/40 dark:bg-emerald-500/18 dark:text-emerald-100'
+                                  : 'text-[var(--color-foreground)]',
+                            )}
+                          >
+                            {/* Três letras: "Fevereiro" e "Setembro" não cabem
+                                em coluna de terço num diálogo estreito. */}
+                            {nome.slice(0, 3)}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  {modo === 'anos' && (
+                    <div className="grid grid-cols-3 gap-1.5">
+                      {anosDaPagina.map((ano) => {
+                        const ehOAnoAtual = ano === new Date().getFullYear();
+                        const ehOEscolhido = !!selectedDate && ano === selectedDate.getFullYear();
+                        return (
+                          <button
+                            key={ano}
+                            type="button"
+                            onClick={() => {
+                              irPara({ ano });
+                              // Ano escolhido leva aos MESES, e não direto aos
+                              // dias: o mês herdado da tela anterior quase
+                              // nunca é o que se quer de outro ano.
+                              setModo('meses');
+                            }}
+                            className={cn(
+                              'h-9 rounded-[8px] text-xs font-medium tabular-nums transition-colors hover:bg-[var(--color-accent)] sm:text-sm',
+                              ehOEscolhido
+                                ? 'bg-[var(--color-primary)] text-[var(--color-primary-foreground)] shadow-sm hover:bg-[var(--color-primary)]/92'
+                                : ehOAnoAtual
+                                  ? 'border border-emerald-500/45 bg-emerald-500/12 font-semibold text-emerald-900 dark:border-emerald-400/40 dark:bg-emerald-500/18 dark:text-emerald-100'
+                                  : 'text-[var(--color-foreground)]',
+                            )}
+                          >
+                            {ano}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  {/* LEGENDA SÓ DO QUE PODE ACONTECER, e só no painel de dias:
+                      ela descreve as cores das células de DIA. Nos painéis de
+                      mês e ano as mesmas cores dizem outra coisa ("o mês de
+                      hoje", "o ano escolhido"), e a legenda ali seria ruído.
                       Ela listava os quatro estados sempre — inclusive "Sugerida"
                       em telas que nunca passam `suggestedDate`, e "Intervalo"
                       onde o intervalo está desligado. Legenda que descreve cor
                       que não aparece é pior que legenda nenhuma: manda procurar
                       algo que não existe. */}
+                  {modo === 'dias' && (
                   <div className="flex flex-wrap items-center justify-center gap-x-2 gap-y-1.5 border-t border-[var(--color-border)] pt-2">
                     {[
                       { chave: 'hoje', mostra: true, rotulo: 'Hoje',
@@ -460,6 +648,7 @@ const DateTimePicker = React.forwardRef<HTMLInputElement, DateTimePickerProps>(
                         </React.Fragment>
                       ))}
                   </div>
+                  )}
                 </div>
 
                 {/* Seletor de Hora — some quando só a data importa. */}
