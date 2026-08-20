@@ -27,23 +27,35 @@ const CURVA = 'cubic-bezier(0.22, 1, 0.36, 1)';
 /**
  * Como o card ATERRISSA quando é solto.
  *
- * O padrão da biblioteca são 250 ms com `ease`, que sai rápido e chega
- * frenando pouco — o card parece bater no lugar. Com a curva do projeto e um
- * tempo levemente maior, ele desacelera até assentar, que é o gesto que o resto
- * do sistema usa.
+ * O padrão da biblioteca são 250 ms com `ease`, que sai rápido e chega freando
+ * pouco — o card parece bater no lugar. Com a curva do projeto e um tempo
+ * levemente maior, ele desacelera até assentar, que é o gesto que o resto do
+ * sistema usa.
  *
- * O `sideEffects` mantém o card de ORIGEM invisível enquanto o clone voa. Sem
- * isso existem dois cards na tela durante a aterrissagem: `isDragging` já virou
- * falso — então o fantasma tracejado sumiu e o card real voltou sólido — mas o
- * clone ainda está no ar. É o padrão da biblioteca, e está aqui explícito
- * porque, escrito à mão, o `dropAnimation` substitui o objeto inteiro: passar
- * só `duration` e `easing` DESLIGA o efeito colateral e traz o card duplicado
- * de volta.
+ * `sideEffects` faz DUAS coisas aqui:
+ *
+ * 1. `className.dragOverlay` desfaz a inclinação na descida. O clone leva
+ *    `scale(1.03) rotate(2deg)` enquanto está no ar (`.card-arrastado`), e essa
+ *    transformação é `forwards` — sem desfazê-la, o card CHEGA torto e maior no
+ *    destino e só então some, dando lugar ao card real, que está reto. O pulo
+ *    aparece bem no fim do gesto, que é onde o olho está.
+ * 2. `styles.active` mantém o card de ORIGEM invisível enquanto o clone voa.
+ *    Sem isso há dois cards na tela durante a aterrissagem: `isDragging` já é
+ *    falso — então o slot tracejado sumiu e o card real voltou sólido — mas o
+ *    clone ainda está no ar.
+ *
+ * O ponto 2 é o comportamento PADRÃO da biblioteca, e está repetido aqui de
+ * propósito: `createDefaultDropAnimation` mescla as opções com os padrões num
+ * spread RASO (`{...padrão, ...opções}`), então informar um `sideEffects`
+ * próprio substitui o padrão inteiro. Passar só `duration` e `easing`, por
+ * outro lado, PRESERVA o efeito padrão — foi o que este comentário já afirmou
+ * ao contrário, e a diferença importa para quem for copiar isto.
  */
 export const ANIMACAO_DE_SOLTAR: DropAnimation = {
   duration: 260,
   easing: CURVA,
   sideEffects: defaultDropAnimationSideEffects({
+    className: { dragOverlay: 'card-pousando' },
     styles: { active: { opacity: '0' } },
   }),
 };

@@ -665,7 +665,12 @@ function KanbanCard({
         // `cursor-grab` só onde arrastar é possível: o cursor é a única pista
         // de que o card se move, e mostrá-lo num card travado promete algo que
         // não acontece.
-        isDragDisabled ? 'cursor-pointer' : 'cursor-grab',
+        //
+        // `touch-none` junto, e não por enfeite: sem `touch-action: none` o
+        // navegador trata o gesto no card como ROLAGEM e o arrasto simplesmente
+        // não acontece em tela de toque — a coluna desliza no lugar do card. O
+        // quadro do Suporte já tinha isso; este ficou sem.
+        isDragDisabled ? 'cursor-pointer' : 'touch-none cursor-grab',
         !showPriorityColorsOnCards && 'border-l-[var(--color-border)]',
         selected && 'ring-2 ring-[var(--color-primary)] border-[var(--color-primary)]',
         excludedFromBulkMove && 'cursor-not-allowed opacity-50',

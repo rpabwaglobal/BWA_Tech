@@ -593,7 +593,15 @@
    sendo a do card, senao a lacuna encolhe e a lista inteira pula. */
 .card-fantasma {
   background-color: transparent !important;
-  border: 2px dashed color-mix(in oklab, var(--color-primary) 55%, transparent) !important;
+  /* OUTLINE, E NAO BORDER. O card em repouso so tem borda a esquerda (o
+     preflight do Tailwind zera as outras), e a altura dele e do conteudo. Trocar
+     por `border: 2px` nos quatro lados somava 2px em cima e 2px embaixo: a lista
+     inteira dava um pulo de 4px no instante em que o arrasto comecava — o
+     oposto do que este redesenho existe para fazer. `outline` nao entra no box
+     model, e o offset negativo o traz para dentro do lugar da borda. */
+  outline: 2px dashed color-mix(in oklab, var(--color-primary) 55%, transparent);
+  outline-offset: -2px;
+  border-color: transparent !important;
   border-radius: 8px;
   box-shadow: none !important;
 }
@@ -622,7 +630,25 @@ body.arrastando * {
   user-select: none !important;
 }
 
+/* A DESCIDA DESFAZ O QUE A SUBIDA FEZ.
+   `.card-arrastado` termina em `scale(1.03) rotate(2deg)` e e `forwards`, entao
+   sem isto o clone CHEGA torto e maior no destino e so entao some, dando lugar
+   ao card real, que esta reto. O pulo acontece no ultimo quadro do gesto, que e
+   justamente onde o olho esta. A duracao acompanha a de `ANIMACAO_DE_SOLTAR`
+   (260ms) para as duas coisas terminarem juntas: o clone chega reto no mesmo
+   instante em que chega no lugar. */
+@keyframes card-pousa {
+  to {
+    transform: scale(1) rotate(0deg);
+    box-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+  }
+}
+.card-pousando .card-arrastado {
+  animation: card-pousa 260ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
 @media (prefers-reduced-motion: reduce) {
+  .card-pousando .card-arrastado { animation: none; }
   .card-arrastado {
     animation: none;
     transform: rotate(2deg);
