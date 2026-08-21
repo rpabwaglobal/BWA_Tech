@@ -25,42 +25,72 @@ correções e uma funcionalidade nova é MENOR — o número diz o TETO do que m
 **Sobe um, zera os de baixo:** depois da 2.2.4, uma funcionalidade nova vira
 2.3.0 (e não 2.3.4); uma grande mudança vira 3.0.0.
 
-### Quando cortar uma versão
+### Uma versão por commit
 
-**Todo push para `main` que muda o app é uma versão.** Não é rigor de processo —
-é a única forma de o número significar alguma coisa: o deploy é automático no
-push, então o que vai para `main` está em produção em minutos. Uma mudança que
-chega lá sem subir o número fica invisível, e a partir daí `VERSION` deixa de
-responder "o que está no ar".
+**Todo commit que muda o app sobe a versão.** Dez commits são dez versões. O
+número não espera por um "fechamento": ele viaja DENTRO do commit, junto com a
+entrada aqui no registro.
 
-Já aconteceu: a 2.2.0 foi cortada e **doze commits** entraram em produção depois
-dela, sob o mesmo número — incluindo o redesenho do arrastar de cards. Quem
-olhasse a tela veria uma coisa e o rodapé do perfil diria outra.
+Isso tem uma consequência que é o ponto todo: **a versão identifica um commit,
+sem ambiguidade**. `git show v2.3.4` mostra exatamente o que entrou naquele
+número, e a versão no rodapé do perfil aponta para uma linha única do histórico —
+não para "algum lugar entre a 2.2.0 e a próxima".
 
-O que **não** precisa de versão: mudança que não chega ao app — documentação,
-scripts locais, testes. O critério já está escrito em
+Cada commit sobe o dígito do SEU tipo, e zera os de baixo:
+
+| O commit | 2.3.4 vira |
+|---|---|
+| conserta um defeito | 2.3.5 |
+| traz funcionalidade nova | 2.4.0 |
+| é uma grande mudança | 3.0.0 |
+
+**Não há mais commit de "fechar versão".** `VERSION` e a seção do registro fazem
+parte do commit que faz o trabalho — separá-los é o que criou o problema que
+levou a esta regra: a 2.2.0 foi fechada e doze commits entraram em produção
+depois dela, sob o mesmo número.
+
+O que **não** sobe versão: commit que não chega ao app — documentação, scripts
+locais, testes. O critério já está escrito em
 [`.github/workflows/docker-publish.yml`](.github/workflows/docker-publish.yml):
 se o caminho está na lista que dispara o build, gerou imagem nova e é versão.
 
-**Toda versão vira uma tag no git.** É isso que torna a versão verificável e
-reversível: com a tag, `git show v2.1.0:VERSION` responde qual era a versão,
-`git diff v2.2.0..v2.3.0` mostra o que entrou entre uma e outra, e
-`git log v2.2.0..HEAD` responde a pergunta que mais importa no dia a dia —
-*o que já está no ar e ainda não tem versão?*
+### Tags, e o que de fato foi para produção
 
-### Ao lançar
+**Toda versão vira uma tag**, então a tag também é por commit. É ela que torna a
+versão verificável: `git show v2.3.4:VERSION` responde qual era o número, e
+`git diff v2.3.4..v2.4.0` mostra o que entrou entre uma e outra.
 
-1. Atualize `VERSION`.
-2. Acrescente a seção aqui, dizendo o que mudou para **quem usa** — não os
+Vale saber a diferença entre versão e implantação: um push com cinco commits
+deploya UMA vez, então as quatro versões do meio existem como marco no histórico,
+não como estado que rodou no servidor. Quem responde "o que está no ar agora" é o
+rodapé do perfil, que lê o `VERSION` da imagem em execução — e ele aponta a
+versão do ÚLTIMO commit da leva.
+
+### A cada commit
+
+Três coisas entram no MESMO commit do trabalho — não depois:
+
+1. `VERSION`, subindo o dígito do tipo do commit.
+2. A seção aqui no registro, dizendo o que mudou para **quem usa** — não os
    arquivos tocados, que o git já guarda.
-3. Comite, marque a tag e envie as duas coisas:
+3. O código.
+
+Depois de comitar, a tag:
 
 ```bash
-git tag -a v2.1.0 -m "Versao na tela e correcao do menu" && git push origin main --tags
+git tag -a v2.4.0 -m "Timeline do ticket recolhe para o canto"
 ```
 
-O deploy é automático no push para `main`; a tag não dispara nada, ela serve
-para achar e reverter depois.
+E, quando a leva estiver pronta para ir ao ar:
+
+```bash
+git push origin main --tags
+```
+
+O deploy é automático no push para `main`; a tag não dispara nada, ela serve para
+achar e reverter depois. Se a leva tem cinco commits, são cinco tags indo juntas
+num push só — e é isso que faz cada número apontar para uma linha exata do
+histórico.
 
 ### Para reverter
 
