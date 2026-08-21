@@ -18,6 +18,14 @@ import {
 interface CardLogsModalProps {
   cardId: string | null;
   isOpen: boolean;
+  /**
+   * Fecha a timeline POR COMPLETO. Não é o que o X do painel faz — aquele
+   * RECOLHE, e o painel vira um botão no canto. Quem desmonta de verdade é o
+   * fechamento do card, que passa `isOpen={false}`.
+   *
+   * Continua aqui porque o botão recolhido também precisa de uma saída: sem ela,
+   * a pastilha ficaria no canto até a pessoa fechar o card.
+   */
   onClose: () => void;
   refreshTrigger?: number;
 }
@@ -26,6 +34,22 @@ type FilterType = 'tudo' | 'alteracoes' | 'movimentacoes' | 'comentarios' | 'pen
 type SortOrder = 'desc' | 'asc';
 
 export function CardLogsModal({ cardId, isOpen, onClose, refreshTrigger }: CardLogsModalProps) {
+  /**
+   * A timeline RECOLHIDA, como pastilha no canto superior direito.
+   *
+   * O X fechava o painel de vez, e reabri-lo exigia voltar ao card e clicar de
+   * novo no histórico. Mas o painel divide a tela com o formulário do card, e
+   * quem o fecha quase sempre quer só ESPAÇO — não sair dele. Recolher em vez de
+   * fechar mantém o caminho de volta a um clique, e no mesmo canto de onde ele
+   * saiu, que é onde o olho vai procurar.
+   */
+  const [recolhido, setRecolhido] = useState(false);
+
+  // Cada card tem a sua timeline: abrir outro card não deve herdar o estado
+  // recolhido do anterior — a pessoa não recolheu ESTA.
+  useEffect(() => {
+    setRecolhido(false);
+  }, [cardId, isOpen]);
   const [logs, setLogs] = useState<CardLog[]>([]);
   const [loading, setLoading] = useState(false);
   const [filter, setFilter] = useState<FilterType>('tudo');
@@ -162,6 +186,40 @@ export function CardLogsModal({ cardId, isOpen, onClose, refreshTrigger }: CardL
 
   if (!isOpen) return null;
 
+  // RECOLHIDO: a pastilha ocupa o mesmo canto de onde o painel saiu.
+  //
+  // Portalizada pelo mesmo motivo do painel — é `fixed`, e sem o portal cairia
+  // 96px abaixo e 32px para dentro por causa do containing block de
+  // `.pagina-entra`.
+  if (recolhido) {
+    return createPortal(
+      <div className="timeline-pastilha fixed right-[8px] top-[8px] z-[60] flex items-center gap-[2px] rounded-full border border-[var(--color-border)] bg-[var(--color-card)] pl-[14px] pr-[6px] py-[6px] shadow-lg">
+        <button
+          type="button"
+          onClick={() => setRecolhido(false)}
+          className="flex items-center gap-[8px] rounded-full text-sm font-medium text-[var(--color-foreground)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-ring)]"
+        >
+          <Clock className="h-[16px] w-[16px] text-[var(--color-primary)]" />
+          Timeline do card
+        </button>
+        {/* A saída de verdade. Sem ela a pastilha ficaria no canto até a pessoa
+            fechar o card — recolher não pode virar uma porta só de ida. */}
+        <Button
+          variant="ghost"
+          size="icon"
+          type="button"
+          onClick={onClose}
+          title="Fechar a timeline"
+          className="h-[26px] w-[26px] rounded-full"
+        >
+          <X className="h-[14px] w-[14px]" />
+          <span className="sr-only">Fechar a timeline</span>
+        </Button>
+      </div>,
+      document.body,
+    );
+  }
+
   // PORTAL PARA O `body`, senão o painel não fica no canto da TELA.
   //
   // Ele é `position: fixed`, e `fixed` só se resolve contra o viewport quando
@@ -243,10 +301,12 @@ export function CardLogsModal({ cardId, isOpen, onClose, refreshTrigger }: CardL
             <Button
               variant="ghost"
               size="icon"
-              onClick={onClose}
+              onClick={() => setRecolhido(true)}
+              title="Recolher para o canto"
               className="h-[32px] w-[32px]"
             >
               <X className="h-[20px] w-[20px]" />
+              <span className="sr-only">Recolher a timeline</span>
             </Button>
           </div>
         </div>

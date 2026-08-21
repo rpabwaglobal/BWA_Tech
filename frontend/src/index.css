@@ -707,3 +707,18 @@ body.arrastando * {
     box-shadow: 0 25px 50px -12px rgb(0 0 0 / 0.35);
   }
 }
+
+/* A timeline recolhida entrando no canto.
+   Vem de fora pela direita e assenta: o gesto conta que ela FOI PARA ALI, em vez
+   de simplesmente aparecer noutro lugar. Curta (220ms) porque acontece toda vez
+   que alguem quer espaco na tela, e efeito repetido tem de ser breve. */
+@keyframes timeline-pastilha-entra {
+  from { opacity: 0; transform: translateX(16px) scale(0.96); }
+  to   { opacity: 1; transform: none; }
+}
+.timeline-pastilha {
+  animation: timeline-pastilha-entra 220ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+@media (prefers-reduced-motion: reduce) {
+  .timeline-pastilha { animation: none; }
+}
