@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
 import { hasPermission } from '@/lib/permissions';
@@ -2854,46 +2855,58 @@ export default function Projects() {
 
       {/* Barra inferior flutuante (mesmo padrão do kanban) */}
       {selectedProjectIds.length > 0 && (
-        <div className="pointer-events-none fixed inset-x-0 bottom-6 z-40 flex justify-center px-4">
-          <div className="pointer-events-auto flex max-w-[min(100%,640px)] flex-wrap items-center justify-center gap-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-background)] px-5 py-3 shadow-lg">
-            <span className="text-sm font-medium text-[var(--color-foreground)]">
-              {selectedProjectIds.length} projeto(s) selecionado(s)
-            </span>
-            {archiveTab === 'active' ? (
+        // PORTAL PARA O `body`: sem ele a barra não fica no rodapé da JANELA.
+        // `fixed` só se resolve contra o viewport quando nenhum ancestral cria
+        // containing block, e a tela vive dentro de `.pagina-entra`, que anima
+        // `transform`. O bloco da página tem altura de CONTEÚDO (quem rola é o
+        // documento), então `bottom-6` passava a valer 24px acima do FIM DA
+        // LISTA: com a lista maior que uma tela — o caso normal — a pessoa
+        // selecionava itens e não via barra nenhuma até rolar até o fim. E
+        // `inset-x-0` cobria só a área de conteúdo, então a barra centralizava
+        // 128px à direita do centro real da janela.
+        createPortal(
+          <div className="pointer-events-none fixed inset-x-0 bottom-6 z-40 flex justify-center px-4">
+            <div className="pointer-events-auto flex max-w-[min(100%,640px)] flex-wrap items-center justify-center gap-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-background)] px-5 py-3 shadow-lg">
+              <span className="text-sm font-medium text-[var(--color-foreground)]">
+                {selectedProjectIds.length} projeto(s) selecionado(s)
+              </span>
+              {archiveTab === 'active' ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setArchiveDialogOpen(true)}
+                >
+                  <Archive className="h-4 w-4 mr-2" />
+                  Arquivar
+                </Button>
+              ) : (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setUnarchiveDialogOpen(true)}
+                >
+                  <ArchiveRestore className="h-4 w-4 mr-2" />
+                  Desarquivar
+                </Button>
+              )}
               <Button
                 type="button"
-                variant="outline"
+                variant="destructive"
                 size="sm"
-                onClick={() => setArchiveDialogOpen(true)}
+                onClick={openDeletePreviewDialog}
               >
-                <Archive className="h-4 w-4 mr-2" />
-                Arquivar
+                <Trash2 className="h-4 w-4 mr-2" />
+                Excluir
               </Button>
-            ) : (
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={() => setUnarchiveDialogOpen(true)}
-              >
-                <ArchiveRestore className="h-4 w-4 mr-2" />
-                Desarquivar
+              <Button type="button" variant="outline" size="sm" onClick={exitSelectionMode}>
+                Cancelar
               </Button>
-            )}
-            <Button
-              type="button"
-              variant="destructive"
-              size="sm"
-              onClick={openDeletePreviewDialog}
-            >
-              <Trash2 className="h-4 w-4 mr-2" />
-              Excluir
-            </Button>
-            <Button type="button" variant="outline" size="sm" onClick={exitSelectionMode}>
-              Cancelar
-            </Button>
-          </div>
-        </div>
+            </div>
+          </div>,
+          document.body,
+        )
       )}
 
       {/* Dialog: confirmar arquivamento em massa */}

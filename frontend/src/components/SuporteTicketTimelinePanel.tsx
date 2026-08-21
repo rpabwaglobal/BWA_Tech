@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Clock, Loader2, MessageSquare, SendHorizontal, User, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
@@ -98,7 +99,17 @@ export function SuporteTicketTimelinePanel({
     }
   };
 
-  return (
+  // PORTAL PARA O `body`, pelo mesmo motivo do `CardLogsModal` — este painel é o
+  // gêmeo dele, com as mesmas classes. `position: fixed` só se resolve contra o
+  // viewport quando nenhum ancestral cria containing block, e a tela inteira vive
+  // dentro de `.pagina-entra`, que anima `transform`. Sem o portal o painel
+  // descia o header (64px) mais o `p-[32px]` do `main`, e o `h-[calc(100vh-16px)]`
+  // transbordava por baixo — os últimos eventos ficavam abaixo da borda da tela,
+  // sem como alcançá-los, porque a lista rola DENTRO do painel.
+  //
+  // Aqui doía mais que no card: `timelineOpen` nasce `true` (Support.tsx), então
+  // o painel abre junto com o ticket e ninguém precisa clicar para ver o defeito.
+  return createPortal(
     <div
       className="fixed right-[8px] top-[8px] z-[60] flex h-[calc(100vh-16px)] w-[480px] transform flex-col rounded-[8px] border border-[var(--color-border)] bg-[var(--color-background)] shadow-2xl transition-transform duration-300 ease-in-out pointer-events-auto translate-x-0"
       onClick={(e) => e.stopPropagation()}
@@ -226,6 +237,7 @@ export function SuporteTicketTimelinePanel({
           </div>
         )}
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

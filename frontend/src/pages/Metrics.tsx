@@ -1,4 +1,5 @@
 import { useEffect, useState, useMemo, useRef, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -2191,19 +2192,33 @@ export default function Metrics() {
           {sprints.length === 0 && (
             <p className="text-sm text-[var(--color-muted-foreground)] py-4">Nenhuma sprint com entregas</p>
           )}
-          {heatmapTooltip && (
-            <div
-              className="fixed z-50 pointer-events-none p-3 bg-[var(--color-card)] border border-[var(--color-border)] rounded-lg shadow-lg max-w-xs max-h-48 overflow-y-auto text-sm"
-              style={{ left: Math.min(heatmapTooltip.x + 12, window.innerWidth - 280), top: heatmapTooltip.y + 12 }}
-            >
-              <p className="font-medium mb-1">{heatmapTooltip.sprintName} – Dia {heatmapTooltip.day}</p>
-              <ul className="list-disc list-inside space-y-0.5">
-                {heatmapTooltip.cards.map((c) => (
-                  <li key={c.id}>{c.nome}</li>
-                ))}
-              </ul>
-            </div>
-          )}
+          {heatmapTooltip &&
+            // PORTAL PARA O `body`. As coordenadas vêm de `clientX`/`clientY`,
+            // que são do VIEWPORT — mas `fixed` só se resolve contra o viewport
+            // quando nenhum ancestral cria containing block, e a tela vive dentro
+            // de `.pagina-entra`, que anima `transform`. Sem o portal o balão
+            // nascia ~288px à direita e ~96px abaixo do quadradinho apontado, e
+            // o erro vertical INVERTIA conforme a rolagem: como o heatmap fica
+            // no meio da página, na prática o balão saía da tela e o efeito era
+            // "esse heatmap não tem tooltip".
+            //
+            // O portal também devolve sentido ao limite da direita: medido no
+            // viewport e aplicado dentro de um bloco que começava 288px adiante,
+            // ele empurrava o balão para FORA da janela em vez de segurá-lo.
+            createPortal(
+              <div
+                className="fixed z-50 pointer-events-none p-3 bg-[var(--color-card)] border border-[var(--color-border)] rounded-lg shadow-lg max-w-xs max-h-48 overflow-y-auto text-sm"
+                style={{ left: Math.min(heatmapTooltip.x + 12, window.innerWidth - 280), top: heatmapTooltip.y + 12 }}
+              >
+                <p className="font-medium mb-1">{heatmapTooltip.sprintName} – Dia {heatmapTooltip.day}</p>
+                <ul className="list-disc list-inside space-y-0.5">
+                  {heatmapTooltip.cards.map((c) => (
+                    <li key={c.id}>{c.nome}</li>
+                  ))}
+                </ul>
+              </div>,
+              document.body,
+            )}
         </CardContent>
       </Card>
 

@@ -39,7 +39,7 @@ import { cardService, CARD_AREAS, CARD_TYPES, CARD_PRIORITIES, CARD_STATUSES } f
 import { userService } from '@/services/userService';
 import { cardLogService } from '@/services/cardLogService';
 import { cardPinService } from '@/services/cardPinService';
-import { CardLogsModal, CARD_TIMELINE_LAYOUT_RESERVE_PX } from '@/components/CardLogsModal';
+import { CardLogsModal } from '@/components/CardLogsModal';
 import type { Sprint } from '@/services/sprintService';
 import type { Project } from '@/services/projectService';
 import type { Card as CardType, CardLink } from '@/services/cardService';
@@ -3013,7 +3013,6 @@ export default function SprintDetails() {
           reaparecer sozinho quando a solicitação fecha, sem restaurar nada. */}
       <Dialog
         open={cardDialogOpen && !reopenRequestOpen}
-        reserveRightPx={editingCard && logsModalOpen ? CARD_TIMELINE_LAYOUT_RESERVE_PX : undefined}
         onOpenChange={(open) => {
           if (open) {
             setCardDialogOpen(true);

@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import {
   Archive,
@@ -2189,25 +2190,37 @@ export default function MyTasks() {
 
       {/* Barra inferior flutuante (mesmo padrão do kanban) */}
       {selectedNoteIds.length > 0 && (
-        <div className="pointer-events-none fixed inset-x-0 bottom-6 z-40 flex justify-center px-4">
-          <div className="pointer-events-auto flex max-w-[min(100%,560px)] flex-wrap items-center justify-center gap-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-background)] px-5 py-3 shadow-lg">
-            <span className="text-sm font-medium text-[var(--color-foreground)]">
-              {selectedNoteIds.length} anotação(ões) selecionada(s)
-            </span>
-            <Button
-              type="button"
-              variant="destructive"
-              size="sm"
-              onClick={() => setBulkDeleteOpen(true)}
-            >
-              <Trash2 className="h-4 w-4 mr-2" />
-              Apagar
-            </Button>
-            <Button type="button" variant="outline" size="sm" onClick={exitSelectionMode}>
-              Cancelar
-            </Button>
-          </div>
-        </div>
+        // PORTAL PARA O `body`: sem ele a barra não fica no rodapé da JANELA.
+        // `fixed` só se resolve contra o viewport quando nenhum ancestral cria
+        // containing block, e a tela vive dentro de `.pagina-entra`, que anima
+        // `transform`. O bloco da página tem altura de CONTEÚDO (quem rola é o
+        // documento), então `bottom-6` passava a valer 24px acima do FIM DA
+        // LISTA: com a lista maior que uma tela — o caso normal — a pessoa
+        // selecionava itens e não via barra nenhuma até rolar até o fim. E
+        // `inset-x-0` cobria só a área de conteúdo, então a barra centralizava
+        // 128px à direita do centro real da janela.
+        createPortal(
+          <div className="pointer-events-none fixed inset-x-0 bottom-6 z-40 flex justify-center px-4">
+            <div className="pointer-events-auto flex max-w-[min(100%,560px)] flex-wrap items-center justify-center gap-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-background)] px-5 py-3 shadow-lg">
+              <span className="text-sm font-medium text-[var(--color-foreground)]">
+                {selectedNoteIds.length} anotação(ões) selecionada(s)
+              </span>
+              <Button
+                type="button"
+                variant="destructive"
+                size="sm"
+                onClick={() => setBulkDeleteOpen(true)}
+              >
+                <Trash2 className="h-4 w-4 mr-2" />
+                Apagar
+              </Button>
+              <Button type="button" variant="outline" size="sm" onClick={exitSelectionMode}>
+                Cancelar
+              </Button>
+            </div>
+          </div>,
+          document.body,
+        )
       )}
 
       {/* Dialog de confirmação de exclusão em massa */}

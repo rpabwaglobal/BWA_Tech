@@ -9,47 +9,31 @@ interface DialogProps {
   children: React.ReactNode;
   /** Classes do wrapper externo (largura). Padrão: max-w-lg */
   containerClassName?: string;
-  /**
-   * Largura reservada à direita (px), ex. painel da timeline — o backdrop não cobre essa faixa.
-   * O conteúdo do modal permanece centralizado na tela inteira (50% / 50%), como sem reserva.
-   */
-  reserveRightPx?: number;
 }
 
- // Com reserveRightPx, o backdrop deixa a timeline à direita fora do escurecimento; o painel do modal usa o mesmo centro da viewport.
-const Dialog: React.FC<DialogProps> = ({ open, onOpenChange, children, containerClassName, reserveRightPx }) => {
+/**
+ * O BACKDROP COBRE A TELA INTEIRA, SEMPRE.
+ *
+ * Havia uma prop `reserveRightPx` que o encurtava pela direita, para "deixar a
+ * timeline fora do escurecimento". Ela não era necessária — o painel da timeline
+ * é `z-[60]` e o backdrop é `z-50`, então o painel já fica POR CIMA e nunca foi
+ * escurecido — e cobrava um preço visível: a faixa reservada tinha 488px e o
+ * painel ocupa 480, então sobravam tiras sem desfoque acima, abaixo e à direita
+ * dele, mostrando a página crua ao redor de um painel flutuante.
+ */
+const Dialog: React.FC<DialogProps> = ({ open, onOpenChange, children, containerClassName }) => {
   if (!open) return null;
 
-  const backdropStyle: React.CSSProperties =
-    reserveRightPx != null
-      ? { top: 0, left: 0, bottom: 0, right: reserveRightPx }
-      : { top: 0, left: 0, right: 0, bottom: 0 };
-
-  const contentWrapperClassName =
-    reserveRightPx != null
-      ? cn('w-full px-4', containerClassName ?? 'max-w-lg')
-      : cn(
-          'fixed left-1/2 top-1/2 z-[60] w-full -translate-x-1/2 -translate-y-1/2 px-4',
-          containerClassName ?? 'max-w-lg',
-        );
-
-  const contentWrapperStyle: React.CSSProperties | undefined =
-    reserveRightPx != null
-      ? {
-          position: 'fixed',
-          top: '50%',
-          left: '50%',
-          transform: 'translate(-50%, -50%)',
-          zIndex: 60,
-        }
-      : undefined;
+  const contentWrapperClassName = cn(
+    'fixed left-1/2 top-1/2 z-[60] w-full -translate-x-1/2 -translate-y-1/2 px-4',
+    containerClassName ?? 'max-w-lg',
+  );
 
   return (
     <>
       {createPortal(
         <div
-          className="fixed z-50 bg-black/50 backdrop-blur-sm"
-          style={backdropStyle}
+          className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm"
           onClick={() => onOpenChange(false)}
           aria-hidden
         />,
@@ -58,7 +42,6 @@ const Dialog: React.FC<DialogProps> = ({ open, onOpenChange, children, container
       {createPortal(
         <div
           className={contentWrapperClassName}
-          style={contentWrapperStyle}
           onClick={(e) => e.stopPropagation()}
         >
           {children}

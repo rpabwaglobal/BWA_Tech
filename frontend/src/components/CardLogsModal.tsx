@@ -15,8 +15,6 @@ import {
 } from './ui/dropdown-menu';
 
 /** right-[8px] + painel w-[480px]: reservar no Dialog do card para encaixar com a timeline */
-export const CARD_TIMELINE_LAYOUT_RESERVE_PX = 488;
-
 interface CardLogsModalProps {
   cardId: string | null;
   isOpen: boolean;

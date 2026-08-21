@@ -71,7 +71,6 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { CARD_TIMELINE_LAYOUT_RESERVE_PX } from '@/components/CardLogsModal';
 import { SuporteTicketTimelinePanel } from '@/components/SuporteTicketTimelinePanel';
 import { ConclusaoModal } from '@/components/ConclusaoModal';
 import { PendenciaModal } from '@/components/PendenciaModal';
@@ -1831,42 +1830,54 @@ export default function Support() {
           chamados selecionados em modo seleção. Mesmo padrão visual da página
           de sprint/projetos. */}
       {selectionMode && selectedChamadoIds.length > 0 && (
-        <div className="pointer-events-none fixed inset-x-0 bottom-6 z-40 flex justify-center px-4">
-          <div className="pointer-events-auto flex max-w-[min(100%,720px)] flex-wrap items-center justify-center gap-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-background)] px-5 py-3 shadow-lg">
-            <span className="text-sm font-medium text-[var(--color-foreground)]">
-              {selectedChamadoIds.length} ticket(s) selecionado(s)
-            </span>
-            <span className="text-[11px] uppercase tracking-wide text-[var(--color-muted-foreground)]">
-              Mover para
-            </span>
-            {TABS.filter((t) => t.key !== currentTab && t.tipoNome).map((t) => {
-              const targetTipoId = tipoIdByName[t.tipoNome];
-              return (
-                <Button
-                  key={t.key}
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  disabled={bulkMoving || targetTipoId == null}
-                  onClick={() => void handleBulkMoveToTab(t.key)}
-                >
-                  <ArrowRightLeft className="h-4 w-4 mr-2" />
-                  {t.label}
-                </Button>
-              );
-            })}
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              onClick={exitSelectionMode}
-              disabled={bulkMoving}
-            >
-              Cancelar
-            </Button>
-            {bulkMoving && <Loader2 className="h-4 w-4 animate-spin text-[var(--color-muted-foreground)]" />}
-          </div>
-        </div>
+        // PORTAL PARA O `body`: sem ele a barra não fica no rodapé da JANELA.
+        // `fixed` só se resolve contra o viewport quando nenhum ancestral cria
+        // containing block, e a tela vive dentro de `.pagina-entra`, que anima
+        // `transform`. O bloco da página tem altura de CONTEÚDO (quem rola é o
+        // documento), então `bottom-6` passava a valer 24px acima do FIM DA
+        // LISTA: com a lista maior que uma tela — o caso normal — a pessoa
+        // selecionava itens e não via barra nenhuma até rolar até o fim. E
+        // `inset-x-0` cobria só a área de conteúdo, então a barra centralizava
+        // 128px à direita do centro real da janela.
+        createPortal(
+          <div className="pointer-events-none fixed inset-x-0 bottom-6 z-40 flex justify-center px-4">
+            <div className="pointer-events-auto flex max-w-[min(100%,720px)] flex-wrap items-center justify-center gap-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-background)] px-5 py-3 shadow-lg">
+              <span className="text-sm font-medium text-[var(--color-foreground)]">
+                {selectedChamadoIds.length} ticket(s) selecionado(s)
+              </span>
+              <span className="text-[11px] uppercase tracking-wide text-[var(--color-muted-foreground)]">
+                Mover para
+              </span>
+              {TABS.filter((t) => t.key !== currentTab && t.tipoNome).map((t) => {
+                const targetTipoId = tipoIdByName[t.tipoNome];
+                return (
+                  <Button
+                    key={t.key}
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    disabled={bulkMoving || targetTipoId == null}
+                    onClick={() => void handleBulkMoveToTab(t.key)}
+                  >
+                    <ArrowRightLeft className="h-4 w-4 mr-2" />
+                    {t.label}
+                  </Button>
+                );
+              })}
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={exitSelectionMode}
+                disabled={bulkMoving}
+              >
+                Cancelar
+              </Button>
+              {bulkMoving && <Loader2 className="h-4 w-4 animate-spin text-[var(--color-muted-foreground)]" />}
+            </div>
+          </div>,
+          document.body,
+        )
       )}
     </TelaComCarregamento>
   );
@@ -2748,7 +2759,6 @@ export function ChamadoDetailDialog({
       <Dialog
         open={open}
         onOpenChange={onOpenChange}
-        reserveRightPx={timelineOpen ? CARD_TIMELINE_LAYOUT_RESERVE_PX : undefined}
       >
         <DialogContent className="sm:max-w-[600px] max-h-[90vh] overflow-y-auto">
           <DialogHeader className="flex flex-row flex-wrap items-start justify-between gap-x-3 gap-y-2 space-y-0 text-left">
