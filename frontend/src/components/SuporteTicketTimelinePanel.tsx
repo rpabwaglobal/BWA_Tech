@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { useTimelineRecolhivel } from '@/hooks/useTimelineRecolhivel';
 import { Clock, Loader2, MessageSquare, SendHorizontal, User, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
@@ -13,6 +14,11 @@ type SuporteTicketTimelinePanelProps = {
   chamadoId: number;
   /** Incrementado no pai após eventos automáticos para recarregar a lista. */
   refreshNonce?: number;
+  /**
+   * Fecha a timeline POR COMPLETO. Não é o que o X do painel faz — aquele
+   * RECOLHE, e o painel vira uma pastilha no canto. A saída de verdade fica na
+   * própria pastilha.
+   */
   onClose: () => void;
   onError?: (message: string) => void;
 };
@@ -23,6 +29,22 @@ export function SuporteTicketTimelinePanel({
   onClose,
   onError,
 }: SuporteTicketTimelinePanelProps) {
+  /**
+   * RECOLHER FAZ MAIS FALTA AQUI QUE NO CARD.
+   *
+   * Este painel nasce ABERTO junto com o ticket (`timelineOpen` começa `true`),
+   * então quem quer olhar o formulário sem a timeline ao lado não tem como pedir
+   * isso — só fechando de vez e perdendo o caminho de volta. Recolhido, ele vira
+   * uma pastilha no mesmo canto de onde saiu, e volta com um clique.
+   */
+  const {
+    recolhido,
+    trocarVista,
+    aoTerminarSaida,
+    classeDoPainel,
+    classeDaPastilha,
+  } = useTimelineRecolhivel({ reiniciarQuando: [chamadoId] });
+
   const [entries, setEntries] = useState<SuporteTimelineEntry[]>([]);
   const [loading, setLoading] = useState(false);
   const [commentText, setCommentText] = useState('');
@@ -99,6 +121,39 @@ export function SuporteTicketTimelinePanel({
     }
   };
 
+  // RECOLHIDO: a pastilha ocupa o mesmo canto de onde o painel saiu.
+  if (recolhido) {
+    return createPortal(
+      <div
+        onAnimationEnd={aoTerminarSaida}
+        className={`${classeDaPastilha} fixed right-[8px] top-[8px] z-[60] flex items-center gap-[2px] rounded-full border border-[var(--color-border)] bg-[var(--color-card)] pl-[14px] pr-[6px] py-[6px] shadow-lg`}
+      >
+        <button
+          type="button"
+          onClick={trocarVista}
+          className="flex items-center gap-[8px] rounded-full text-sm font-medium text-[var(--color-foreground)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-ring)]"
+        >
+          <Clock className="h-[16px] w-[16px] text-[var(--color-primary)]" />
+          Timeline do ticket
+        </button>
+        {/* A saída de verdade. Sem ela a pastilha ficaria no canto até a pessoa
+            fechar o ticket — recolher não pode virar porta só de ida. */}
+        <Button
+          variant="ghost"
+          size="icon"
+          type="button"
+          onClick={onClose}
+          title="Fechar a timeline"
+          className="h-[26px] w-[26px] rounded-full"
+        >
+          <X className="h-[14px] w-[14px]" />
+          <span className="sr-only">Fechar a timeline</span>
+        </Button>
+      </div>,
+      document.body,
+    );
+  }
+
   // PORTAL PARA O `body`, pelo mesmo motivo do `CardLogsModal` — este painel é o
   // gêmeo dele, com as mesmas classes. `position: fixed` só se resolve contra o
   // viewport quando nenhum ancestral cria containing block, e a tela inteira vive
@@ -111,14 +166,25 @@ export function SuporteTicketTimelinePanel({
   // o painel abre junto com o ticket e ninguém precisa clicar para ver o defeito.
   return createPortal(
     <div
-      className="fixed right-[8px] top-[8px] z-[60] flex h-[calc(100vh-16px)] w-[480px] transform flex-col rounded-[8px] border border-[var(--color-border)] bg-[var(--color-background)] shadow-2xl transition-transform duration-300 ease-in-out pointer-events-auto translate-x-0"
+      onAnimationEnd={aoTerminarSaida}
+      // A ANIMAÇÃO SUBSTITUI A TRANSIÇÃO QUE NUNCA RODOU. Havia aqui
+      // `transition-transform` com `translate-x-0` fixo — não havia estado
+      // anterior de onde partir, então o painel aparecia e sumia seco.
+      className={`${classeDoPainel} fixed right-[8px] top-[8px] z-[60] flex h-[calc(100vh-16px)] w-[480px] flex-col rounded-[8px] border border-[var(--color-border)] bg-[var(--color-background)] shadow-2xl pointer-events-auto`}
       onClick={(e) => e.stopPropagation()}
     >
       <div className="flex flex-shrink-0 items-center justify-between border-b border-[var(--color-border)] p-[16px]">
         <h2 className="text-xl font-semibold text-[var(--color-foreground)]">Timeline do ticket</h2>
-        <Button variant="ghost" size="icon" className="h-[32px] w-[32px]" type="button" onClick={onClose}>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-[32px] w-[32px]"
+          type="button"
+          onClick={trocarVista}
+          title="Recolher para o canto"
+        >
           <X className="h-[20px] w-[20px]" />
-          <span className="sr-only">Fechar timeline</span>
+          <span className="sr-only">Recolher a timeline</span>
         </Button>
       </div>
 

@@ -70,6 +70,18 @@ antes de reverter, e reverta a migração antes do código.
 
 ---
 
+## 2.4.0
+
+Data: 21/08/2026 · migração de banco: **não**
+
+- **A timeline do ticket de suporte recolhe.** Fechar não a descarta mais: ela
+  vira uma pastilha "Timeline do ticket" no canto superior direito e volta com um
+  clique. Fazia mais falta aqui que no card, porque este painel abre junto com o
+  ticket — quem quisesse ver o formulário sem ele ao lado só tinha a opção de
+  fechar de vez e perder o caminho de volta.
+
+---
+
 ## 2.3.0
 
 Data: 21/08/2026 · migração de banco: **não**

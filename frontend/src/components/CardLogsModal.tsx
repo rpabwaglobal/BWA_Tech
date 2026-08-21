@@ -1,5 +1,6 @@
 import { useEffect, useState, useMemo, useRef } from 'react';
 import { createPortal } from 'react-dom';
+import { useTimelineRecolhivel } from '@/hooks/useTimelineRecolhivel';
 import { X, Loader2, Clock, User, Filter, ArrowUp, ArrowDown, SendHorizontal, MessageSquare } from 'lucide-react';
 import { cardLogService, type CardLog } from '@/services/cardLogService';
 import { formatDateTime } from '@/lib/dateUtils';
@@ -43,46 +44,13 @@ export function CardLogsModal({ cardId, isOpen, onClose, refreshTrigger }: CardL
    * fechar mantém o caminho de volta a um clique, e no mesmo canto de onde ele
    * saiu, que é onde o olho vai procurar.
    */
-  const [recolhido, setRecolhido] = useState(false);
-  /**
-   * O QUADRO EM QUE O QUE ESTÁ SAINDO AINDA ESTÁ NA TELA.
-   *
-   * Animação de saída exige que o nó continue montado enquanto ela roda. Trocar
-   * `recolhido` direto desmonta o painel no MESMO quadro em que a classe de
-   * saída entraria, e a animação nunca chega a rodar — foi exatamente o que já
-   * aconteceu com o aviso de carregamento deste projeto. Então a troca acontece
-   * em dois tempos: `saindo` liga, a animação roda, e só no `animationend` a
-   * vista muda de fato.
-   */
-  const [saindo, setSaindo] = useState(false);
-
-  /** Quem pediu menos movimento troca DIRETO: sem animação não há
-   *  `animationend`, e esperar por ele deixaria a troca presa para sempre. */
-  const trocarVista = () => {
-    if (window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches) {
-      setRecolhido((v) => !v);
-      return;
-    }
-    setSaindo(true);
-  };
-
-  /** Fim da animação de SAÍDA — é aqui que a vista realmente muda.
-   *
-   *  `animationend` BORBULHA: a animação de qualquer filho dispararia este mesmo
-   *  handler. Por isso o alvo é conferido, e por isso só age quando `saindo`
-   *  está ligado — a animação de ENTRADA também passa por aqui. */
-  const aoTerminarSaida = (e: React.AnimationEvent<HTMLElement>) => {
-    if (e.target !== e.currentTarget || !saindo) return;
-    setSaindo(false);
-    setRecolhido((v) => !v);
-  };
-
-  // Cada card tem a sua timeline: abrir outro card não deve herdar o estado
-  // recolhido do anterior — a pessoa não recolheu ESTA.
-  useEffect(() => {
-    setRecolhido(false);
-    setSaindo(false);
-  }, [cardId, isOpen]);
+  const {
+    recolhido,
+    trocarVista,
+    aoTerminarSaida,
+    classeDoPainel,
+    classeDaPastilha,
+  } = useTimelineRecolhivel({ reiniciarQuando: [cardId, isOpen] });
   const [logs, setLogs] = useState<CardLog[]>([]);
   const [loading, setLoading] = useState(false);
   const [filter, setFilter] = useState<FilterType>('tudo');
@@ -228,7 +196,7 @@ export function CardLogsModal({ cardId, isOpen, onClose, refreshTrigger }: CardL
     return createPortal(
       <div
         onAnimationEnd={aoTerminarSaida}
-        className={`${saindo ? 'timeline-pastilha-sai' : 'timeline-pastilha'} fixed right-[8px] top-[8px] z-[60] flex items-center gap-[2px] rounded-full border border-[var(--color-border)] bg-[var(--color-card)] pl-[14px] pr-[6px] py-[6px] shadow-lg`}
+        className={`${classeDaPastilha} fixed right-[8px] top-[8px] z-[60] flex items-center gap-[2px] rounded-full border border-[var(--color-border)] bg-[var(--color-card)] pl-[14px] pr-[6px] py-[6px] shadow-lg`}
       >
         <button
           type="button"
@@ -276,7 +244,7 @@ export function CardLogsModal({ cardId, isOpen, onClose, refreshTrigger }: CardL
       // por `isOpen` — mas o componente retorna `null` quando fechado, então o
       // estado `translate-x-full` jamais chegou a ser renderizado e a transição
       // não tinha de onde partir. O painel aparecia e sumia seco.
-      className={`${saindo ? 'painel-timeline-sai' : 'painel-timeline-entra'} fixed right-[8px] top-[8px] h-[calc(100vh-16px)] w-[480px] bg-[var(--color-background)] border border-[var(--color-border)] rounded-[8px] shadow-2xl z-[60] pointer-events-auto`}
+      className={`${classeDoPainel} fixed right-[8px] top-[8px] h-[calc(100vh-16px)] w-[480px] bg-[var(--color-background)] border border-[var(--color-border)] rounded-[8px] shadow-2xl z-[60] pointer-events-auto`}
       onClick={(e) => e.stopPropagation()}
     >
       <div className="flex flex-col h-full">
