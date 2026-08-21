@@ -44,11 +44,44 @@ export function CardLogsModal({ cardId, isOpen, onClose, refreshTrigger }: CardL
    * saiu, que é onde o olho vai procurar.
    */
   const [recolhido, setRecolhido] = useState(false);
+  /**
+   * O QUADRO EM QUE O QUE ESTÁ SAINDO AINDA ESTÁ NA TELA.
+   *
+   * Animação de saída exige que o nó continue montado enquanto ela roda. Trocar
+   * `recolhido` direto desmonta o painel no MESMO quadro em que a classe de
+   * saída entraria, e a animação nunca chega a rodar — foi exatamente o que já
+   * aconteceu com o aviso de carregamento deste projeto. Então a troca acontece
+   * em dois tempos: `saindo` liga, a animação roda, e só no `animationend` a
+   * vista muda de fato.
+   */
+  const [saindo, setSaindo] = useState(false);
+
+  /** Quem pediu menos movimento troca DIRETO: sem animação não há
+   *  `animationend`, e esperar por ele deixaria a troca presa para sempre. */
+  const trocarVista = () => {
+    if (window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches) {
+      setRecolhido((v) => !v);
+      return;
+    }
+    setSaindo(true);
+  };
+
+  /** Fim da animação de SAÍDA — é aqui que a vista realmente muda.
+   *
+   *  `animationend` BORBULHA: a animação de qualquer filho dispararia este mesmo
+   *  handler. Por isso o alvo é conferido, e por isso só age quando `saindo`
+   *  está ligado — a animação de ENTRADA também passa por aqui. */
+  const aoTerminarSaida = (e: React.AnimationEvent<HTMLElement>) => {
+    if (e.target !== e.currentTarget || !saindo) return;
+    setSaindo(false);
+    setRecolhido((v) => !v);
+  };
 
   // Cada card tem a sua timeline: abrir outro card não deve herdar o estado
   // recolhido do anterior — a pessoa não recolheu ESTA.
   useEffect(() => {
     setRecolhido(false);
+    setSaindo(false);
   }, [cardId, isOpen]);
   const [logs, setLogs] = useState<CardLog[]>([]);
   const [loading, setLoading] = useState(false);
@@ -193,10 +226,13 @@ export function CardLogsModal({ cardId, isOpen, onClose, refreshTrigger }: CardL
   // `.pagina-entra`.
   if (recolhido) {
     return createPortal(
-      <div className="timeline-pastilha fixed right-[8px] top-[8px] z-[60] flex items-center gap-[2px] rounded-full border border-[var(--color-border)] bg-[var(--color-card)] pl-[14px] pr-[6px] py-[6px] shadow-lg">
+      <div
+        onAnimationEnd={aoTerminarSaida}
+        className={`${saindo ? 'timeline-pastilha-sai' : 'timeline-pastilha'} fixed right-[8px] top-[8px] z-[60] flex items-center gap-[2px] rounded-full border border-[var(--color-border)] bg-[var(--color-card)] pl-[14px] pr-[6px] py-[6px] shadow-lg`}
+      >
         <button
           type="button"
-          onClick={() => setRecolhido(false)}
+          onClick={trocarVista}
           className="flex items-center gap-[8px] rounded-full text-sm font-medium text-[var(--color-foreground)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-ring)]"
         >
           <Clock className="h-[16px] w-[16px] text-[var(--color-primary)]" />
@@ -234,9 +270,13 @@ export function CardLogsModal({ cardId, isOpen, onClose, refreshTrigger }: CardL
   // aparecia certo enquanto este, ao lado, aparecia torto.
   return createPortal(
     <div
-      className={`fixed right-[8px] top-[8px] h-[calc(100vh-16px)] w-[480px] bg-[var(--color-background)] border border-[var(--color-border)] rounded-[8px] shadow-2xl z-[60] transform transition-transform duration-300 ease-in-out pointer-events-auto ${
-        isOpen ? 'translate-x-0' : 'translate-x-full'
-      }`}
+      onAnimationEnd={aoTerminarSaida}
+      // A ANIMAÇÃO SUBSTITUI A TRANSIÇÃO QUE NUNCA RODOU. Havia aqui
+      // `transition-transform` com `translate-x-0`/`translate-x-full` alternando
+      // por `isOpen` — mas o componente retorna `null` quando fechado, então o
+      // estado `translate-x-full` jamais chegou a ser renderizado e a transição
+      // não tinha de onde partir. O painel aparecia e sumia seco.
+      className={`${saindo ? 'painel-timeline-sai' : 'painel-timeline-entra'} fixed right-[8px] top-[8px] h-[calc(100vh-16px)] w-[480px] bg-[var(--color-background)] border border-[var(--color-border)] rounded-[8px] shadow-2xl z-[60] pointer-events-auto`}
       onClick={(e) => e.stopPropagation()}
     >
       <div className="flex flex-col h-full">
@@ -301,7 +341,7 @@ export function CardLogsModal({ cardId, isOpen, onClose, refreshTrigger }: CardL
             <Button
               variant="ghost"
               size="icon"
-              onClick={() => setRecolhido(true)}
+              onClick={trocarVista}
               title="Recolher para o canto"
               className="h-[32px] w-[32px]"
             >

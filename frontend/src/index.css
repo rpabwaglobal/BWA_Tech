@@ -722,3 +722,44 @@ body.arrastando * {
 @media (prefers-reduced-motion: reduce) {
   .timeline-pastilha { animation: none; }
 }
+
+/* A TIMELINE ENTRANDO E SAINDO PELA DIREITA.
+   O painel vem de fora da tela e volta para fora — ele mora na borda direita,
+   entao e de la que faz sentido chegar. `forwards` na saida: sem ele o painel
+   voltaria ao lugar no ultimo quadro, antes de o React desmonta-lo, e o efeito
+   seria um pulo.
+
+   Sao 280ms contra os 220ms da pastilha: o painel percorre 480px e a pastilha
+   uns poucos, e velocidade constante importa mais que duracao igual. */
+@keyframes painel-timeline-entra {
+  from { transform: translateX(100%); opacity: 0.4; }
+  to   { transform: none;             opacity: 1; }
+}
+@keyframes painel-timeline-sai {
+  from { transform: none;             opacity: 1; }
+  to   { transform: translateX(100%); opacity: 0.4; }
+}
+.painel-timeline-entra {
+  animation: painel-timeline-entra 280ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.painel-timeline-sai {
+  animation: painel-timeline-sai 280ms cubic-bezier(0.4, 0, 1, 1) forwards;
+}
+
+@keyframes timeline-pastilha-sai {
+  from { opacity: 1; transform: none; }
+  to   { opacity: 0; transform: translateX(16px) scale(0.96); }
+}
+.timeline-pastilha-sai {
+  animation: timeline-pastilha-sai 220ms cubic-bezier(0.4, 0, 1, 1) forwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* Sem animacao NAO HA `animationend`, e a troca de vista depende dele. Por
+     isso quem pede menos movimento troca direto no clique, em JS — ver
+     `trocarVista` em CardLogsModal. Estas regras existem para o caso de a
+     animacao rodar mesmo assim. */
+  .painel-timeline-entra,
+  .painel-timeline-sai,
+  .timeline-pastilha-sai { animation: none; }
+}
