@@ -1,12 +1,11 @@
 import { useEffect, useRef, type ReactNode } from 'react';
-import { createPortal } from 'react-dom';
 import { useDndContext } from '@dnd-kit/core';
 
 /**
  * O ARRASTO "ESTILINGUE" — o clone não gruda no dedo, ele é PUXADO por ele.
  *
- * Portado do desenho "Kanban — animação Estilingue". Três coisas acontecem ao
- * mesmo tempo enquanto o card está no ar, e as três saem do mesmo cálculo:
+ * Portado do desenho "Kanban — animação Estilingue". Duas coisas acontecem ao
+ * mesmo tempo enquanto o card está no ar, e as duas saem do mesmo cálculo:
  *
  * 1. ATRASO ELÁSTICO. A posição do clone persegue o ponteiro em vez de igualá-lo
  *    (`s += (p - s) * k`). É o que dá peso: um clone travado no cursor parece um
@@ -14,10 +13,12 @@ import { useDndContext } from '@dnd-kit/core';
  * 2. TORÇÃO. A diferença entre onde o ponteiro está e onde o clone chegou vira
  *    rotação em Y e X. Quanto mais rápido o gesto, mais o card se inclina — a
  *    inclinação É a velocidade, não um enfeite fixo.
- * 3. A FAIXA. Uma parábola tracejada liga a ETAPA DE ORIGEM ao clone. É a única
- *    parte que responde uma pergunta em vez de decorar: de onde este card saiu.
- *    Numa tela com quatro colunas e o quadro rolado, isso deixa de ser óbvio no
- *    meio do gesto.
+ *
+ * O DESENHO TINHA UMA TERCEIRA: uma parábola tracejada, com sombra, ligando a
+ * etapa de origem ao clone. Foi removida a pedido. Ela custava mais atenção do
+ * que devolvia — no mockup, com quatro colunas vazias, a linha se lia; sobre um
+ * quadro cheio de cards ela vira mais um traço cruzando a tela, e o gesto já
+ * dizia de onde o card tinha saído pelo espaço tracejado que fica para trás.
  *
  * POR QUE ISTO NÃO SUBSTITUI O DND-KIT. O desenho traz o motor inteiro — captura
  * de ponteiro, detecção de coluna, índice de inserção, voo de queda. Aqui esse
@@ -58,9 +59,6 @@ export function ArrastoEstilingue({
 }) {
   const { activeNodeRect, activatorEvent } = useDndContext();
   const noRef = useRef<HTMLDivElement>(null);
-  const svgRef = useRef<SVGSVGElement>(null);
-  const trilhaRef = useRef<SVGPathElement>(null);
-  const sombraRef = useRef<SVGPathElement>(null);
 
   // Tudo o que muda a cada quadro vive em ref, e não em estado: são ~60
   // atualizações por segundo, e cada uma virando render arrastaria a árvore
@@ -74,7 +72,6 @@ export function ArrastoEstilingue({
     torcaoY: 0,
     torcaoX: 0,
     ultimoQuadro: 0,
-    inicio: 0,
     quedaEm: 0,
   });
 
@@ -91,9 +88,10 @@ export function ArrastoEstilingue({
     // JS porque quem anima é o JS.
     if (window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches) return;
 
-    // A ORIGEM É CONGELADA NO INÍCIO. Ela marca de onde o card saiu, então tem
-    // de ficar parada mesmo que a coluna se reorganize embaixo — é justamente
-    // isso que a faixa está dizendo.
+    // A ORIGEM É CONGELADA NO INÍCIO. Ela ainda é usada, mesmo sem a faixa: é o
+    // ponto para o qual o clone é puxado de volta (`PUXAO_DA_ORIGEM`), o que dá
+    // ao gesto a sensação de elástico esticado. Tem de ficar parada mesmo que a
+    // coluna se reorganize embaixo.
     d.origem = {
       x: activeNodeRect.left + activeNodeRect.width / 2,
       y: activeNodeRect.top + activeNodeRect.height / 2,
@@ -108,8 +106,7 @@ export function ArrastoEstilingue({
     d.pegada = { x: px - activeNodeRect.left, y: py - activeNodeRect.top };
     d.ponteiro = { x: px, y: py };
     d.suave = { x: px, y: py };
-    d.inicio = performance.now();
-    d.ultimoQuadro = d.inicio;
+    d.ultimoQuadro = performance.now();
     d.quedaEm = 0;
 
     const aoMover = (e: PointerEvent) => {
@@ -164,48 +161,6 @@ export function ArrastoEstilingue({
         `perspective(900px) rotateY(${d.torcaoY * resto}deg) ` +
         `rotateX(${d.torcaoX * resto}deg) ` +
         `scale(${1 + 0.03 * resto})`;
-
-      desenharFaixa(
-        d.origem,
-        x + d.tamanho.w / 2,
-        y + d.tamanho.h / 2,
-        (agora - d.inicio) / 1000,
-        p,
-        !!d.quedaEm,
-      );
-    };
-
-    const desenharFaixa = (
-      origem: { x: number; y: number },
-      cx: number,
-      cy: number,
-      t: number,
-      p: number,
-      caindo: boolean,
-    ) => {
-      const svg = svgRef.current;
-      const trilha = trilhaRef.current;
-      if (!svg || !trilha) return;
-      const dist = Math.hypot(origem.x - cx, origem.y - cy);
-      // O ponto de controle sobe com a distância: perto, a faixa é quase reta;
-      // longe, ela arqueia. É o que faz a corda parecer ter comprimento.
-      const mx = (origem.x + cx) / 2;
-      const my = (origem.y + cy) / 2 - (26 + dist * 0.15);
-      const espessura = Math.max(4, 6.5 - dist * 0.003);
-      const marcha = String(-t * 22);
-      trilha.setAttribute('d', `M${origem.x} ${origem.y} Q${mx} ${my} ${cx} ${cy}`);
-      trilha.setAttribute('stroke-width', String(espessura));
-      trilha.setAttribute('stroke-dashoffset', marcha);
-      const sombra = sombraRef.current;
-      if (sombra) {
-        sombra.setAttribute('d', `M${origem.x} ${origem.y + 14} L${cx} ${cy + 14}`);
-        sombra.setAttribute('stroke-width', String(espessura + 3));
-        sombra.setAttribute('stroke-dashoffset', marcha);
-      }
-      // Some MAIS RÁPIDO que a queda (fator 2.2): a corda tem de sair de cena
-      // antes de o card assentar, senão ela fica visível ligando dois pontos
-      // que já são o mesmo.
-      svg.style.opacity = String(caindo ? Math.max(0, 1 - p * 2.2) * 0.95 : 0.95);
     };
 
     quadro = requestAnimationFrame(desenhar);
@@ -216,51 +171,10 @@ export function ArrastoEstilingue({
   }, [activeNodeRect, activatorEvent, intensidade]);
 
   return (
-    <>
-      {/* A FAIXA VAI PARA O `body`, pelo mesmo motivo do clone: ela é
-          `position: fixed` em coordenadas de viewport, e a tela vive dentro de
-          `.pagina-entra`, cuja animação de `transform` cria um containing block.
-          Renderizada no lugar, ela apareceria deslocada junto com tudo. */}
-      {createPortal(
-        <svg
-          ref={svgRef}
-          aria-hidden
-          style={{
-            position: 'fixed',
-            inset: 0,
-            width: '100%',
-            height: '100%',
-            pointerEvents: 'none',
-            overflow: 'visible',
-            zIndex: 60,
-            opacity: 0,
-          }}
-        >
-          <path
-            ref={sombraRef}
-            d="M0 0"
-            fill="none"
-            strokeLinecap="round"
-            strokeDasharray="9 13"
-            stroke="rgba(40,32,60,.16)"
-            style={{ filter: 'blur(6px)' }}
-          />
-          <path
-            ref={trilhaRef}
-            d="M0 0"
-            fill="none"
-            strokeLinecap="round"
-            strokeDasharray="9 13"
-            stroke="var(--color-primary)"
-          />
-        </svg>,
-        document.body,
-      )}
-      {/* `will-change` porque este nó recebe transform a cada quadro: sem ele o
-          navegador repinta a camada em vez de compor. */}
-      <div ref={noRef} style={{ willChange: 'transform' }}>
-        {children}
-      </div>
-    </>
+    // `will-change` porque este nó recebe transform a cada quadro: sem ele o
+    // navegador repinta a camada em vez de compor.
+    <div ref={noRef} style={{ willChange: 'transform' }}>
+      {children}
+    </div>
   );
 }

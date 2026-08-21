@@ -64,9 +64,9 @@ export const ANIMACAO_DE_SOLTAR: DropAnimation = {
  * A queda do arrasto "estilingue", no kanban do projeto.
  *
  * Mais longa que a do Suporte (460ms contra 260) porque aqui o voo tem MAIS
- * COISA acontecendo: além de percorrer a distância, o card desfaz a torção,
- * solta o puxão do elástico e a faixa tracejada se apaga. Nos 260ms do outro
- * quadro essas três coisas se atropelariam.
+ * COISA acontecendo: além de percorrer a distância, o card desfaz a torção e
+ * solta o puxão do elástico. Nos 260ms do outro quadro as duas se atropelariam
+ * com a chegada.
  *
  * A curva passa do ponto de propósito (o `1.24` no terceiro parâmetro): o card
  * chega, ultrapassa um pouco e volta. É o que o desenho faz com a função
