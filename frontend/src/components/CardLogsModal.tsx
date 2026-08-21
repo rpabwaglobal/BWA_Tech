@@ -1,4 +1,5 @@
 import { useEffect, useState, useMemo, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { X, Loader2, Clock, User, Filter, ArrowUp, ArrowDown, SendHorizontal, MessageSquare } from 'lucide-react';
 import { cardLogService, type CardLog } from '@/services/cardLogService';
 import { formatDateTime } from '@/lib/dateUtils';
@@ -163,7 +164,19 @@ export function CardLogsModal({ cardId, isOpen, onClose, refreshTrigger }: CardL
 
   if (!isOpen) return null;
 
-  return (
+  // PORTAL PARA O `body`, senão o painel não fica no canto da TELA.
+  //
+  // Ele é `position: fixed`, e `fixed` só se resolve contra o viewport quando
+  // nenhum ancestral cria um containing block — `transform`, `filter` e afins
+  // criam. A página inteira vive dentro de `.pagina-entra`, que roda uma
+  // animação de `transform`: renderizado no lugar onde nasce, o painel passava a
+  // medir `top` e `right` a partir da ÁREA DE CONTEÚDO. O resultado era ele
+  // descer o header (64px) mais o padding do `main` (32px), o
+  // `h-[calc(100vh-16px)]` transbordar por baixo e o conteúdo ser cortado.
+  //
+  // `ui/dialog.tsx` já faz isso, e é por isso que o diálogo de editar card
+  // aparecia certo enquanto este, ao lado, aparecia torto.
+  return createPortal(
     <div
       className={`fixed right-[8px] top-[8px] h-[calc(100vh-16px)] w-[480px] bg-[var(--color-background)] border border-[var(--color-border)] rounded-[8px] shadow-2xl z-[60] transform transition-transform duration-300 ease-in-out pointer-events-auto ${
         isOpen ? 'translate-x-0' : 'translate-x-full'
@@ -369,6 +382,7 @@ export function CardLogsModal({ cardId, isOpen, onClose, refreshTrigger }: CardL
           )}
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

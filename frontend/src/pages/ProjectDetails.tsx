@@ -41,6 +41,10 @@ import {
 } from '@/lib/arrastar';
 import { ArrastoEstilingue } from '@/components/kanban/ArrastoEstilingue';
 import {
+  ModalDadosObrigatorios,
+  type CampoObrigatorio,
+} from '@/components/kanban/ModalDadosObrigatorios';
+import {
   DndContext,
   DragOverlay,
   PointerSensor,
@@ -1044,6 +1048,20 @@ export default function ProjectDetails() {
   const [alertMessage, setAlertMessage] = useState('');
   const [editingCard, setEditingCard] = useState<CardType | null>(null);
   const [pendingStatusChange, setPendingStatusChange] = useState<{ cardId: string; newStatus: string } | null>(null);
+  /**
+   * O aviso de dados obrigatórios, e o que abrir DEPOIS dele.
+   *
+   * Guarda o card porque o formulário só é aberto quando este diálogo fecha —
+   * antes os dois subiam no mesmo instante e o aviso caía por cima do card.
+   */
+  const [dadosFaltando, setDadosFaltando] = useState<{
+    card: CardType;
+    etapa: string;
+    campos: CampoObrigatorio[];
+    /** Repassadas a `openEditCardDialog` ao fechar o aviso. Ausentes no caminho
+     *  de "Finalizado", que sempre abriu o card sem sobrescrever nada. */
+    opcoes?: { overrideStatus?: string; overrideDataInicio?: string };
+  } | null>(null);
   const [logsModalOpen, setLogsModalOpen] = useState(false);
   const [pendenciaModalOpen, setPendenciaModalOpen] = useState(false);
   const [pendenciaCardId, setPendenciaCardId] = useState<string | null>(null);
@@ -1440,22 +1458,32 @@ export default function ProjectDetails() {
   };
 
   // Validar se card tem todos os dados obrigatórios para etapas que exigem dados
-  const validateCardRequiredData = (card: CardType): { valid: boolean; missing: string[] } => {
+  const validateCardRequiredData = (
+    card: CardType,
+  ): { valid: boolean; missing: string[]; campos: CampoObrigatorio[] } => {
     const missing: string[] = [];
-    
+    // `campos` guarda a IDENTIDADE do campo, e não o texto. `missing` é frase
+    // solta ("desenvolvedor atribuído") e serve para as mensagens em linha que
+    // já existiam; quem precisa apontar para o campo na tela precisa da chave.
+    const campos: CampoObrigatorio[] = [];
+
     if (!card.responsavel) {
       missing.push('desenvolvedor atribuído');
+      campos.push('responsavel');
     }
     if (!card.data_inicio) {
       missing.push('data de início');
+      campos.push('data_inicio');
     }
     if (!card.data_fim) {
       missing.push('data de entrega');
+      campos.push('data_fim');
     }
-    
+
     return {
       valid: missing.length === 0,
       missing,
+      campos,
     };
   };
 
@@ -1696,11 +1724,14 @@ export default function ProjectDetails() {
         // Armazenar o movimento pendente para completar após salvar
         setPendingStatusChange({ cardId: cardId, newStatus: newStageId });
         // Mostrar aviso e abrir modal de edição
-        const missingList = validation.missing.map((item, index) => `${index + 1}. ${capitalizeFirst(item)}`).join('\n');
-        const stageLabel = getStageLabel(newStageId);
-        setAlertMessage(`Para mover o card para "${stageLabel}", é necessário preencher:\n\n${missingList}\n\nO formulário de edição será aberto.`);
-        setAlertDialogOpen(true);
-        openEditCardDialog(card);
+        // UMA COISA DE CADA VEZ: só o aviso sobe aqui. O formulário é aberto
+        // quando ele fechar (ver `ModalDadosObrigatorios` no JSX). Antes os dois
+        // eram abertos no mesmo instante e o aviso caía por cima do card.
+        setDadosFaltando({
+          card,
+          etapa: getStageLabel(newStageId),
+          campos: validation.campos,
+        });
         return;
       }
       
@@ -1760,13 +1791,15 @@ export default function ProjectDetails() {
         // usuário preencher os dados que faltam e salvar o card na nova etapa.
         // Se fechar sem salvar, o card permanece em "A desenvolver" e a data
         // nova é descartada.
-        const missingList = validation.missing.map((item, index) => `${index + 1}. ${capitalizeFirst(item)}`).join('\n');
-        const stageLabel = getStageLabel(newStageId);
-        setAlertMessage(`Para mover o card para "${stageLabel}", é necessário preencher:\n\n${missingList}\n\nO formulário de edição será aberto.`);
-        setAlertDialogOpen(true);
-        openEditCardDialog(card, {
-          overrideStatus: newStageId,
-          overrideDataInicio: autoDataInicio,
+        // Mesmo desenho do caminho de "Finalizado", logo acima: só o aviso.
+        setDadosFaltando({
+          card,
+          etapa: getStageLabel(newStageId),
+          campos: validation.campos,
+          opcoes: {
+            overrideStatus: newStageId,
+            overrideDataInicio: autoDataInicio,
+          },
         });
         return;
       }
@@ -4424,6 +4457,21 @@ export default function ProjectDetails() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* O aviso de dados obrigatórios. Fechá-lo é o que ABRE o formulário — por
+          isso não há botão de cancelar: o movimento do card já está pendente, e
+          sair sem preencher deixaria a pessoa sem nada na tela e sem entender
+          por que o card voltou para a coluna de origem. */}
+      <ModalDadosObrigatorios
+        aberto={!!dadosFaltando}
+        etapa={dadosFaltando?.etapa ?? ''}
+        campos={dadosFaltando?.campos ?? []}
+        onPreencher={() => {
+          const pendente = dadosFaltando;
+          setDadosFaltando(null);
+          if (pendente) void openEditCardDialog(pendente.card, pendente.opcoes);
+        }}
+      />
 
       {/* Alert Dialog */}
       <Dialog open={alertDialogOpen} onOpenChange={setAlertDialogOpen}>
