@@ -5,17 +5,48 @@ o lê e a tela de perfil o mostra — não há segunda cópia em código.
 
 ## Como versionamos
 
-Três números, `MAIOR.MENOR.CORREÇÃO`, e o que muda cada um:
+Três números, `MAIOR.MENOR.CORREÇÃO`, e cada um responde a uma pergunta
+diferente sobre o que mudou:
 
-| Sobe | Quando |
-|---|---|
-| **MAIOR** | muda algo que quebra uso existente: um fluxo sai, uma regra passa a recusar o que antes aceitava, uma integração muda de contrato |
-| **MENOR** | entra funcionalidade nova sem quebrar o que já existia |
-| **CORREÇÃO** | conserto de defeito, sem funcionalidade nova |
+| Sobe | Quando | A pergunta que responde |
+|---|---|---|
+| **MAIOR** | grande mudança no sistema | *alguém precisa mudar o jeito de trabalhar?* Um fluxo sai, uma regra passa a recusar o que antes aceitava, uma integração muda de contrato |
+| **MENOR** | funcionalidade nova | *dá para fazer algo que antes não dava?* |
+| **CORREÇÃO** | conserto de defeito | *o que já existia passou a funcionar como se esperava?* |
+
+O teste é sempre do lado de **quem usa**, não do código. Uma refatoração grande
+que ninguém percebe não sobe nada; um botão de uma linha que habilita uma ação
+nova sobe o MENOR.
+
+**Numa leva com mais de um tipo, vence o mais alto.** Uma versão com quatro
+correções e uma funcionalidade nova é MENOR — o número diz o TETO do que mudou, e
+é o detalhe que a seção abaixo dele cobre.
+
+**Sobe um, zera os de baixo:** depois da 2.2.4, uma funcionalidade nova vira
+2.3.0 (e não 2.3.4); uma grande mudança vira 3.0.0.
+
+### Quando cortar uma versão
+
+**Todo push para `main` que muda o app é uma versão.** Não é rigor de processo —
+é a única forma de o número significar alguma coisa: o deploy é automático no
+push, então o que vai para `main` está em produção em minutos. Uma mudança que
+chega lá sem subir o número fica invisível, e a partir daí `VERSION` deixa de
+responder "o que está no ar".
+
+Já aconteceu: a 2.2.0 foi cortada e **doze commits** entraram em produção depois
+dela, sob o mesmo número — incluindo o redesenho do arrastar de cards. Quem
+olhasse a tela veria uma coisa e o rodapé do perfil diria outra.
+
+O que **não** precisa de versão: mudança que não chega ao app — documentação,
+scripts locais, testes. O critério já está escrito em
+[`.github/workflows/docker-publish.yml`](.github/workflows/docker-publish.yml):
+se o caminho está na lista que dispara o build, gerou imagem nova e é versão.
 
 **Toda versão vira uma tag no git.** É isso que torna a versão verificável e
-reversível: com a tag, `git show v2.1.0:VERSION` responde qual era a versão, e
-`git diff v2.0.0..v2.1.0` mostra exatamente o que entrou entre uma e outra.
+reversível: com a tag, `git show v2.1.0:VERSION` responde qual era a versão,
+`git diff v2.2.0..v2.3.0` mostra o que entrou entre uma e outra, e
+`git log v2.2.0..HEAD` responde a pergunta que mais importa no dia a dia —
+*o que já está no ar e ainda não tem versão?*
 
 ### Ao lançar
 
@@ -36,6 +67,49 @@ para achar e reverter depois.
 `git revert` do intervalo da versão, ou voltar a imagem anterior no servidor.
 **Migração de banco não volta sozinha** — confira aqui se a versão teve migração
 antes de reverter, e reverta a migração antes do código.
+
+---
+
+## 2.3.0
+
+Data: 21/08/2026 · migração de banco: **não**
+
+### Arrastar cards no kanban
+
+- **O card agora tem peso ao ser arrastado.** Ele se inclina na direção do
+  movimento — quanto mais rápido o gesto, mais inclinado —, o lugar de origem
+  fica reservado com um contorno tracejado, a coluna de destino se acende, e ao
+  soltar o card assenta no lugar em vez de aparecer pronto.
+- **O card deixou de fugir do cursor.** Ao ser pego, ele saltava para longe do
+  mouse — em telas com a barra lateral aberta, quase 300px à direita. Também
+  ficava mais largo do que a coluna e transbordava.
+- **Arrastar passou a funcionar em tela de toque** no quadro do projeto. Antes o
+  gesto era tratado como rolagem e o card não saía do lugar.
+- **A coluna reconhece a entrega sem exagero.** Não é mais preciso levar o card
+  além da borda visível para ela aceitar.
+- No **Geek Day**, as listas paravam de piscar e a rolagem deixou de saltar para
+  o topo no meio do arrasto — o que também fazia o card cair na posição errada.
+
+### Timeline do card
+
+- **Fechar agora recolhe.** A timeline vira uma pastilha "Timeline do card" no
+  canto superior direito, e volta com um clique. Entra e sai deslizando.
+- **O painel voltou para o canto da tela.** Ele aparecia deslocado para baixo e
+  para a direita, com o fim da lista cortado fora da janela e sem como alcançá-lo.
+- **O fundo atrás dele passou a ser desfocado.** Sobravam faixas mostrando a
+  página crua em volta de um painel flutuante.
+
+### Avisos e telas
+
+- **O aviso de "faltam dados" não aparece mais por cima do card.** Ele sobe
+  sozinho; o formulário abre quando ele fecha. E foi refeito: cada campo que
+  falta é uma linha destacada, com a mesma marca que o formulário usa, e com o
+  nome que o campo tem lá dentro.
+- **As barras de seleção em massa** (Projetos, Meus Afazeres, kanban, Suporte)
+  voltaram para o rodapé da janela. Ficavam ancoradas no fim da lista, então em
+  listas longas a pessoa selecionava itens e não via botão nenhum.
+- **O tooltip do heatmap de entregas** (Métricas) voltou a aparecer. Ele nascia
+  fora da tela — na prática, parecia que o heatmap não tinha tooltip.
 
 ---
 
