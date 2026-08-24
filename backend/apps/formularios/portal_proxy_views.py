@@ -255,16 +255,14 @@ class PortalFormulariosProxyView(APIView):
             qs = urlencode(request.GET, doseq=True)
             url = f'{url}?{qs}'
 
-        method = request.method.upper()
-        patch_body = request.body
-        parsed_patch_body: dict = {}
-        if method == 'PATCH' and request.body:
-            patch_body = _enrich_portal_patch_body(method, url, request.body)
-            parsed_patch_body = _parse_json_dict(patch_body)
-
-        # O DISJUNTOR VEM ANTES DA REDE. Se o portal está fora, esta chamada
-        # falha aqui, em microssegundos, sem segurar instância do daphne — que é
-        # o recurso que acabou no incidente de 24/08. Ver `portal_disjuntor`.
+        # O DISJUNTOR VEM ANTES DE QUALQUER REDE — inclusive do enriquecimento
+        # do PATCH logo abaixo, que faz um GET próprio ao portal.
+        #
+        # Ele já esteve depois dessa linha, e ali cobria só o caminho principal:
+        # com o circuito aberto, todo PATCH ainda gastava o tempo de conexão
+        # segurando uma instância do daphne. Pouco perto dos 90s originais, mas
+        # ainda assim a tela de Suporte cobrando das outras — que é justamente o
+        # que este mecanismo existe para acabar.
         try:
             disjuntor.antes_de_tentar()
         except PortalIndisponivel as exc:
@@ -279,6 +277,13 @@ class PortalFormulariosProxyView(APIView):
                 },
                 status=503,
             )
+
+        method = request.method.upper()
+        patch_body = request.body
+        parsed_patch_body: dict = {}
+        if method == 'PATCH' and request.body:
+            patch_body = _enrich_portal_patch_body(method, url, request.body)
+            parsed_patch_body = _parse_json_dict(patch_body)
 
         # Primeira tentativa. Em caso de 401 (JWT cacheado já revogado pelo portal
         # antes do nosso TTL local), invalida o cache e tenta de novo — UMA vez.

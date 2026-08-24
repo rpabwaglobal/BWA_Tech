@@ -14,7 +14,9 @@ voltar.
 """
 from unittest.mock import patch
 
-from django.test import SimpleTestCase
+from django.contrib.auth import get_user_model
+from django.test import SimpleTestCase, override_settings
+from rest_framework.test import APITestCase
 
 from apps.formularios.portal_disjuntor import (
     FALHAS_PARA_ABRIR,
@@ -22,6 +24,8 @@ from apps.formularios.portal_disjuntor import (
     PortalIndisponivel,
     disjuntor,
 )
+
+User = get_user_model()
 
 
 class _Relogio:
@@ -147,3 +151,62 @@ class DisjuntorDoPortalTests(SimpleTestCase):
             disjuntor.registrar_sucesso()
 
         self.assertFalse(disjuntor.aberto)
+
+
+class SuporteForaNaoDerrubaOSiteTests(APITestCase):
+    """O REQUISITO, dito pelo usuario: "se a pagina de suporte nao conecta, ela
+    nao deve derrubar o site todo. O site deve carregar normalmente."
+
+    O que derrubava o site nao era o erro — era a ESPERA. Cada pedido ao portal
+    segurava uma instancia do daphne, e o daphne serve TODAS as telas. Entao o
+    que este teste guarda nao e "responde erro", e sim "responde erro SEM IR A
+    REDE": e nao ir a rede que devolve a instancia na hora e mantem o resto do
+    sistema de pe.
+    """
+
+    def setUp(self):
+        disjuntor._reiniciar()
+        self.user = User.objects.create_user(
+            username='suporte_disj', email='suporte.disj@example.com',
+            password='x' * 12, role='admin', is_superuser=True, is_staff=True)
+        self.client.force_authenticate(user=self.user)
+
+    def tearDown(self):
+        disjuntor._reiniciar()
+
+    @override_settings(PORTAL_BASE_URL='https://portal.example.com')
+    def test_com_o_circuito_aberto_a_resposta_sai_sem_tocar_a_rede(self):
+        for _ in range(FALHAS_PARA_ABRIR):
+            disjuntor.antes_de_tentar()
+            disjuntor.registrar_falha()
+
+        # `_is_internal_host` barra host que o DNS não resolve — padrão seguro
+        # correto, e sem relação com o que este teste mede.
+        with patch('apps.formularios.portal_proxy_views._is_internal_host', return_value=False),                 patch('apps.formularios.portal_proxy_views.requests') as rede:
+            r = self.client.get('/api/portal-formularios/suporte/por-usuario/')
+
+        self.assertEqual(r.status_code, 503)
+        self.assertEqual(r.data['reason'], 'portal_circuito_aberto')
+        # O CORACAO DO TESTE: nenhuma chamada de rede saiu.
+        rede.request.assert_not_called()
+        rede.get.assert_not_called()
+
+    @override_settings(PORTAL_BASE_URL='https://portal.example.com')
+    def test_o_patch_tambem_e_barrado_antes_da_rede(self):
+        """O enriquecimento do PATCH faz um GET PROPRIO ao portal, e ja esteve
+        ANTES da verificacao do disjuntor: com o circuito aberto, todo PATCH
+        continuava gastando o tempo de conexao segurando uma instancia."""
+        for _ in range(FALHAS_PARA_ABRIR):
+            disjuntor.antes_de_tentar()
+            disjuntor.registrar_falha()
+
+        with patch('apps.formularios.portal_proxy_views._is_internal_host', return_value=False),                 patch('apps.formularios.portal_proxy_views.requests') as rede:
+            r = self.client.patch(
+                '/api/portal-formularios/suporte/7/',
+                data='{"tipo_id": 3}',
+                content_type='application/json',
+            )
+
+        self.assertEqual(r.status_code, 503)
+        rede.get.assert_not_called()
+        rede.request.assert_not_called()

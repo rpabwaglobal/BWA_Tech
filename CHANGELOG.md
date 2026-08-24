@@ -100,6 +100,17 @@ antes de reverter, e reverta a migração antes do código.
 
 ---
 
+## 2.4.2
+
+Data: 24/08/2026 · migração de banco: **não**
+
+- **A proteção passou a valer para todas as ações do Suporte**, e não só para
+  carregar a lista. Mover um chamado entre colunas com o portal fora ainda
+  consumia capacidade do servidor antes de desistir — pouco, mas era a tela de
+  Suporte cobrando das outras, que é o que a versão anterior existe para acabar.
+
+---
+
 ## 2.4.1
 
 Data: 24/08/2026 · migração de banco: **não**
