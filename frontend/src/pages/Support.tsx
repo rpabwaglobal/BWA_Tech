@@ -561,13 +561,24 @@ export default function Support() {
       setItems(data);
     } catch (e: unknown) {
       if (!silent) {
-        const msg =
-          e && typeof e === 'object' && 'response' in e
-            ? String((e as { response?: { data?: unknown } }).response?.data ?? '')
-            : String(e);
+        // O CORPO DE ERRO É UM JSON, e `String()` nele produzia literalmente
+        // "[object Object]" — a pessoa via "Não foi possível carregar os
+        // chamados: [object Object]" e não ficava sabendo de nada.
+        //
+        // O backend manda `detail` em português e um `reason` estável. Quando o
+        // disjuntor está aberto (`portal_circuito_aberto`), o `detail` já diz que
+        // o portal está fora E que o sistema tenta sozinho de novo — que é
+        // exatamente o que a pessoa precisa saber para não ficar recarregando.
+        const corpo = (e as { response?: { data?: unknown } })?.response?.data;
+        const detalhe =
+          corpo && typeof corpo === 'object' && 'detail' in corpo
+            ? String((corpo as { detail?: unknown }).detail ?? '')
+            : typeof corpo === 'string'
+              ? corpo
+              : '';
         setError(
-          msg?.length
-            ? `Não foi possível carregar os chamados: ${msg}`
+          detalhe
+            ? detalhe
             : 'Não foi possível carregar os chamados. Confirme VITE_FORMULARIOS_API_BASE / autenticação e se a API expõe /formularios/suporte/.',
         );
         setItems([]);

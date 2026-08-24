@@ -21,6 +21,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from .portal_auth import PortalLoginError, invalidate_portal_token_cache, login_on_portal_cached
+from .portal_disjuntor import PortalIndisponivel, disjuntor
 from .realtime import broadcast_chamado
 
 logger = logging.getLogger(__name__)
@@ -30,6 +31,23 @@ logger = logging.getLogger(__name__)
 _SAFE_PATH_RE = re.compile(r'^[A-Za-z0-9_\-./]*$')
 
 _PORTAL_PATCH_ALLOWED = frozenset({'status', 'responsavel_solucao', 'descricao_resolucao'})
+
+#: TEMPO DE ESPERA PELO PORTAL: (conectar, ler).
+#:
+#: Era um número só, 90 segundos, valendo para as duas coisas — e foi ele que
+#: derrubou o sistema em 24/08/2026: com o portal mudo, cada pedido segurava uma
+#: instância do daphne por um minuto e meio, até não sobrar nenhuma para servir o
+#: resto do site.
+#:
+#: Separados, cada um responde a uma pergunta diferente:
+#:
+#: - CONECTAR (4s) é "existe alguém do outro lado?". Um host que não aceita
+#:   conexão em quatro segundos está fora; esperar mais não muda a resposta, só
+#:   prende a instância. É este que corta o modo de falha do incidente.
+#: - LER (15s) é "quanto tempo essa consulta demora?". Aqui a demora pode ser
+#:   legítima — uma lista grande de chamados —, então o limite é folgado. Ainda
+#:   assim é seis vezes menor que os 90s de antes.
+TEMPO_LIMITE_PORTAL = (4, 15)
 
 
 def _parse_json_dict(raw: bytes) -> dict:
@@ -69,7 +87,7 @@ def _enrich_portal_patch_body(method: str, url: str, raw_body: bytes) -> bytes:
         current = requests.get(
             url,
             headers={'Authorization': f'Bearer {token}', 'Accept': 'application/json'},
-            timeout=90,
+            timeout=TEMPO_LIMITE_PORTAL,
         )
         current.raise_for_status()
         status = current.json().get('status')
@@ -191,7 +209,7 @@ class PortalFormulariosProxyView(APIView):
             'Authorization': f'Bearer {token}',
             'Accept': request.headers.get('Accept', '*/*'),
         }
-        kw: dict = {'headers': headers, 'timeout': 90}
+        kw: dict = {'headers': headers, 'timeout': TEMPO_LIMITE_PORTAL}
         payload = body if body is not None else request.body
         if method in ('POST', 'PATCH', 'PUT') or (method == 'DELETE' and payload):
             headers['Content-Type'] = request.content_type or 'application/json'
@@ -244,12 +262,35 @@ class PortalFormulariosProxyView(APIView):
             patch_body = _enrich_portal_patch_body(method, url, request.body)
             parsed_patch_body = _parse_json_dict(patch_body)
 
+        # O DISJUNTOR VEM ANTES DA REDE. Se o portal está fora, esta chamada
+        # falha aqui, em microssegundos, sem segurar instância do daphne — que é
+        # o recurso que acabou no incidente de 24/08. Ver `portal_disjuntor`.
+        try:
+            disjuntor.antes_de_tentar()
+        except PortalIndisponivel as exc:
+            logger.info('Chamada ao portal barrada pelo disjuntor: %s', exc)
+            return Response(
+                {
+                    'detail': (
+                        'O portal de chamados está fora do ar. O sistema volta a '
+                        'tentar sozinho em alguns segundos.'
+                    ),
+                    'reason': 'portal_circuito_aberto',
+                },
+                status=503,
+            )
+
         # Primeira tentativa. Em caso de 401 (JWT cacheado já revogado pelo portal
         # antes do nosso TTL local), invalida o cache e tenta de novo — UMA vez.
         try:
             try:
                 upstream = self._do_request(method, url, request, body=patch_body)
             except PortalLoginError as exc:
+                # Falha de REDE no login conta para o disjuntor; credencial ou
+                # configuração erradas, não — insistir na rede não é o problema
+                # ali, e abrir o circuito só esconderia o erro real.
+                if getattr(exc, 'de_rede', False):
+                    disjuntor.registrar_falha()
                 logger.warning('Login no portal falhou: %s', exc)
                 return Response(
                     {
@@ -280,6 +321,10 @@ class PortalFormulariosProxyView(APIView):
                         status=503,
                     )
         except requests.RequestException:
+            # É AQUI QUE O DISJUNTOR APRENDE. Só falha de REDE conta: um 400 ou
+            # um 404 do portal significam que ele está vivo, e não é disso que
+            # este mecanismo protege.
+            disjuntor.registrar_falha()
             logger.exception('Falha de rede no proxy portal-formularios (%s %s)', method, url)
             return Response(
                 {
@@ -288,6 +333,12 @@ class PortalFormulariosProxyView(APIView):
                 },
                 status=502,
             )
+
+        # O PORTAL RESPONDEU — é isto que RELIGA o sistema sozinho. Vale para
+        # qualquer status HTTP: um 404 dele também prova que há alguém do outro
+        # lado. Quando esta linha roda depois de uma sonda, o disjuntor fecha e o
+        # Suporte volta ao normal sem ninguém intervir.
+        disjuntor.registrar_sucesso()
 
         # Broadcast realtime para os outros clientes conectados ao WS de suporte.
         # Como os chamados estão no portal externo, o Django não recebe sinais

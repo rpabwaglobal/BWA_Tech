@@ -16,7 +16,17 @@ logger = logging.getLogger(__name__)
 
 
 class PortalLoginError(Exception):
-    """Falha ao obter token do portal."""
+    """Falha ao obter token do portal.
+
+    `de_rede` distingue as duas famílias de falha, que pedem respostas opostas:
+    timeout e conexão recusada são o portal fora do ar (e alimentam o
+    disjuntor); credencial ou configuração erradas são problema DAQUI, e abrir o
+    circuito por causa delas só esconderia o erro real de quem for investigar.
+    """
+
+    def __init__(self, *args, de_rede: bool = False):
+        super().__init__(*args)
+        self.de_rede = de_rede
 
 
 def login_on_portal() -> str:
@@ -41,12 +51,19 @@ def login_on_portal() -> str:
     headers = {'Content-Type': 'application/json'}
 
     try:
-        response = requests.post(url, json=payload, headers=headers, timeout=30)
+        # (conectar, ler). O timeout único de 30s era metade do problema do
+        # incidente de 24/08: antes mesmo de consultar, cada pedido esperava meio
+        # minuto só para descobrir que não havia ninguém para autenticar.
+        response = requests.post(
+            url, json=payload, headers=headers, timeout=(4, 10),
+        )
         response.raise_for_status()
         data = response.json()
     except requests.RequestException as exc:
         logger.warning('Falha de rede ao autenticar no portal: %s', exc)
-        raise PortalLoginError('Erro de rede ao realizar login no portal.') from exc
+        raise PortalLoginError(
+            'Erro de rede ao realizar login no portal.', de_rede=True,
+        ) from exc
     except ValueError as exc:
         raise PortalLoginError('Resposta do portal não é JSON válido.') from exc
 

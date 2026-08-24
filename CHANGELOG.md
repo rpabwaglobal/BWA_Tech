@@ -100,6 +100,31 @@ antes de reverter, e reverta a migração antes do código.
 
 ---
 
+## 2.4.1
+
+Data: 24/08/2026 · migração de banco: **não**
+
+- **O sistema não cai mais junto com o portal de chamados.** Hoje, às 08:02, o
+  portal externo onde os chamados de suporte moram ficou inalcançável — e levou o
+  BWA Tech inteiro com ele: home, kanban e login pararam de responder, e o site
+  passou a devolver 404. A causa era o tempo de espera: cada pedido à tela de
+  Suporte segurava o servidor por até 90 segundos aguardando uma resposta que não
+  vinha, até não sobrar capacidade para servir nenhuma outra tela.
+
+  Agora a espera é curta e, se o portal falhar algumas vezes seguidas, o sistema
+  para de tentar por meio minuto e responde na hora — **só a tela de Suporte fica
+  indisponível, e o resto segue funcionando**.
+
+- **E volta sozinho.** Passada essa pausa, o sistema testa o portal de novo por
+  conta própria. Assim que ele responder, o Suporte volta ao normal sem ninguém
+  precisar reiniciar nada.
+
+- **A mensagem de erro do Suporte passou a ser legível.** Ela exibia
+  "Não foi possível carregar os chamados: [object Object]"; agora diz que o
+  portal está fora e que o sistema tentará de novo.
+
+---
+
 ## 2.4.0
 
 Data: 21/08/2026 · migração de banco: **não**
