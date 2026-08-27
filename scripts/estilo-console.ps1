@@ -34,6 +34,51 @@ $SETA = if ($ehUtf8) { [char]0x21B3 } else { '>' }
 $TRACO = if ($ehUtf8) { [char]0x2500 } else { '-' }
 $PONTO = if ($ehUtf8) { [char]0x00B7 } else { '-' }
 
+# ── LINHA VIVA ──────────────────────────────────────────────────────────
+# Uma linha so, que se reescreve, no lugar de uma linha nova por atualizacao.
+#
+# VEM DO PAINEL DO DUMP, onde o problema apareceu de verdade: o download da
+# imagem enchia a tela de copias do mesmo texto. Aqui em cima ela e util pelo
+# mesmo motivo - `docker pull` cospe uma linha por camada por estado, e sao
+# dezenas.
+#
+# RETORNO DE CARRO, E NAO MOVER O CURSOR. Mover o cursor exige um console de
+# verdade; retorno de carro nao - ele leva a escrita de volta ao inicio da MESMA
+# linha e quem renderiza sobrescreve. E o que `docker pull`, `curl` e `npm` fazem
+# quando percebem que estao num cano. Com cursor, rodando sob um gerenciador de
+# processos, o texto vai para o cano enquanto o cursor anda no console: cada
+# quadro ACRESCENTA, que e exatamente o empilhamento que se quer evitar.
+$script:tamanhoLinhaViva = 0
+
+function Escrever-LinhaViva {
+    param([string] $texto, [bool] $encerrar = $false)
+
+    # Corta antes de 100 colunas: uma linha que estoura a largura QUEBRA, e dai
+    # em diante o retorno de carro volta so ao inicio da ultima parte - o efeito
+    # de atualizar no lugar some e vira o empilhamento de novo.
+    if ($texto.Length -gt 100) { $texto = $texto.Substring(0, 99) + [char]0x2026 }
+
+    # Espacos ate o tamanho da escrita anterior: sem isso, uma linha curta deixa
+    # o rabo da anterior visivel na tela.
+    $sobra = [Math]::Max(0, $script:tamanhoLinhaViva - $texto.Length)
+    [Console]::Out.Write("`r" + $texto + (' ' * $sobra))
+
+    if ($encerrar) {
+        [Console]::Out.Write("`n")
+        $script:tamanhoLinhaViva = 0
+    } else {
+        $script:tamanhoLinhaViva = $texto.Length
+    }
+}
+
+function Limpar-LinhaViva {
+    <#  Apaga a linha viva sem deixar rastro, para outra coisa escrever ali.  #>
+    if ($script:tamanhoLinhaViva -gt 0) {
+        [Console]::Out.Write("`r" + (' ' * $script:tamanhoLinhaViva) + "`r")
+        $script:tamanhoLinhaViva = 0
+    }
+}
+
 function Obter-Largura {
     try { return [Math]::Max(40, [Math]::Min(72, [Console]::WindowWidth - 2)) } catch { return 72 }
 }
@@ -82,5 +127,27 @@ function Escrever-Servico {
     Write-Host ('  ' + $rotulo + ' ') -NoNewline -ForegroundColor $COR_APAGADO
     Write-Host $endereco -ForegroundColor $COR_DESTAQUE
     Write-Host '  Ctrl+C para parar.' -ForegroundColor $COR_APAGADO
+    Write-Host ''
+}
+
+function Escrever-Rodape {
+    <#
+      O mesmo quadro final para quem NAO atende num endereco.
+
+      Worker e beat nao tem URL; forcar um em `Escrever-Servico` so para
+      reaproveitar a funcao daria uma linha que mente sobre o que o processo faz.
+    #>
+    param(
+        [string] $texto,
+        [string] $detalhe = '',
+        # Para quem TERMINA em vez de segurar o console. Sem isso o script da
+        # infra fechava mandando apertar Ctrl+C para parar algo que ja tinha
+        # acabado - instrucao errada e confusa logo no fim da tela.
+        [switch] $Termina
+    )
+    Write-Host ''
+    Write-Host ('  ' + $texto) -ForegroundColor $COR_DESTAQUE
+    if ($detalhe) { Write-Host ('  ' + $detalhe) -ForegroundColor $COR_APAGADO }
+    if (-not $Termina) { Write-Host '  Ctrl+C para parar.' -ForegroundColor $COR_APAGADO }
     Write-Host ''
 }

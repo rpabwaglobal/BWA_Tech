@@ -22,72 +22,20 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-. "$PSScriptRoot\estilo-console.ps1"
+. "$PSScriptRoot\infra-dev.ps1"
 
 $raiz = Split-Path -Parent $PSScriptRoot
 
 Escrever-Regua ('BWA TECH ' + $PONTO + ' backend em desenvolvimento')
 
-# ── Docker ──────────────────────────────────────────────────────────────
-Escrever-Passo 'Docker'
-docker info 2>&1 | Out-Null
-if ($LASTEXITCODE -ne 0) {
-    Write-Host ''
-    Escrever-Info 'parado; abrindo o Docker Desktop'
-    $exe = 'C:\Program Files\Docker\Docker\Docker Desktop.exe'
-    if (Test-Path $exe) { Start-Process $exe | Out-Null }
+if (-not (Garantir-Docker)) { exit 1 }
+if (-not (Garantir-Bancos $raiz)) { exit 1 }
+if (-not (Entrar-No-Backend $raiz)) { exit 1 }
 
-    # ESPERA LIMITADA, e nao laco infinito. O iniciador antigo repete o teste
-    # para sempre; num gerenciador isso vira um servico que nunca sobe nem
-    # falha, e ninguem descobre o porque.
-    $limite = (Get-Date).AddMinutes(2)
-    do {
-        Start-Sleep -Seconds 5
-        docker info 2>&1 | Out-Null
-    } while ($LASTEXITCODE -ne 0 -and (Get-Date) -lt $limite)
-
-    if ($LASTEXITCODE -ne 0) {
-        Escrever-Erro 'O Docker nao respondeu em 2 minutos.' 'Abra o Docker Desktop e rode de novo.'
-        exit 1
-    }
-    Escrever-Passo 'Docker'
-}
-Escrever-Fim 'no ar'
-
-# ── Postgres e Redis ────────────────────────────────────────────────────
-Escrever-Passo 'Postgres e Redis'
-Push-Location $raiz
-try {
-    docker compose up -d db redis 2>&1 | Out-Null
-    $subiu = $LASTEXITCODE -eq 0
-} finally {
-    Pop-Location
-}
-if (-not $subiu) {
-    Write-Host ''
-    Escrever-Erro 'Falha ao subir os containers de banco/redis.' 'Veja: docker compose logs db'
-    exit 1
-}
-
-# O Django nao sobe sem banco. Esperar aqui alguns segundos evita uma falha
-# que so apareceria adiante, como erro de conexao, sem apontar a causa.
-$limite = (Get-Date).AddMinutes(2)
-do {
-    $saude = (docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}sem-health{{end}}' bwa_tech-db-1 2>$null | Out-String).Trim()
-    if ($saude -eq 'healthy') { break }
-    Start-Sleep -Seconds 2
-} while ((Get-Date) -lt $limite)
-
-if ($saude -ne 'healthy') {
-    Write-Host ''
-    Escrever-Erro "O banco nao ficou saudavel em 2 minutos (estado: $saude)." 'Veja: docker compose logs db'
-    exit 1
-}
-Escrever-Fim 'prontos'
-
-# ── Migracoes ───────────────────────────────────────────────────────────
-Set-Location (Join-Path $raiz 'backend')
-
+# -- Migracoes -----------------------------------------------------------
+# SO AQUI, e nao no worker nem no beat: se os tres migrassem ao subir juntos,
+# tres processos aplicariam a mesma migracao ao mesmo tempo. O backend e o dono
+# do schema; os outros dois so o consomem.
 if (-not $SemMigrar) {
     Escrever-Passo 'Migracoes'
     Write-Host ''
@@ -102,7 +50,7 @@ if (-not $SemMigrar) {
     Escrever-Fim 'aplicadas'
 }
 
-# ── Servidor ────────────────────────────────────────────────────────────
+# -- Servidor ------------------------------------------------------------
 Escrever-Servico 'http://127.0.0.1:8000' 'Backend em'
 
 # ULTIMA LINHA, DE PROPOSITO: o codigo de saida do runserver vira o do script, e
