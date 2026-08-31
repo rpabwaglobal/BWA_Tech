@@ -8,7 +8,7 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { DateTimePicker } from '@/components/ui/datetime-picker';
 import { UserSelect } from '@/components/ui/user-select';
-import { Loader2, Check, Settings, Plus, Pencil, Trash2, X, ChevronDown, ChevronUp, AlertTriangle, AlertCircle, ExternalLink } from 'lucide-react';
+import { Loader2, Check, Settings, Plus, Pencil, Trash2, X, ChevronDown, ChevronUp, AlertTriangle, AlertCircle, ExternalLink, Presentation } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -27,9 +27,22 @@ import { weeklyPriorityService } from '@/services/weeklyPriorityService';
 import { cn, normalizeExternalUrl } from '@/lib/utils';
 import { ROUTES } from '@/routes';
 import { TelaComCarregamento } from '@/components/TelaComCarregamento';
+import { DailyMode } from '@/components/priorities/DailyMode';
+import { readDailyModeOnLoad, writeDailyModeOnLoad } from '@/lib/dailyModePreference';
 // Formatação de data sem dependência externa
 
-type CardData = {
+/**
+ * O card como a página o usa.
+ *
+ * ESTE TIPO ERA MAIS ESTREITO QUE O PAYLOAD. Os dois endpoints de prioridades
+ * serializam com `CardSerializer` completo (`views.py:1772` e o
+ * `serialize_card_with_priority` em `2379`), então descrição, área, tipo,
+ * responsável, script e `finalizado_em` SEMPRE chegaram — o tipo é que não os
+ * declarava, e por isso pareciam ausentes. Alargá-lo não custa nenhuma
+ * requisição nova; é o que permite o Daily Mode renderizar o card do kanban de
+ * verdade em vez de uma versão pobre.
+ */
+export type CardData = {
   id: string;
   nome: string;
   prioridade: string;
@@ -37,6 +50,19 @@ type CardData = {
   data_fim: string | null;
   status: string;
   status_display: string;
+  descricao?: string;
+  area?: string;
+  area_display?: string;
+  tipo?: string;
+  tipo_display?: string;
+  responsavel_name?: string;
+  responsavel_role?: string;
+  script_url?: string | null;
+  score_final?: string | number | null;
+  data_inicio?: string | null;
+  /** Instante real da conclusão, gravado por signal. NÃO é `updated_at`: este
+   * não sobe quando o card é editado depois de entregue. */
+  finalizado_em?: string | null;
   projeto?: number;
   projeto_detail?: {
     id: number;
@@ -65,7 +91,7 @@ function cardEtapaLabel(card: { status: string; status_display?: string | null }
   return CARD_STATUSES.find((s) => s.value === card.status)?.label ?? card.status;
 }
 
-type UserWithCards = {
+export type UserWithCards = {
   usuario: {
     id: string;
     username: string;
@@ -87,6 +113,13 @@ export default function Priorities() {
   const [usersWithCards, setUsersWithCards] = useState<UserWithCards[]>([]);
   const [loading, setLoading] = useState(true);
   const [periodo, setPeriodo] = useState<'dia' | 'semana'>('dia');
+  // MODO SEPARADO, e nao um terceiro valor de `periodo`. Ha dezesseis
+  // condicionais `periodo === 'dia'|'semana'` neste arquivo; um 'daily' ali
+  // dentro obrigaria a revisar todas, e cada uma esquecida vira um bug mudo.
+  // Sao perguntas diferentes: `periodo` e QUAIS cards; `modo` e COMO mostra.
+  const [modo, setModo] = useState<'padrao' | 'daily'>(
+    () => (readDailyModeOnLoad() ? 'daily' : 'padrao'),
+  );
   const [viewCardDialogOpen, setViewCardDialogOpen] = useState(false);
   const [selectedCard, setSelectedCard] = useState<CardType | null>(null);
   const [cardLoading, setCardLoading] = useState(false);
@@ -505,27 +538,52 @@ export default function Priorities() {
     }
   };
 
-  const handleCardClick = async (cardId: string) => {
-    try {
+  const preencherFormularioDoCard = useCallback((card: Partial<CardType> & { nome?: string }) => {
+    setCardFormData({
+      nome: card.nome || '',
+      descricao: card.descricao || '',
+      script_url: card.script_url || '',
+      area: card.area || 'backend',
+      tipo: card.tipo || 'feature',
+      prioridade: card.prioridade || 'media',
+      status: card.status || 'a_desenvolver',
+      responsavel: card.responsavel || '',
+      data_inicio: card.data_inicio || '',
+      data_fim: card.data_fim || '',
+    });
+  }, []);
+
+  /**
+   * Abre o modal de leitura do card.
+   *
+   * O DIALOG ABRE ANTES DA BUSCA, e não depois. Antes o `setViewCardDialogOpen`
+   * vinha DEPOIS do `await`: o clique ficava um a dois segundos sem resposta
+   * nenhuma na tela, e o ramo `cardLoading` que o próprio dialog já tinha nunca
+   * chegava a aparecer, porque quando ele abria o carregamento já tinha
+   * terminado.
+   *
+   * E quando a tela JÁ TEM o card, ele é pintado na hora. Os dois endpoints de
+   * prioridades serializam com `CardSerializer` completo — o mesmo que
+   * `getById` devolve —, então o objeto da lista tem os mesmos campos. A busca
+   * continua acontecendo, mas como confirmação: se algo mudou no servidor desde
+   * a carga da página, o modal se corrige sozinho.
+   */
+  const handleCardClick = async (cardId: string, cardConhecido?: CardData) => {
+    setViewCardDialogOpen(true);
+
+    if (cardConhecido) {
+      const jaNaTela = cardConhecido as unknown as CardType;
+      setSelectedCard(jaNaTela);
+      preencherFormularioDoCard(jaNaTela);
+    } else {
+      setSelectedCard(null);
       setCardLoading(true);
+    }
+
+    try {
       const card = await cardService.getById(cardId);
       setSelectedCard(card);
-      
-      // Preencher formData com os dados do card
-      setCardFormData({
-        nome: card.nome || '',
-        descricao: card.descricao || '',
-        script_url: card.script_url || '',
-        area: card.area || 'backend',
-        tipo: card.tipo || 'feature',
-        prioridade: card.prioridade || 'media',
-        status: card.status || 'a_desenvolver',
-        responsavel: card.responsavel || '',
-        data_inicio: card.data_inicio || '',
-        data_fim: card.data_fim || '',
-      });
-      
-      setViewCardDialogOpen(true);
+      preencherFormularioDoCard(card);
     } catch (error) {
       console.error('Erro ao carregar card:', error);
     } finally {
@@ -538,7 +596,9 @@ export default function Priorities() {
       <div>
         <h1 className="text-2xl font-bold text-[var(--color-foreground)]">Prioridades</h1>
         <p className="text-sm text-[var(--color-muted-foreground)] mt-1">
-          Visualize os cards em desenvolvimento de cada pessoa da equipe
+          {modo === 'daily'
+            ? 'Uma pessoa por vez, com o que está em desenvolvimento e o que foi entregue'
+            : 'Visualize os cards em desenvolvimento de cada pessoa da equipe'}
         </p>
       </div>
 
@@ -568,8 +628,14 @@ export default function Priorities() {
         >
           Prioridades da Semana
         </Button>
+
+        {/* Empurra o que vem depois para a direita. Estava no `ml-auto` do
+            bloco de supervisor, que so existe em `periodo === 'semana'` - com o
+            seletor de modo tambem la, dois `ml-auto` na mesma linha abririam um
+            vao entre eles. Um espacador so resolve nos dois periodos. */}
+        <div className="flex-1" />
         {isSupervisor && periodo === 'semana' && (
-          <div className="ml-auto flex items-center gap-[8px]">
+          <div className="flex items-center gap-[8px]">
             <Button
               variant="ghost"
               size="sm"
@@ -613,9 +679,54 @@ export default function Priorities() {
             </Button>
           </div>
         )}
+
+        {/* ── Daily Mode ──
+            SELETOR, e nao uma terceira aba. As abas escolhem QUAIS cards (os de
+            hoje ou os da semana); isto escolhe COMO eles aparecem, e vale para
+            as duas. Virar aba faria parecer um terceiro periodo. */}
+        <button
+          type="button"
+          onClick={() => {
+            const proximo = modo === 'daily' ? 'padrao' : 'daily';
+            setModo(proximo);
+            writeDailyModeOnLoad(proximo === 'daily');
+          }}
+          aria-pressed={modo === 'daily'}
+          title="Conduz a daily uma pessoa por vez"
+          className={cn(
+            'mb-[8px] flex items-center gap-[10px] rounded-full border py-[6px] pl-[14px] pr-[8px] transition-colors',
+            modo === 'daily'
+              ? 'border-[var(--color-primary)] bg-[var(--color-primary)]/15 text-[var(--color-primary)]'
+              : 'border-[var(--color-border)] text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]',
+          )}
+        >
+          <Presentation className="h-[16px] w-[16px]" />
+          <span className="text-[13px] font-semibold">Daily Mode</span>
+          {/* Mesma chavinha do tema, em Layout.tsx: transicao no transform, e
+              nao em `margin-left`, que forcaria layout a cada quadro. */}
+          <span
+            className={cn(
+              'flex h-[18px] w-[34px] items-center rounded-full p-[2px] transition-colors duration-200',
+              modo === 'daily' ? 'bg-[var(--color-primary)]' : 'bg-[var(--color-muted)]',
+            )}
+          >
+            <span
+              className={cn(
+                'h-[14px] w-[14px] rounded-full bg-white transition-transform duration-200 ease-out',
+                modo === 'daily' ? 'translate-x-[16px]' : 'translate-x-0',
+              )}
+            />
+          </span>
+        </button>
       </div>
 
-      {usersWithCards.length === 0 ? (
+      {modo === 'daily' ? (
+        <DailyMode
+          usuarios={usersWithCards}
+          usuarioLogadoId={user?.id}
+          onCardClick={handleCardClick}
+        />
+      ) : usersWithCards.length === 0 ? (
         <Card>
           <CardContent className="py-8 text-center text-[var(--color-muted-foreground)]">
             Nenhum usuário encontrado
@@ -787,7 +898,7 @@ export default function Priorities() {
                                         "text-sm font-medium cursor-pointer hover:underline",
                                         isConcluido ? "text-green-500" : "text-red-500"
                                       )}
-                                      onClick={() => handleCardClick(card.id)}
+                                      onClick={() => handleCardClick(card.id, card)}
                                     >
                                       {card.nome}
                                     </p>
@@ -933,7 +1044,7 @@ export default function Priorities() {
                                       "text-sm font-medium cursor-pointer hover:underline",
                                       textColorClass
                                     )}
-                                    onClick={() => handleCardClick(card.id)}
+                                    onClick={() => handleCardClick(card.id, card)}
                                   >
                                     {card.nome}
                                   </p>
@@ -1632,7 +1743,7 @@ export default function Priorities() {
                   <div
                     key={card.id}
                     className="p-[12px] rounded-[8px] border border-[var(--color-border)] bg-[var(--color-card)] hover:bg-[var(--color-accent)] transition-colors cursor-pointer"
-                    onClick={() => handleCardClick(card.id)}
+                    onClick={() => handleCardClick(card.id, card)}
                   >
                     <div className="flex items-start gap-[8px]">
                       <Check className="h-[16px] w-[16px] text-green-500 shrink-0 mt-[2px]" strokeWidth={3} />

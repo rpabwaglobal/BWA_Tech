@@ -194,6 +194,45 @@ def _ids_supervisao_prioridades():
     return usuarios_com_perm_qs('manage_weekly_priorities').values_list('id', flat=True)
 
 
+_DIAS_DA_SEMANA = (
+    'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado', 'Domingo',
+)
+
+
+_MARCA_DO_MOTIVO = 'Motivo:'
+
+
+def _motivo_da_pendencia(descricao):
+    """Tira o motivo de dentro da descrição do log de pendência.
+
+    O log guarda a transição e o motivo no MESMO texto:
+
+        "Em Desenvolvimento -> Parado por Pendências", uma linha em
+        branco, e "Motivo: aguardando X".
+
+    A primeira linha é redundante na tela do daily — a pessoa já está olhando um
+    bloco vermelho escrito "PARADO POR PENDÊNCIAS". O que interessa é o "X".
+
+    Devolve string vazia quando não há motivo registrado; quem chama decide o
+    que dizer. Inventar um texto aqui faria a tela afirmar algo que ninguém
+    escreveu.
+    """
+    if not descricao:
+        return ''
+    _, marca, resto = descricao.partition(_MARCA_DO_MOTIVO)
+    return (resto if marca else descricao).strip()
+
+
+def _rotulo_do_dia(dia):
+    """"Quarta, 26/08" — o rótulo de dia usado no Daily Mode.
+
+    ESCRITO À MÃO, e não via `date_format` do Django: aquele depende do
+    `LANGUAGE_CODE` e das traduções instaladas, e um dia sem tradução sairia em
+    inglês no meio da tela. São sete palavras; a dependência não se paga.
+    """
+    return '%s, %02d/%02d' % (_DIAS_DA_SEMANA[dia.weekday()], dia.day, dia.month)
+
+
 def _usuarios_que_executam(queryset=None):
     """Quem aparece como LINHA nas telas de "quem está sem card".
 
@@ -1801,6 +1840,166 @@ class CardViewSet(CompartilhamentoSetorMixin, viewsets.ModelViewSet):
         ))
         
         return Response(result)
+
+    @action(detail=False, methods=['get'], url_path='daily_extras',
+            permission_classes=[HasPerm('view_metrics')])
+    def daily_extras(self, request):
+        """O que o Daily Mode precisa e `priorities_view` NAO devolve.
+
+        Duas colunas do daily nao saem do payload que a pagina ja carrega:
+
+        1. O TEXTO do impedimento. O card traz `status='parado_pendencias'` e
+           `events_count`, mas `CardSerializer` nao serializa os eventos - so
+           conta. Sem isto o daily mostraria "parado" sem dizer parado por que,
+           que e justamente a informacao que a reuniao precisa.
+
+        2. AS ENTREGAS DOS ULTIMOS DIAS. `priorities_view?periodo=dia` filtra
+           `finalizado hoje`, e o `periodo=semana` olha para a FRENTE
+           (`data_fim` ate hoje+7). Nenhum dos dois responde "o que esta pessoa
+           entregou desde a ultima daily".
+
+        E um complemento, e nao um substituto: devolve so os extras, indexados
+        por usuario, para o cliente casar com o `usersWithCards` que ja tem na
+        mao. Assim ligar o Daily Mode nao rebusca nem repinta os cards.
+
+        `finalizado_em` E A REFERENCIA, e nao `updated_at`: e gravado pelo
+        signal no instante da conclusao e esta preenchido em 100% dos cards
+        finalizados, enquanto `updated_at` sobe a cada edicao posterior - um
+        card entregue na terca e corrigido na quinta apareceria na quinta.
+        """
+        from django.contrib.auth import get_user_model
+        from django.utils import timezone
+        from datetime import timedelta
+        from .models import CardLog, CardLogEventType
+
+        User = get_user_model()
+
+        try:
+            dias = int(request.query_params.get('dias', 7))
+        except (TypeError, ValueError):
+            dias = 7
+        dias = max(1, min(dias, 30))
+
+        hoje = timezone.localdate()  # local, e nao UTC: ver priorities_view
+        inicio = hoje - timedelta(days=dias)
+
+        usuarios = scope_users(
+            _usuarios_que_executam(User.objects.all()),
+            request.user,
+        )
+        ids_usuarios = [u.id for u in usuarios]
+
+        # ── Entregas dos ultimos dias ────────────────────────────────────
+        # HOJE FICA DE FORA: o daily ja tem uma coluna so para hoje, e repetir
+        # o mesmo card nas duas colunas faria a pessoa contar duas vezes.
+        entregues = scope_cards(
+            Card.objects.filter(
+                status='finalizado',
+                finalizado_em__isnull=False,
+                responsavel_id__in=ids_usuarios,
+                projeto__arquivado=False,
+            ).select_related('projeto', 'responsavel'),
+            request.user,
+        )
+        # Sem filtro de sprint, DE PROPOSITO: o trabalho da semana passada
+        # costuma estar numa sprint ja fechada, e filtrar por sprint em
+        # andamento esvaziaria a coluna toda segunda-feira.
+
+        por_usuario = {uid: {} for uid in ids_usuarios}
+        for card in entregues:
+            dia = timezone.localdate(card.finalizado_em)
+            if dia >= hoje or dia < inicio:
+                continue
+            dias_do_usuario = por_usuario.get(card.responsavel_id)
+            if dias_do_usuario is None:
+                continue
+            dias_do_usuario.setdefault(dia, []).append(card)
+
+        # ── Texto do impedimento ─────────────────────────────────────────
+        # TODOS os cards parados de cada pessoa, e nao so um. A primeira versao
+        # devolvia um dicionario `responsavel_id -> card`, o que silenciosamente
+        # descartava o segundo card travado da mesma pessoa - e a coluna mostrava
+        # o motivo de um card ao lado do nome de outro.
+        parados_por_usuario = {}
+        todos_parados = []
+        for card in scope_cards(
+            Card.objects.filter(
+                status='parado_pendencias',
+                responsavel_id__in=ids_usuarios,
+                projeto__arquivado=False,
+            ).order_by('responsavel_id', '-updated_at'),
+            request.user,
+        ):
+            parados_por_usuario.setdefault(card.responsavel_id, []).append(card)
+            todos_parados.append(card)
+        # O MOTIVO MORA NO CardLog, e nao no model `Event`. `Event` tem um tipo
+        # 'pendencia' que PARECE ser o lugar certo, mas ele esta VAZIO: zero
+        # linhas no banco inteiro. Quem grava de verdade e o log de movimentacao
+        # do card, com 116 registros, no formato:
+        #     "Em Desenvolvimento -> Parado por Pendencias", linha em
+        #     branco, e "Motivo: <texto>".
+        # Escrevi este endpoint contra `Event` primeiro e ele devolveu motivo
+        # vazio para os 9 usuarios parados - so olhando o banco deu para ver.
+        #
+        # UMA consulta para todos os cards, e nao uma por card: o daily abre com
+        # a equipe inteira na tela.
+        pendencia_por_card = {}
+        if todos_parados:
+            logs = CardLog.objects.filter(
+                card_id__in=[c.id for c in todos_parados],
+                tipo_evento=CardLogEventType.PENDENCIA,
+            ).order_by('card_id', '-data')
+            # O MAIS RECENTE de cada card: um card pode travar, destravar e
+            # travar de novo, e o motivo velho descreveria outro impedimento.
+            for log in logs:
+                pendencia_por_card.setdefault(log.card_id, log)
+
+        resultado = []
+        for usuario in usuarios:
+            pendencias = []
+            for card_parado in parados_por_usuario.get(usuario.id, []):
+                log = pendencia_por_card.get(card_parado.id)
+                pendencias.append({
+                    'card_id': str(card_parado.id),
+                    'card_nome': card_parado.nome,
+                    # Vazio quando o card esta parado mas ninguem registrou o
+                    # motivo. O cliente decide o que dizer - o backend nao
+                    # inventa texto.
+                    'motivo': _motivo_da_pendencia(log.descricao) if log else '',
+                    'data': log.data if log is not None else None,
+                })
+
+            entregas = [
+                {
+                    'dia': dia.isoformat(),
+                    'label': _rotulo_do_dia(dia),
+                    'items': [
+                        {
+                            'id': str(c.id),
+                            'nome': c.nome,
+                            'projeto': c.projeto.nome if c.projeto else '',
+                            'finalizado_em': c.finalizado_em,
+                        }
+                        for c in sorted(
+                            cards, key=lambda c: c.finalizado_em, reverse=True)
+                    ],
+                }
+                for dia, cards in sorted(
+                    por_usuario.get(usuario.id, {}).items(), reverse=True)
+            ]
+
+            resultado.append({
+                'usuario_id': usuario.id,
+                'pendencias': pendencias,
+                'entregas': entregas,
+                'total_entregas': sum(len(d['items']) for d in entregas),
+            })
+
+        return Response({
+            'hoje': hoje.isoformat(),
+            'dias': dias,
+            'usuarios': resultado,
+        })
 
 
 class UserNoteViewSet(viewsets.ModelViewSet):

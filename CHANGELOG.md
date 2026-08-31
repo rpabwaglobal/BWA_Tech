@@ -100,6 +100,41 @@ antes de reverter, e reverta a migração antes do código.
 
 ---
 
+## 2.5.0
+
+Data: 31/08/2026 · migração de banco: **não**
+
+- **A página de Prioridades ganhou o Daily Mode.** A visualização em grade
+  responde "como está a equipe?" de relance; a reunião diária faz outra
+  pergunta, e uma pessoa de cada vez. Com a equipe inteira na tela, quem vai
+  falar precisa procurar o próprio cartão antes de começar, e quem ouve não sabe
+  para onde olhar.
+
+  O novo modo mostra **uma pessoa por vez**, em três colunas: o que ela está
+  tocando agora, o que concluiu hoje e o que entregou nos últimos dias. Embaixo,
+  a fila da equipe — quem já passou fica marcado, e dá para andar pelas setas do
+  teclado sem tirar a mão do lugar.
+
+  É um **seletor**, e não uma terceira aba: "Dia" e "Semana" escolhem quais
+  cards; o Daily Mode escolhe como eles aparecem, e vale para os dois. A escolha
+  fica guardada, então quem conduz a reunião abre a página já no modo certo.
+
+- **Os cards são os mesmos do kanban.** Cor de prioridade, etiquetas de área e
+  tipo, aviso de atraso e link de script — tudo idêntico ao quadro, porque é o
+  mesmo componente. Clicar abre o card, como em qualquer outra tela.
+
+- **O motivo de cada card parado agora aparece escrito no card.** Antes essa
+  informação existia no histórico e não chegava a lugar nenhum: a tela dizia
+  "parado por pendências" sem dizer parado por quê, que é justamente o que a
+  reunião precisa saber.
+
+- **O card abre na hora.** Ao clicar em um card na página de Prioridades, o modal
+  esperava a resposta do servidor antes de sequer aparecer — um a dois segundos
+  de tela parada, sem sinal de que algo estava acontecendo. Agora ele abre
+  imediatamente, já com o conteúdo que a página tinha em mãos.
+
+---
+
 ## 2.4.2
 
 Data: 24/08/2026 · migração de banco: **não**
