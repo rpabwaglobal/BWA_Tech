@@ -382,10 +382,11 @@ export default function Dashboard() {
                 Nenhum card em desenvolvimento no momento.
               </p>
             ) : (
-              /* SEM `max-h-[400px]`. A altura fixa era o que estourava a
-                 soma: saudação + números + cabeçalho + 400 não cabia em tela
-                 nenhuma. Agora a lista ocupa o que sobrou e rola por dentro. */
-              <div className="space-y-[16px] flex-1 md:min-h-0 md:overflow-y-auto pr-2">
+              /* SEM `max-h-[400px]`: a altura fixa era o que estourava a soma
+                 (saudação + números + cabeçalho + 400 não cabe em tela nenhuma).
+                 E SEM `space-y`: o que separa as linhas agora é o filete de
+                 `.lista-separada`, não um vão. */
+              <div className="lista-separada flex-1 md:min-h-0 md:overflow-y-auto pr-2">
                 {cardsInDevelopment.map((card, i) => {
                   const diasRestantes = calculateDaysRemaining(card.data_fim);
                   const isOverdue = diasRestantes !== null && diasRestantes < 0;
@@ -393,7 +394,11 @@ export default function Dashboard() {
                   return (
                     <div
                       key={card.id}
-                      className="card-entra flex items-center justify-between p-[16px] rounded-[8px] border border-[var(--color-border)] hover:bg-[var(--color-accent)] transition-colors"
+                      /* LINHA, e não cartão: sem borda nem cantos próprios. O painel já é a
+   moldura — repetir uma em cada item empilha molduras e come altura. O
+   respiro horizontal encolhe (o cartão de fora já afasta da borda) e o
+   vertical fica em 12px, que é o que dá o ritmo de lista. */
+                      className="card-entra flex items-center justify-between rounded-[6px] px-[8px] py-[12px] transition-colors hover:bg-[var(--color-accent)]"
                       style={{ animationDelay: `${60 + Math.min(i, 6) * 45}ms` }}
                     >
                       <div className="flex items-center gap-[16px]">
@@ -473,17 +478,22 @@ export default function Dashboard() {
                 Todos os usuários têm card em desenvolvimento.
               </p>
             ) : (
-              /* SEM `max-h-[400px]`. A altura fixa era o que estourava a
-                 soma: saudação + números + cabeçalho + 400 não cabia em tela
-                 nenhuma. Agora a lista ocupa o que sobrou e rola por dentro. */
-              <div className="space-y-[16px] flex-1 md:min-h-0 md:overflow-y-auto pr-2">
+              /* SEM `max-h-[400px]`: a altura fixa era o que estourava a soma
+                 (saudação + números + cabeçalho + 400 não cabe em tela nenhuma).
+                 E SEM `space-y`: o que separa as linhas agora é o filete de
+                 `.lista-separada`, não um vão. */
+              <div className="lista-separada flex-1 md:min-h-0 md:overflow-y-auto pr-2">
                 {developersWithoutCards.map((developer, i) => {
                   const displayName = getShortDisplayName(developer);
 
                   return (
                     <div
                       key={developer.id}
-                      className="card-entra flex items-center justify-between p-[16px] rounded-[8px] border border-[var(--color-border)] hover:bg-[var(--color-accent)] transition-colors"
+                      /* LINHA, e não cartão: sem borda nem cantos próprios. O painel já é a
+   moldura — repetir uma em cada item empilha molduras e come altura. O
+   respiro horizontal encolhe (o cartão de fora já afasta da borda) e o
+   vertical fica em 12px, que é o que dá o ritmo de lista. */
+                      className="card-entra flex items-center justify-between rounded-[6px] px-[8px] py-[12px] transition-colors hover:bg-[var(--color-accent)]"
                       style={{ animationDelay: `${60 + Math.min(i, 6) * 45}ms` }}
                     >
                       <div className="flex items-center gap-[16px]">

@@ -100,6 +100,17 @@ antes de reverter, e reverta a migração antes do código.
 
 ---
 
+## 2.6.3
+
+Data: 31/08/2026 · migração de banco: **não**
+
+- **As listas do Dashboard viraram linhas separadas por um filete**, em vez de
+  um cartão em volta de cada item. O painel já é a moldura; repetir uma em cada
+  linha empilhava molduras e comia altura. O filete usa as cores do separador do
+  cabeçalho, com 1px, e vai sumindo até o fim da linha.
+
+---
+
 ## 2.6.2
 
 Data: 31/08/2026 · migração de banco: **não**

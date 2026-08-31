@@ -24,6 +24,20 @@
      o roxo da marca não lê como sol nem como lua, e é justamente o
      reconhecimento imediato que faz o interruptor dispensar rótulo. Os valores
      saem do que o botão antigo já usava — `text-amber-500` e `text-indigo-300`. */
+  /* As duas pontas do filete da marca, em UM LUGAR SÓ: os dois degradês abaixo
+     saem daqui, então mudar a marca muda os dois de uma vez. */
+  --marca-roxo: #754c99;
+  --marca-ciano: #8fd0d7;
+  /* O do cabeçalho: chega inteiro até a outra ponta. */
+  --degrade-separador: linear-gradient(
+    to right, var(--marca-roxo) 0%, var(--marca-ciano) 100%
+  );
+  /* O das listas: as mesmas cores, mas SUMINDO no fim. Um filete que atravessa
+     de ponta a ponta em cada linha vira grade; esvanecendo, ele separa sem
+     picotar a lista. */
+  --degrade-separador-esvanecido: linear-gradient(
+    to right, var(--marca-roxo) 0%, var(--marca-ciano) 55%, transparent 100%
+  );
   --color-sol: hsl(38 92% 50%);
   --color-lua: hsl(226 100% 84%);
   --color-primary-foreground: hsl(0 0% 100%);
@@ -160,7 +174,7 @@
 /* Separador do header da página — gradiente roxo → ciano */
 .border-header-gradient {
   border-bottom: 3px solid transparent;
-  border-image: linear-gradient(to right, #754c99 0%, #8fd0d7 100%) 1;
+  border-image: var(--degrade-separador) 1;
 }
 
 /* Sidebar com gradiente roxo→ciano (variação F4) */
@@ -936,4 +950,22 @@ body.arrastando * {
   .interruptor-tema__nucleo,
   .interruptor-tema__mordida,
   .interruptor-tema__raios { transition: none; }
+}
+
+/* ── Lista de itens separados por um filete ──────────────────────────────
+   Para listas em que cada linha É um item, e não um cartão dentro de outro
+   cartão. O painel já é a moldura; repetir borda e cantos em cada linha
+   empilha molduras e come altura à toa.
+
+   `* + *` PÕE O FILETE SÓ ENTRE OS ITENS: nada acima do primeiro nem abaixo do
+   último, que é o que "separador" quer dizer. Com `:not(:last-child)` sobraria
+   um traço solto embaixo quando a lista é rolável.
+
+   1px, e as mesmas cores do separador do cabeçalho — o `border-image` pinta o
+   degradê da marca, e como só a borda de cima tem espessura, é só ela que
+   aparece. A diferença é que este ESVANECE no fim, em vez de cruzar a linha
+   inteira. */
+.lista-separada > * + * {
+  border-top: 1px solid transparent;
+  border-image: var(--degrade-separador-esvanecido) 1;
 }
