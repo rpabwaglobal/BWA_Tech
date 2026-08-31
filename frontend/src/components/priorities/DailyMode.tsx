@@ -273,6 +273,10 @@ export function DailyMode({ usuarios, usuarioLogadoId, onCardClick }: DailyModeP
 
   const souEu = usuarioLogadoId != null && String(usuarioLogadoId) === String(pessoa.usuario.id);
   const classeDaTroca = direcao === 'avante' ? 'daily-pessoa-avante' : 'daily-pessoa-atras';
+  /** As colunas entram em ordem de leitura, e não todas no mesmo quadro. */
+  const atrasoDaColuna = (posicaoNaLinha: number) => ({
+    animationDelay: `${posicaoNaLinha * 80}ms`,
+  });
   const entregas = extrasDaPessoa?.entregas ?? [];
 
   /** O card em si — sempre o do kanban, nunca uma cópia. */
@@ -297,6 +301,7 @@ export function DailyMode({ usuarios, usuarioLogadoId, onCardClick }: DailyModeP
         {/* ── A pessoa e o que ela está tocando ── */}
         <section
           key={`pessoa-${pessoa.usuario.id}`}
+          style={atrasoDaColuna(0)}
           className={cn(
             'flex min-h-0 flex-col gap-[12px] overflow-y-auto rounded-[14px] border border-[var(--color-border)] bg-[var(--color-card)] p-[16px]',
             classeDaTroca,
@@ -413,6 +418,7 @@ export function DailyMode({ usuarios, usuarioLogadoId, onCardClick }: DailyModeP
         {/* ── Concluídos hoje ── */}
         <section
           key={`hoje-${pessoa.usuario.id}`}
+          style={atrasoDaColuna(1)}
           className={cn(
             'flex min-h-0 flex-col rounded-[14px] border border-[var(--color-border)] bg-[var(--color-card)] p-[16px]',
             classeDaTroca,
@@ -440,6 +446,7 @@ export function DailyMode({ usuarios, usuarioLogadoId, onCardClick }: DailyModeP
         {/* ── Últimos dias ── */}
         <section
           key={`semana-${pessoa.usuario.id}`}
+          style={atrasoDaColuna(2)}
           className={cn(
             'flex min-h-0 flex-col rounded-[14px] border border-[var(--color-border)] bg-[var(--color-card)] p-[16px]',
             classeDaTroca,
@@ -555,8 +562,15 @@ export function DailyMode({ usuarios, usuarioLogadoId, onCardClick }: DailyModeP
               >
                 <span
                   className={cn(
-                    'relative block transition-all duration-200 ease-out',
-                    ativo ? 'h-[46px] w-[46px]' : 'h-[36px] w-[36px]',
+                    'relative block rounded-full transition-all duration-200 ease-out',
+                    ativo
+                      ? // HALO FINO: `ring-1` + `ring-offset-1`. O anel anterior
+                        // era `ring-2 ring-offset-2` e desenhava 4px FORA da
+                        // caixa do botão — 46 + 8 = 54 num espaço de 52, daí o
+                        // corte em cima e embaixo. Assim são 46 + 4 = 50, e
+                        // sobra folga.
+                        'h-[46px] w-[46px] ring-1 ring-[var(--color-primary)] ring-offset-1 ring-offset-[var(--color-card)]'
+                      : 'h-[36px] w-[36px]',
                   )}
                 >
                   <Avatar className="h-full w-full">

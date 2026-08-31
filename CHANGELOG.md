@@ -100,6 +100,20 @@ antes de reverter, e reverta a migração antes do código.
 
 ---
 
+## 2.5.4
+
+Data: 31/08/2026 · migração de banco: **não**
+
+- **A troca de pessoa no Daily Mode ficou mais suave.** A transição era rápida
+  demais para o olho acompanhar — lia como um corte, não como uma troca. Agora
+  as três colunas entram em ordem de leitura, e os cards aparecem escalonados
+  dentro delas.
+
+- **O avatar de quem está falando voltou a ter um halo**, agora fino o bastante
+  para caber na barra sem ser cortado.
+
+---
+
 ## 2.5.3
 
 Data: 31/08/2026 · migração de banco: **não**
