@@ -100,6 +100,15 @@ antes de reverter, e reverta a migração antes do código.
 
 ---
 
+## 2.5.5
+
+Data: 31/08/2026 · migração de banco: **não**
+
+- **Sumiram as barras de rolagem que piscavam ao avançar para a próxima pessoa
+  no Daily Mode.** Apareciam só no "próximo", nunca no "voltar".
+
+---
+
 ## 2.5.4
 
 Data: 31/08/2026 · migração de banco: **não**

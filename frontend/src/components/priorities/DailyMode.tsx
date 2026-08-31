@@ -273,6 +273,27 @@ export function DailyMode({ usuarios, usuarioLogadoId, onCardClick }: DailyModeP
 
   const souEu = usuarioLogadoId != null && String(usuarioLogadoId) === String(pessoa.usuario.id);
   const classeDaTroca = direcao === 'avante' ? 'daily-pessoa-avante' : 'daily-pessoa-atras';
+  /**
+   * A coluna sem nada vira vidro: translúcida, com o fundo da página desfocado
+   * por trás.
+   *
+   * NA COR DO PAINEL, e NÃO em `opacity`. A animação de troca de pessoa tem
+   * `fill-mode: both`, então o `to { opacity: 1 }` dela continua valendo depois
+   * que ela termina — e animação vence declaração normal na cascata. Um
+   * `opacity-60` na mesma `<section>` seria simplesmente ignorado, e o defeito
+   * só apareceria depois da primeira troca de pessoa.
+   *
+   * O DESFOQUE É DE 4px, e não mais: `backdrop-filter` custa uma composição por
+   * quadro, e estas três colunas já estão animando `transform` ao mesmo tempo.
+   * A borda a 35% e o filete claro por dentro (`inset`) são o que dá a leitura
+   * de vidro — sem eles fica só um painel apagado.
+   */
+  const painelVazio = [
+    'border-[var(--color-border)]/35 bg-[var(--color-card)]/30',
+    'backdrop-blur-[4px] backdrop-saturate-150',
+    'shadow-[inset_0_1px_0_0_rgba(255,255,255,0.07)]',
+  ].join(' ');
+
   /** As colunas entram em ordem de leitura, e não todas no mesmo quadro. */
   const atrasoDaColuna = (posicaoNaLinha: number) => ({
     animationDelay: `${posicaoNaLinha * 80}ms`,
@@ -296,7 +317,25 @@ export function DailyMode({ usuarios, usuarioLogadoId, onCardClick }: DailyModeP
 
   return (
     <div className="daily-entra flex flex-col gap-[14px] lg:min-h-0 lg:flex-1">
-      <div className="grid grid-cols-1 gap-[16px] lg:min-h-0 lg:flex-1 lg:grid-cols-[minmax(300px,1.15fr)_minmax(0,1fr)_minmax(0,1fr)]">
+      {/* `overflow-hidden` POR CAUSA DA ANIMAÇÃO DE TROCA.
+          As colunas entram deslocadas em 34px. Indo para o PRÓXIMO o
+          deslocamento é para a DIREITA, e transbordo à direita cria barra de
+          rolagem; indo para o anterior é para a esquerda, e o navegador não
+          rola para valores negativos em escrita da esquerda para a direita —
+          por isso só "próximo" mostrava o defeito.
+
+          E a barra vertical vinha de carona: a horizontal come ~15px da altura
+          da janela, o `h-[calc(100vh-128px)]` deixa de caber e aparece a
+          segunda.
+
+          Recortar aqui, e não `overflow-x: hidden` na página: o problema nasce
+          nesta grade e some com ela. De quebra o efeito melhora — a coluna
+          entra de trás da borda em vez de empurrar a tela.
+
+          As colunas não se atropelam durante o recorte: com `both`, todas
+          esperam em +34px e cada uma caminha para 0 na sua vez, então elas se
+          afastam umas das outras, nunca se sobrepõem. */}
+      <div className="grid grid-cols-1 gap-[16px] overflow-hidden lg:min-h-0 lg:flex-1 lg:grid-cols-[minmax(300px,1.15fr)_minmax(0,1fr)_minmax(0,1fr)]">
 
         {/* ── A pessoa e o que ela está tocando ── */}
         <section
@@ -304,6 +343,7 @@ export function DailyMode({ usuarios, usuarioLogadoId, onCardClick }: DailyModeP
           style={atrasoDaColuna(0)}
           className={cn(
             'flex min-h-0 flex-col gap-[12px] overflow-y-auto rounded-[14px] border border-[var(--color-border)] bg-[var(--color-card)] p-[16px]',
+            gruposPorProjeto.length === 0 && painelVazio,
             classeDaTroca,
           )}
         >
@@ -421,6 +461,7 @@ export function DailyMode({ usuarios, usuarioLogadoId, onCardClick }: DailyModeP
           style={atrasoDaColuna(1)}
           className={cn(
             'flex min-h-0 flex-col rounded-[14px] border border-[var(--color-border)] bg-[var(--color-card)] p-[16px]',
+            concluidosHoje.length === 0 && painelVazio,
             classeDaTroca,
           )}
         >
@@ -449,6 +490,9 @@ export function DailyMode({ usuarios, usuarioLogadoId, onCardClick }: DailyModeP
           style={atrasoDaColuna(2)}
           className={cn(
             'flex min-h-0 flex-col rounded-[14px] border border-[var(--color-border)] bg-[var(--color-card)] p-[16px]',
+            // Só quando está VAZIA DE VERDADE: carregando ainda não se sabe, e
+            // apagar a mensagem de erro esconderia um problema.
+            !carregandoExtras && !erroExtras && entregas.length === 0 && painelVazio,
             classeDaTroca,
           )}
         >
