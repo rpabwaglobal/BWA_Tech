@@ -3,13 +3,11 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
 import { useSprintKanbanWebSocket } from '@/hooks/useSprintKanbanWebSocket';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Avatar, AvatarImage, AvatarFallback } from '@/components/ui/avatar';
 import type { Card as CardType } from '@/services/cardService';
 import { dashboardService } from '@/services/dashboardService';
 import type { User } from '@/services/userService';
-import type { Project } from '@/services/projectService';
 import { formatDate } from '@/lib/dateUtils';
 import { QuickCreateCardModal } from '@/components/QuickCreateCardModal';
 import { ROUTES } from '@/routes';
@@ -18,8 +16,6 @@ import {
   FolderKanban,
   CheckCircle2,
   Clock,
-  TrendingUp,
-  Users,
   Code,
   UserX,
   Plus,
@@ -55,7 +51,6 @@ export default function Dashboard() {
     cardsADesenvolverSprintsAtivas: 0,
     cardsEmDesenvolvimentoSprintsAtivas: 0,
   });
-  const [recentProjects, setRecentProjects] = useState<Project[]>([]);
   const [cardsInDevelopment, setCardsInDevelopment] = useState<(CardType & { projeto_nome?: string })[]>([]);
   const [developersWithoutCards, setDevelopersWithoutCards] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
@@ -153,7 +148,6 @@ export default function Dashboard() {
         cardsEmDesenvolvimentoSprintsAtivas: resumo.cards.em_desenvolvimento,
       });
 
-      setRecentProjects(resumo.projetos.recentes);
       setCardsInDevelopment(resumo.cards.lista_em_desenvolvimento);
       setDevelopersWithoutCards(resumo.usuarios_sem_card);
     } catch (error) {
@@ -222,19 +216,6 @@ export default function Dashboard() {
       bgColor: 'bg-green-50',
     },
   ];
-
-  const getStatusBadge = (status: string) => {
-    const statusMap: Record<string, { label: string; variant: 'default' | 'secondary' | 'success' | 'warning' | 'destructive' }> = {
-      backlog: { label: 'Backlog', variant: 'secondary' },
-      em_avaliacao: { label: 'Em Avaliação', variant: 'warning' },
-      em_desenvolvimento: { label: 'Em Desenvolvimento', variant: 'default' },
-      entregue: { label: 'Entregue', variant: 'success' },
-      homologado: { label: 'Homologado', variant: 'success' },
-      finalizado: { label: 'Finalizado', variant: 'success' },
-    };
-    const config = statusMap[status] || { label: status, variant: 'secondary' as const };
-    return <Badge variant={config.variant}>{config.label}</Badge>;
-  };
 
   const calculateDaysRemaining = (dataFim: string | null | undefined): number | null => {
     if (!dataFim) return null;
@@ -514,58 +495,6 @@ export default function Dashboard() {
         </Card>
       </div>
 
-      {/* Recent Projects */}
-      <Card>
-        <CardHeader className="p-[24px]">
-          <CardTitle className="flex items-center gap-[8px]">
-            <TrendingUp className="h-[20px] w-[20px]" />
-            Projetos Recentes
-          </CardTitle>
-          <CardDescription>
-            Últimos projetos adicionados ao sistema
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="p-[24px] pt-0">
-          {recentProjects.length === 0 ? (
-            <p className="text-center py-[32px] text-[var(--color-muted-foreground)]">
-              Nenhum projeto encontrado.
-            </p>
-          ) : (
-            <div className="space-y-[16px]">
-              {recentProjects.map((project, i) => (
-                <div
-                  key={project.id}
-                  style={{ animationDelay: `${60 + Math.min(i, 6) * 45}ms` }}
-                  className="card-entra flex items-center justify-between p-[16px] rounded-[8px] border border-[var(--color-border)] hover:bg-[var(--color-accent)] transition-colors"
-                >
-                  <div className="flex items-center gap-[16px]">
-                    <div className="flex h-[40px] w-[40px] items-center justify-center rounded-[8px] bg-[var(--color-primary)]/10">
-                      <FolderKanban className="h-[20px] w-[20px] text-[var(--color-primary)]" />
-                    </div>
-                    <div>
-                      <p className="font-medium text-[var(--color-foreground)]">
-                        {project.nome}
-                      </p>
-                      <p className="text-sm text-[var(--color-muted-foreground)]">
-                        {project.sprint_name || 'Sem sprint'}
-                      </p>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-[16px]">
-                    {project.desenvolvedor_name && (
-                      <div className="flex items-center gap-[8px] text-sm text-[var(--color-muted-foreground)]">
-                        <Users className="h-[16px] w-[16px]" />
-                        {project.desenvolvedor_name}
-                      </div>
-                    )}
-                    {getStatusBadge(project.status)}
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </CardContent>
-      </Card>
     </TelaComCarregamento>
   );
 }

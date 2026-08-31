@@ -100,6 +100,14 @@ antes de reverter, e reverta a migração antes do código.
 
 ---
 
+## 2.6.1
+
+Data: 31/08/2026 · migração de banco: **não**
+
+- **Saiu a seção "Projetos Recentes" do Dashboard**, que não era usada.
+
+---
+
 ## 2.6.0
 
 Data: 31/08/2026 · migração de banco: **não**
