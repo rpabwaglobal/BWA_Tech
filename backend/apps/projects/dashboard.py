@@ -32,7 +32,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from apps.accounts.permissions import PodeVerConteudo, ids_que_participam_do_trabalho
+from apps.accounts.permissions import PodeVerConteudo, ids_que_executam_o_trabalho
 from apps.accounts.scoping import scope_cards, scope_projects, scope_sprints
 
 from .models import Card, CardStatus, Project, ProjectStatus, Sprint
@@ -147,8 +147,13 @@ class DashboardResumoView(APIView):
         )
         from apps.accounts.models import User
 
+        # `executam`, e NÃO `participam`. As duas telas de "quem está sem card"
+        # — esta e a de Prioridades — faziam a mesma pergunta com regras
+        # diferentes: aqui entrava todo mundo que ENXERGA o trabalho, lá só quem
+        # o EXECUTA. Na prática o painel listava duas pessoas a mais, o admin
+        # entre elas, e cobrar card de quem distribui card não quer dizer nada.
         participantes = (
-            User.objects.filter(id__in=ids_que_participam_do_trabalho(), is_active=True)
+            User.objects.filter(id__in=ids_que_executam_o_trabalho(), is_active=True)
             .exclude(id__in=com_card)
             .order_by('first_name', 'username')
         )

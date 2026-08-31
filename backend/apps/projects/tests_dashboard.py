@@ -78,6 +78,69 @@ class DashboardResumoTests(APITestCase):
         ids = {u['id'] for u in r.data['usuarios_sem_card']}
         self.assertNotIn(self.dev.id, ids, 'quem TEM card em desenvolvimento apareceu como sem card')
 
+    def test_quem_supervisiona_nao_aparece_como_sem_card(self):
+        """O admin (e qualquer supervisor) some da lista de "sem card".
+
+        O painel usava `ids_que_participam_do_trabalho` — o PISO DE LEITURA —
+        enquanto a tela de Prioridades usava a regra mais estreita de quem
+        EXECUTA. Duas telas, a mesma pergunta, respostas diferentes: no banco de
+        produção o painel listava duas pessoas a mais, o admin entre elas.
+
+        Cobrar card de quem distribui card não quer dizer nada. Este teste falha
+        se alguém trouxer o piso de leitura de volta para cá.
+        """
+        from apps.accounts.permissions import ids_que_participam_do_trabalho
+
+        # O admin passa no piso de leitura...
+        self.assertIn(self.admin.id, ids_que_participam_do_trabalho())
+
+        # ... e mesmo assim não é linha desta lista.
+        ids = {u['id'] for u in self.client.get(ROTA).data['usuarios_sem_card']}
+        self.assertNotIn(self.admin.id, ids)
+
+    def test_quem_executa_continua_aparecendo(self):
+        """A trava do teste acima: excluir supervisão não pode esvaziar a lista."""
+        from django.contrib.auth.models import Permission
+
+        sem_card = User.objects.create_user(
+            username='dev_ocioso_dash', email='dev.ocioso@example.com',
+            password='x' * 12, role='desenvolvedor')
+        sem_card.user_permissions.add(Permission.objects.get(codename='view_content'))
+
+        ids = {u['id'] for u in self.client.get(ROTA).data['usuarios_sem_card']}
+        self.assertIn(sem_card.id, ids)
+
+    def test_a_regra_e_por_PERMISSAO_e_nao_por_nome_de_cargo(self):
+        """Cargo é criado por supervisor/admin e pode ter qualquer nome.
+
+        Quem decide se a pessoa é linha desta lista são as PERMISSÕES do cargo,
+        não como ele se chama. Este teste inventa dois cargos com nomes que o
+        código nunca viu — se alguém um dia trocar a regra por um
+        `role__in=['desenvolvedor', ...]`, ele cai.
+        """
+        from apps.accounts.models import Cargo
+
+        Cargo.objects.create(
+            codename='arquiteto_de_dados', nome='Arquiteto de Dados',
+            permissoes_padrao=['view_content'])
+        Cargo.objects.create(
+            codename='coordenador_de_squad', nome='Coordenador de Squad',
+            permissoes_padrao=['view_content', 'manage_weekly_priorities'])
+
+        executa = User.objects.create_user(
+            username='arquiteto_dash', email='arquiteto@example.com',
+            password='x' * 12, role='arquiteto_de_dados')
+        supervisiona = User.objects.create_user(
+            username='coord_dash', email='coord@example.com',
+            password='x' * 12, role='coordenador_de_squad')
+
+        ids = {u['id'] for u in self.client.get(ROTA).data['usuarios_sem_card']}
+
+        self.assertIn(executa.id, ids, 'cargo novo que só executa sumiu da lista')
+        self.assertNotIn(
+            supervisiona.id, ids,
+            'cargo novo que supervisiona apareceu como "sem card"')
+
     def test_visitante_sem_view_content_e_recusado(self):
         visitante = User.objects.create_user(
             username='visita_dash', email='visita.dash@example.com', password='x' * 12,

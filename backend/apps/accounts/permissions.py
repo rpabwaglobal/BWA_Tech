@@ -339,6 +339,30 @@ def ids_que_participam_do_trabalho():
     return set(usuarios_com_perm_qs('view_content').values_list('id', flat=True))
 
 
+def ids_que_executam_o_trabalho():
+    """Ids de quem aparece como LINHA nas telas de "quem está sem card".
+
+    IRMÃ MAIS ESTREITA de `ids_que_participam_do_trabalho`, e a diferença entre
+    as duas é de produto, não de técnica:
+
+      - `participam` é o PISO DE LEITURA — quem enxerga sprint, projeto e card.
+        Serve para listagem de gente e denominador de métrica.
+      - `executam` tira dali quem SUPERVISIONA as prioridades. Quem supervisiona
+        é leitor dessas telas, não item delas: cobrar card de quem distribui
+        card não quer dizer nada, e é por isso que o admin aparecia na lista de
+        "sem card" do painel.
+
+    Estava escrita como `_usuarios_que_executam` dentro de `projects/views.py` e
+    valia só para Prioridades; o painel usava o piso de leitura e por isso
+    mostrava duas pessoas a mais. Subiu para cá — mesma casa de
+    `ids_que_participam_do_trabalho` — para as duas telas responderem à mesma
+    pergunta com a mesma resposta.
+    """
+    return ids_que_participam_do_trabalho() - set(
+        usuarios_com_perm_qs('manage_weekly_priorities').values_list('id', flat=True)
+    )
+
+
 def permissoes_concediveis_por(user):
     """Permissões que `user` pode conceder a terceiros.
 

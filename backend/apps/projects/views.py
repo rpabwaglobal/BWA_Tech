@@ -242,14 +242,16 @@ def _usuarios_que_executam(queryset=None):
         listá-lo como "sem card" é ruído: ele não está sem card, está sem
         acesso. É o pedido "visitante não aparece", resolvido por PERMISSÃO —
         assim um cargo novo sem a permissão também some, sem tocar em código.
+
+    A REGRA MORA EM `accounts/permissions.py`. Aqui ficou só o queryset: o
+    painel precisava da mesma definição e não podia importar um `_privado` de
+    views, então ela subiu e este virou o atalho de quem já a chamava.
     """
     from django.contrib.auth import get_user_model
-    from apps.accounts.permissions import ids_que_participam_do_trabalho
+    from apps.accounts.permissions import ids_que_executam_o_trabalho
 
     qs = queryset if queryset is not None else get_user_model().objects.all()
-    return (qs.filter(is_active=True)
-              .exclude(id__in=_ids_supervisao_prioridades())
-              .filter(id__in=ids_que_participam_do_trabalho()))
+    return qs.filter(is_active=True, id__in=ids_que_executam_o_trabalho())
 
 
 class SprintViewSet(CompartilhamentoSetorMixin, viewsets.ModelViewSet):

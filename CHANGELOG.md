@@ -100,6 +100,21 @@ antes de reverter, e reverta a migração antes do código.
 
 ---
 
+## 2.6.5
+
+Data: 31/08/2026 · migração de banco: **não**
+
+- **Quem supervisiona deixou de aparecer em "Usuários sem card", no Dashboard.**
+  O admin estava listado ali. Cobrar card de quem distribui card não quer dizer
+  nada — e a tela de Prioridades já não os mostrava, então as duas telas davam
+  respostas diferentes para a mesma pergunta.
+
+  A regra é por **permissão**, não por nome de cargo: um cargo novo, com o nome
+  que for, some da lista se tiver a permissão de gerenciar prioridades, e
+  aparece se não tiver.
+
+---
+
 ## 2.6.4
 
 Data: 31/08/2026 · migração de banco: **não**
