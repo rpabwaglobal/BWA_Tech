@@ -100,6 +100,18 @@ antes de reverter, e reverta a migração antes do código.
 
 ---
 
+## 2.5.2
+
+Data: 31/08/2026 · migração de banco: **não**
+
+- **No Daily Mode, o espaço de "nenhum card em desenvolvimento" agora tem o
+  tamanho de um card.** Era uma tira fina, e a coluna mudava de altura conforme
+  a pessoa pegava ou largava trabalho.
+
+- **A coluna "Última semana" não tem mais barra de rolagem horizontal.**
+
+---
+
 ## 2.5.1
 
 Data: 31/08/2026 · migração de banco: **não**

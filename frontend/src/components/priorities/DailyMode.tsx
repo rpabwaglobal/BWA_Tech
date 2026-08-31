@@ -325,7 +325,19 @@ export function DailyMode({ usuarios, usuarioLogadoId, onCardClick }: DailyModeP
               })}
             </div>
           ) : (
-            <div className="rounded-[12px] border border-dashed border-[var(--color-border)] p-[16px] text-center text-sm italic text-[var(--color-muted-foreground)]">
+            /* TAMANHO DE CARD, e não uma tira fina. O vazio ocupa o lugar
+               que um card ocuparia — assim a coluna não muda de altura quando a
+               pessoa pega um card, e o espaço lê como "aqui caberia trabalho"
+               em vez de um aviso solto.
+
+               140px sai da conta do próprio card, com as alturas de linha lidas
+               do CSS compilado (`text-sm` = 20px, `text-xs` = 16px): 24 de
+               padding + 20 do título + 22 do prazo + 26 das etiquetas + 40 de
+               descrição em duas linhas + 26 do rodapé = 158 para um card cheio,
+               118 para um sem descrição. 140 fica no meio dos dois.
+
+               `rounded-[8px]` é o raio do card, e não os 12 que estavam aqui. */
+            <div className="flex min-h-[140px] items-center justify-center rounded-[8px] border border-dashed border-[var(--color-border)] p-[16px] text-center text-sm italic text-[var(--color-muted-foreground)]">
               Nenhum card em desenvolvimento
             </div>
           )}
@@ -405,13 +417,25 @@ export function DailyMode({ usuarios, usuarioLogadoId, onCardClick }: DailyModeP
                         key={item.id}
                         type="button"
                         onClick={() => onCardClick(item.id)}
-                        className="-mx-[6px] flex w-[calc(100%+12px)] items-baseline gap-[8px] rounded-[6px] px-[6px] py-[4px] text-left transition-colors hover:bg-[var(--color-accent)]"
+                        /* SEM MARGEM NEGATIVA. O `-mx-[6px]` com
+                           `w-[calc(100%+12px)]` fazia o botão vazar 6px para
+                           fora da caixa em cada lado, e o pai tem
+                           `overflow-y-auto` — que, pela regra do CSS, força o
+                           outro eixo a `auto` também. Resultado: barra de
+                           rolagem HORIZONTAL na coluna inteira. O realce de
+                           hover agora fica dentro da caixa. */
+                        className="flex w-full items-baseline gap-[8px] rounded-[6px] px-[6px] py-[4px] text-left transition-colors hover:bg-[var(--color-accent)]"
                       >
                         <span className="mt-[6px] h-[6px] w-[6px] shrink-0 rounded-full bg-[var(--color-primary)]/60" />
-                        <span className="flex-1 text-sm leading-[1.35] text-[var(--color-foreground)]">
+                        {/* `min-w-0` deixa o nome encolher; sem ele o texto
+                            longo empurra a linha e transborda de novo. */}
+                        <span className="min-w-0 flex-1 break-words text-sm leading-[1.35] text-[var(--color-foreground)]">
                           {item.nome}
                         </span>
-                        <span className="shrink-0 text-[11px] text-[var(--color-muted-foreground)]">
+                        {/* O projeto era `shrink-0`: um nome comprido não tinha
+                            como ceder e estourava a largura. Agora ele cede até
+                            40% e corta. */}
+                        <span className="max-w-[40%] shrink-0 truncate text-[11px] text-[var(--color-muted-foreground)]">
                           {item.projeto}
                         </span>
                       </button>
