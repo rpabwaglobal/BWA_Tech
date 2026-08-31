@@ -90,6 +90,30 @@ function TituloDaColuna({ texto, contador, tom }: {
   );
 }
 
+/**
+ * O separador de grupo dentro de uma coluna: rótulo, contagem e um filete até a
+ * borda.
+ *
+ * UM COMPONENTE PARA OS DOIS AGRUPAMENTOS — por projeto na primeira coluna e
+ * por dia na terceira. Escrito duas vezes, bastaria alguém ajustar um para os
+ * dois ficarem diferentes, e ninguém abre as duas colunas lado a lado para
+ * notar meio pixel de diferença.
+ */
+function SeparadorDeGrupo({ rotulo, contador }: { rotulo: string; contador: number }) {
+  return (
+    <div className="flex items-center gap-[8px]">
+      {/* `min-w-0` + `truncate`: nome de projeto é escrito por gente e pode ser
+          longo. Sem isto ele empurra o filete para fora e a coluna ganha barra
+          de rolagem horizontal — foi assim que a terceira coluna quebrou. */}
+      <span className="min-w-0 truncate text-xs font-bold text-[var(--color-foreground)]">
+        {rotulo}
+      </span>
+      <span className="shrink-0 text-[11px] text-[var(--color-muted-foreground)]">{contador}</span>
+      <div className="h-px flex-1 bg-[var(--color-border)]" />
+    </div>
+  );
+}
+
 /** O vazio de uma coluna, centrado nos dois eixos — e não colado no topo. */
 function ColunaVazia({ texto }: { texto: string }) {
   return (
@@ -206,6 +230,39 @@ export function DailyMode({ usuarios, usuarioLogadoId, onCardClick }: DailyModeP
     };
   }, [pessoa]);
 
+  /**
+   * Os cards da primeira coluna agrupados por projeto.
+   *
+   * A ORDEM DOS PROJETOS SEGUE A DOS CARDS, e não o alfabeto: o servidor já
+   * devolve ordenado por prioridade (`absoluta > alta > media > baixa`, em
+   * views.py), então o projeto do card mais urgente aparece primeiro. Ordenar
+   * por nome aqui jogaria fora esse trabalho em silêncio.
+   *
+   * Os travados entram no MESMO grupo do projeto deles, depois dos que estão
+   * andando — o agrupamento é por projeto, e separar por status de novo dentro
+   * dele desfaria o que ele existe para mostrar.
+   */
+  const gruposPorProjeto = useMemo(() => {
+    const ordem: string[] = [];
+    const porProjeto = new Map<string, CardData[]>();
+    for (const card of [...emAndamento, ...parados]) {
+      const nome = card.projeto_detail?.nome?.trim() || 'Sem projeto';
+      if (!porProjeto.has(nome)) {
+        porProjeto.set(nome, []);
+        ordem.push(nome);
+      }
+      porProjeto.get(nome)!.push(card);
+    }
+    // A POSIÇÃO DA CASCATA É CONTÍNUA entre os grupos: reiniciar o atraso a
+    // cada projeto faria o primeiro card de cada grupo entrar junto com o
+    // primeiro do grupo anterior, e o escalonamento viraria um piscar.
+    let posicaoNaColuna = 0;
+    return ordem.map((nome) => ({
+      nome,
+      cards: porProjeto.get(nome)!.map((card) => ({ card, ordem: posicaoNaColuna++ })),
+    }));
+  }, [emAndamento, parados]);
+
   if (total === 0 || !pessoa) {
     return (
       <div className="daily-entra rounded-[14px] border border-[var(--color-border)] bg-[var(--color-card)] py-[48px] text-center text-[var(--color-muted-foreground)]">
@@ -280,49 +337,59 @@ export function DailyMode({ usuarios, usuarioLogadoId, onCardClick }: DailyModeP
           </div>
 
           <TituloDaColuna texto="EM DESENVOLVIMENTO" />
-          {emAndamento.length > 0 || parados.length > 0 ? (
-            <div className="flex flex-col gap-[8px]">
-              {emAndamento.map((card, i) => renderCard(card, i))}
+          {gruposPorProjeto.length > 0 ? (
+            <div className="flex flex-col gap-[14px]">
+              {gruposPorProjeto.map((grupo) => (
+                <div key={grupo.nome}>
+                  <SeparadorDeGrupo rotulo={grupo.nome} contador={grupo.cards.length} />
+                  <div className="mt-[8px] flex flex-col gap-[8px]">
+                    {grupo.cards.map(({ card, ordem }) => {
+                      const travado = card.status === 'parado_pendencias';
+                      if (!travado) return renderCard(card, ordem);
 
-              {/* ── O que está travado ──
-                  O CARD VEM JUNTO, e o motivo colado nele. Antes o impedimento
-                  era um bloco solto no rodapé da coluna, sem dizer de qual card
-                  falava — e o card travado nem aparecia. Aqui a tira nasce
-                  presa ao card: o invólucro recorta os cantos e o card perde o
-                  arredondamento de baixo, então os dois leem como uma peça só. */}
-              {parados.map((card, i) => {
-                const motivo = motivoPorCard.get(String(card.id));
-                return (
-                  <div
-                    key={card.id}
-                    className="card-entra overflow-hidden rounded-[8px]"
-                    style={{ animationDelay: `${60 + Math.min(emAndamento.length + i, 6) * 45}ms` }}
-                  >
-                    <KanbanCardPreview
-                      card={card}
-                      className="rounded-b-none"
-                      onClick={() => onCardClick(card.id, card)}
-                    />
-                    <div className="flex gap-[8px] border border-t-0 border-[var(--color-destructive)]/30 bg-[var(--color-destructive)]/10 px-[12px] py-[8px]">
-                      <AlertTriangle className="mt-[1px] h-[14px] w-[14px] shrink-0 text-[var(--color-destructive)]" />
-                      <div className="min-w-0">
-                        <div className="text-[10px] font-bold tracking-[0.4px] text-[var(--color-destructive)]">
-                          PARADO POR PENDÊNCIAS
+                      // ── O que está travado ──
+                      // O CARD VEM JUNTO, e o motivo colado nele. Antes o
+                      // impedimento era um bloco solto no rodapé da coluna, sem
+                      // dizer de qual card falava — e o card travado nem
+                      // aparecia. Aqui a tira nasce presa ao card: o invólucro
+                      // recorta os cantos e o card perde o arredondamento de
+                      // baixo, então os dois leem como uma peça só.
+                      const motivo = motivoPorCard.get(String(card.id));
+                      return (
+                        <div
+                          key={card.id}
+                          className="card-entra overflow-hidden rounded-[8px]"
+                          style={{ animationDelay: `${60 + Math.min(ordem, 6) * 45}ms` }}
+                        >
+                          <KanbanCardPreview
+                            card={card}
+                            className="rounded-b-none"
+                            onClick={() => onCardClick(card.id, card)}
+                          />
+                          <div className="flex gap-[8px] border border-t-0 border-[var(--color-destructive)]/30 bg-[var(--color-destructive)]/10 px-[12px] py-[8px]">
+                            <AlertTriangle className="mt-[1px] h-[14px] w-[14px] shrink-0 text-[var(--color-destructive)]" />
+                            <div className="min-w-0">
+                              <div className="text-[10px] font-bold tracking-[0.4px] text-[var(--color-destructive)]">
+                                PARADO POR PENDÊNCIAS
+                              </div>
+                              <div className="mt-[2px] text-xs leading-[1.35] text-[var(--color-foreground)]">
+                                {motivo || (
+                                  /* Acontece de verdade: card parado sem motivo
+                                     escrito. Dizer isso é honesto; inventar um
+                                     texto não seria. */
+                                  <span className="italic text-[var(--color-muted-foreground)]">
+                                    Sem motivo registrado no card.
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          </div>
                         </div>
-                        <div className="mt-[2px] text-xs leading-[1.35] text-[var(--color-foreground)]">
-                          {motivo || (
-                            /* Acontece de verdade: card parado sem motivo escrito.
-                               Dizer isso é honesto; inventar um texto não seria. */
-                            <span className="italic text-[var(--color-muted-foreground)]">
-                              Sem motivo registrado no card.
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                    </div>
+                      );
+                    })}
                   </div>
-                );
-              })}
+                </div>
+              ))}
             </div>
           ) : (
             /* TAMANHO DE CARD, e não uma tira fina. O vazio ocupa o lugar
@@ -398,13 +465,7 @@ export function DailyMode({ usuarios, usuarioLogadoId, onCardClick }: DailyModeP
                   className="card-entra"
                   style={{ animationDelay: `${60 + Math.min(iDia, 6) * 45}ms` }}
                 >
-                  <div className="flex items-center gap-[8px]">
-                    <span className="text-xs font-bold text-[var(--color-foreground)]">{dia.label}</span>
-                    <span className="text-[11px] text-[var(--color-muted-foreground)]">
-                      {dia.items.length}
-                    </span>
-                    <div className="h-px flex-1 bg-[var(--color-border)]" />
-                  </div>
+                  <SeparadorDeGrupo rotulo={dia.label} contador={dia.items.length} />
                   <div className="mt-[8px] flex flex-col gap-[2px]">
                     {dia.items.map((item) => (
                       /* CLICÁVEIS como os das outras colunas: a entrega da

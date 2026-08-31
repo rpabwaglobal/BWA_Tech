@@ -100,6 +100,17 @@ antes de reverter, e reverta a migração antes do código.
 
 ---
 
+## 2.5.3
+
+Data: 31/08/2026 · migração de banco: **não**
+
+- **A coluna "Em desenvolvimento" do Daily Mode agora separa os cards por
+  projeto**, do mesmo jeito que a coluna da direita separa as entregas por dia.
+  Quem tem trabalho espalhado em três frentes vê as três, em vez de uma pilha
+  única. A ordem dos projetos segue a urgência dos cards, não o alfabeto.
+
+---
+
 ## 2.5.2
 
 Data: 31/08/2026 · migração de banco: **não**
