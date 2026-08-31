@@ -264,10 +264,22 @@ export default function Dashboard() {
   // durante o carregamento é a real — não é um esqueleto falso que depois é
   // substituído por outra coisa.
   return (
-    <TelaComCarregamento carregando={loading} mensagem="Carregando Dashboard…" className="space-y-[16px]">
+    <TelaComCarregamento
+      carregando={loading}
+      mensagem="Carregando Dashboard…"
+      /* ALTURA DE UMA TELA, para o painel não rolar como página. O desconto
+         (cabeçalho 64 + respiro vertical do `<main>`, 32+32) é o mesmo que
+         GeekDay, Support, ProjectDetails e SprintDetails já usam.
+
+         A PARTIR DE `md`, e não sempre: abaixo disso a saudação, os quatro
+         números e os dois painéis empilham, e prender a altura ali daria
+         caixinhas de rolagem em vez de uma tela. No celular a página rola, que
+         é o certo. */
+      className="space-y-[16px] md:flex md:h-[calc(100vh-64px-64px)] md:min-h-0 md:flex-col"
+    >
       {/* Greeting + caixa de Atalhos Rápidos (direita, slim e alinhada
           verticalmente ao bloco de saudação). */}
-      <div className="flex items-center justify-between gap-[16px] flex-wrap">
+      <div className="flex shrink-0 items-center justify-between gap-[16px] flex-wrap">
         <div className="min-w-0 flex-1">
           <h2 className="text-2xl font-semibold text-[var(--color-foreground)]">
             {getGreeting()}, {getDisplayName()}!
@@ -312,7 +324,7 @@ export default function Dashboard() {
       <QuickCreateCardModal isOpen={quickCreateOpen} onClose={() => setQuickCreateOpen(false)} />
 
       {/* Stats Grid - gap de 16px */}
-      <div className="grid gap-[16px] md:grid-cols-2 lg:grid-cols-4">
+      <div className="grid shrink-0 gap-[16px] md:grid-cols-2 lg:grid-cols-4">
         {statCards.map((stat) => {
           const Icon = stat.icon;
           return (
@@ -349,10 +361,13 @@ export default function Dashboard() {
       </div>
 
       {/* Cards em Desenvolvimento e Desenvolvedores sem Projeto */}
-      <div className="grid gap-[16px] md:grid-cols-2">
+      <div className="grid gap-[16px] md:min-h-0 md:flex-1 md:grid-cols-2">
         {/* Cards em Desenvolvimento */}
-        <Card>
-          <CardHeader className="p-[24px]">
+        <Card className="flex min-h-0 flex-col">
+          {/* Cabeçalho a 16px, e não 24: é o mesmo respiro dos cartões de
+              número logo acima, então a página ganha altura sem perder o ritmo
+              que já tinha. */}
+          <CardHeader className="shrink-0 p-[16px]">
             <CardTitle className="flex items-center gap-[8px]">
               <Code className="h-[20px] w-[20px]" />
               Cards em Desenvolvimento
@@ -361,13 +376,16 @@ export default function Dashboard() {
               Cards que estão sendo desenvolvidos atualmente
             </CardDescription>
           </CardHeader>
-          <CardContent className="p-[24px] pt-0">
+          <CardContent className="flex min-h-0 flex-1 flex-col p-[16px] pt-0">
             {cardsInDevelopment.length === 0 ? (
               <p className="text-center py-[32px] text-[var(--color-muted-foreground)]">
                 Nenhum card em desenvolvimento no momento.
               </p>
             ) : (
-              <div className="space-y-[16px] max-h-[400px] overflow-y-auto pr-2">
+              /* SEM `max-h-[400px]`. A altura fixa era o que estourava a
+                 soma: saudação + números + cabeçalho + 400 não cabia em tela
+                 nenhuma. Agora a lista ocupa o que sobrou e rola por dentro. */
+              <div className="space-y-[16px] flex-1 md:min-h-0 md:overflow-y-auto pr-2">
                 {cardsInDevelopment.map((card, i) => {
                   const diasRestantes = calculateDaysRemaining(card.data_fim);
                   const isOverdue = diasRestantes !== null && diasRestantes < 0;
@@ -436,8 +454,11 @@ export default function Dashboard() {
         </Card>
 
         {/* Usuários sem card */}
-        <Card>
-          <CardHeader className="p-[24px]">
+        <Card className="flex min-h-0 flex-col">
+          {/* Cabeçalho a 16px, e não 24: é o mesmo respiro dos cartões de
+              número logo acima, então a página ganha altura sem perder o ritmo
+              que já tinha. */}
+          <CardHeader className="shrink-0 p-[16px]">
             <CardTitle className="flex items-center gap-[8px]">
               <UserX className="h-[20px] w-[20px]" />
               Usuários sem card
@@ -446,13 +467,16 @@ export default function Dashboard() {
               Sem card em desenvolvimento na sprint em andamento
             </CardDescription>
           </CardHeader>
-          <CardContent className="p-[24px] pt-0">
+          <CardContent className="flex min-h-0 flex-1 flex-col p-[16px] pt-0">
             {developersWithoutCards.length === 0 ? (
               <p className="text-center py-[32px] text-[var(--color-muted-foreground)]">
                 Todos os usuários têm card em desenvolvimento.
               </p>
             ) : (
-              <div className="space-y-[16px] max-h-[400px] overflow-y-auto pr-2">
+              /* SEM `max-h-[400px]`. A altura fixa era o que estourava a
+                 soma: saudação + números + cabeçalho + 400 não cabia em tela
+                 nenhuma. Agora a lista ocupa o que sobrou e rola por dentro. */
+              <div className="space-y-[16px] flex-1 md:min-h-0 md:overflow-y-auto pr-2">
                 {developersWithoutCards.map((developer, i) => {
                   const displayName = getShortDisplayName(developer);
 

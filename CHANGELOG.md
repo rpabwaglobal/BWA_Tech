@@ -100,6 +100,16 @@ antes de reverter, e reverta a migração antes do código.
 
 ---
 
+## 2.6.2
+
+Data: 31/08/2026 · migração de banco: **não**
+
+- **O Dashboard cabe numa tela.** As listas de "Cards em Desenvolvimento" e
+  "Usuários sem card" agora rolam por dentro dos próprios cartões, em vez de
+  esticarem a página. Num monitor comum elas ficaram até maiores do que eram.
+
+---
+
 ## 2.6.1
 
 Data: 31/08/2026 · migração de banco: **não**
