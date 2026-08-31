@@ -28,7 +28,6 @@ import { cn, normalizeExternalUrl } from '@/lib/utils';
 import { ROUTES } from '@/routes';
 import { TelaComCarregamento } from '@/components/TelaComCarregamento';
 import { DailyMode } from '@/components/priorities/DailyMode';
-import { readDailyModeOnLoad, writeDailyModeOnLoad } from '@/lib/dailyModePreference';
 // Formatação de data sem dependência externa
 
 /**
@@ -117,9 +116,12 @@ export default function Priorities() {
   // condicionais `periodo === 'dia'|'semana'` neste arquivo; um 'daily' ali
   // dentro obrigaria a revisar todas, e cada uma esquecida vira um bug mudo.
   // Sao perguntas diferentes: `periodo` e QUAIS cards; `modo` e COMO mostra.
-  const [modo, setModo] = useState<'padrao' | 'daily'>(
-    () => (readDailyModeOnLoad() ? 'daily' : 'padrao'),
-  );
+  //
+  // COMEÇA SEMPRE NO PADRÃO, e a escolha NÃO é guardada. O daily é o estado de
+  // uma reunião em andamento, não uma preferência de quem usa: sair da tela e
+  // voltar significa que a reunião acabou. (Havia um `dailyModePreference` em
+  // localStorage aqui, herdado do `dailyOnLoad` do protótipo — removido.)
+  const [modo, setModo] = useState<'padrao' | 'daily'>('padrao');
   const [viewCardDialogOpen, setViewCardDialogOpen] = useState(false);
   const [selectedCard, setSelectedCard] = useState<CardType | null>(null);
   const [cardLoading, setCardLoading] = useState(false);
@@ -637,7 +639,14 @@ export default function Priorities() {
         </Button>
         <Button
           variant="ghost"
-          onClick={() => setPeriodo('semana')}
+          onClick={() => {
+            setPeriodo('semana');
+            // O DAILY É SÓ DO DIA. A reunião fala do que está acontecendo
+            // agora; a aba da semana é planejamento, e o formato de uma pessoa
+            // por vez não responde a essa pergunta. Desligado aqui, e não num
+            // efeito que observa `periodo`, para não disparar um render extra.
+            setModo('padrao');
+          }}
           className={cn(
             "rounded-none border-b-2 border-transparent px-[16px] py-[8px] h-auto",
             periodo === 'semana'
@@ -703,13 +712,10 @@ export default function Priorities() {
             SELETOR, e nao uma terceira aba. As abas escolhem QUAIS cards (os de
             hoje ou os da semana); isto escolhe COMO eles aparecem, e vale para
             as duas. Virar aba faria parecer um terceiro periodo. */}
+        {periodo === 'dia' && (
         <button
           type="button"
-          onClick={() => {
-            const proximo = modo === 'daily' ? 'padrao' : 'daily';
-            setModo(proximo);
-            writeDailyModeOnLoad(proximo === 'daily');
-          }}
+          onClick={() => setModo(modo === 'daily' ? 'padrao' : 'daily')}
           aria-pressed={modo === 'daily'}
           title="Conduz a daily uma pessoa por vez"
           className={cn(
@@ -737,6 +743,7 @@ export default function Priorities() {
             />
           </span>
         </button>
+        )}
       </div>
 
       {modo === 'daily' ? (

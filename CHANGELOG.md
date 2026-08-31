@@ -100,6 +100,20 @@ antes de reverter, e reverta a migração antes do código.
 
 ---
 
+## 2.5.6
+
+Data: 31/08/2026 · migração de banco: **não**
+
+- **O Daily Mode agora existe só na aba "Prioridades do Dia".** Trocar para a
+  aba da semana desliga o modo, e o seletor some — a reunião fala do que está
+  acontecendo agora; a aba da semana é planejamento, e o formato de uma pessoa
+  por vez não responde a essa pergunta.
+
+- **Sair da tela também desliga.** O modo deixou de ser lembrado entre visitas:
+  ele é o estado de uma reunião em andamento, não uma preferência.
+
+---
+
 ## 2.5.5
 
 Data: 31/08/2026 · migração de banco: **não**
