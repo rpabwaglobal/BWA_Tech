@@ -234,14 +234,14 @@ export function DailyMode({ usuarios, usuarioLogadoId, onCardClick }: DailyModeP
   );
 
   return (
-    <div className="daily-entra flex min-h-0 flex-1 flex-col gap-[14px]">
-      <div className="grid min-h-0 flex-1 grid-cols-1 gap-[16px] lg:grid-cols-[minmax(300px,1.15fr)_minmax(0,1fr)_minmax(0,1fr)]">
+    <div className="daily-entra flex flex-col gap-[14px] lg:min-h-0 lg:flex-1">
+      <div className="grid grid-cols-1 gap-[16px] lg:min-h-0 lg:flex-1 lg:grid-cols-[minmax(300px,1.15fr)_minmax(0,1fr)_minmax(0,1fr)]">
 
         {/* ── A pessoa e o que ela está tocando ── */}
         <section
           key={`pessoa-${pessoa.usuario.id}`}
           className={cn(
-            'flex min-h-[420px] flex-col gap-[12px] overflow-y-auto rounded-[14px] border border-[var(--color-border)] bg-[var(--color-card)] p-[16px]',
+            'flex min-h-0 flex-col gap-[12px] overflow-y-auto rounded-[14px] border border-[var(--color-border)] bg-[var(--color-card)] p-[16px]',
             classeDaTroca,
           )}
         >
@@ -335,7 +335,7 @@ export function DailyMode({ usuarios, usuarioLogadoId, onCardClick }: DailyModeP
         <section
           key={`hoje-${pessoa.usuario.id}`}
           className={cn(
-            'flex min-h-[420px] flex-col rounded-[14px] border border-[var(--color-border)] bg-[var(--color-card)] p-[16px]',
+            'flex min-h-0 flex-col rounded-[14px] border border-[var(--color-border)] bg-[var(--color-card)] p-[16px]',
             classeDaTroca,
           )}
         >
@@ -362,7 +362,7 @@ export function DailyMode({ usuarios, usuarioLogadoId, onCardClick }: DailyModeP
         <section
           key={`semana-${pessoa.usuario.id}`}
           className={cn(
-            'flex min-h-[420px] flex-col rounded-[14px] border border-[var(--color-border)] bg-[var(--color-card)] p-[16px]',
+            'flex min-h-0 flex-col rounded-[14px] border border-[var(--color-border)] bg-[var(--color-card)] p-[16px]',
             classeDaTroca,
           )}
         >

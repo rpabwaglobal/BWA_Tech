@@ -100,6 +100,17 @@ antes de reverter, e reverta a migração antes do código.
 
 ---
 
+## 2.5.1
+
+Data: 31/08/2026 · migração de banco: **não**
+
+- **No Daily Mode, quem rola agora é a coluna, e não a página.** Com mais de um
+  card, ou com cards grandes, a página inteira crescia e a barra de rolagem
+  aparecia na janela — o rodapé com a fila da equipe saía da vista justamente
+  durante a reunião, que é quando ele mais serve.
+
+---
+
 ## 2.5.0
 
 Data: 31/08/2026 · migração de banco: **não**

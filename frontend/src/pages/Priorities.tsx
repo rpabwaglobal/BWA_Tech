@@ -592,8 +592,27 @@ export default function Priorities() {
   };
 
   return (
-    <TelaComCarregamento carregando={loading} mensagem="Carregando prioridades…" className="space-y-[24px]">
-      <div>
+    <TelaComCarregamento
+      carregando={loading}
+      mensagem="Carregando prioridades…"
+      className={cn(
+        'space-y-[24px]',
+        // ALTURA DE UMA TELA, SÓ NO DAILY. A grade cresce e rola a página de
+        // propósito; o daily rola POR DENTRO das colunas, e para isso precisa
+        // de uma altura definida para dividir entre elas — sem ela o `flex-1`
+        // das colunas não tem contra o que se medir e quem rola é a página.
+        //
+        // `100vh - 64px - 64px` é o desconto que GeekDay, Support,
+        // ProjectDetails e SprintDetails já usam: cabeçalho (64) e o respiro
+        // vertical do `<main>` (32 em cima + 32 embaixo).
+        //
+        // A PARTIR DE `lg`, e não sempre: em tela estreita as três colunas
+        // empilham, e prender a altura ali daria três caixinhas de rolagem uma
+        // embaixo da outra — pior do que rolar a página.
+        modo === 'daily' && 'flex flex-col lg:h-[calc(100vh-64px-64px)] lg:min-h-0',
+      )}
+    >
+      <div className="shrink-0">
         <h1 className="text-2xl font-bold text-[var(--color-foreground)]">Prioridades</h1>
         <p className="text-sm text-[var(--color-muted-foreground)] mt-1">
           {modo === 'daily'
@@ -603,7 +622,7 @@ export default function Priorities() {
       </div>
 
       {/* Tabs para alternar entre Dia e Semana */}
-      <div className="flex gap-[8px] border-b border-[var(--color-border)]">
+      <div className="flex shrink-0 gap-[8px] border-b border-[var(--color-border)]">
         <Button
           variant="ghost"
           onClick={() => setPeriodo('dia')}
