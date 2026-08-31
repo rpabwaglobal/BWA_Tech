@@ -53,6 +53,20 @@ DEBUG = os.getenv('DEBUG', 'False').lower() == 'true'
 # Se expuser a porta 8000 pelo IP público inclua também a forma com porta (ex.: 203.0.113.10:8000).
 ALLOWED_HOSTS = [h.strip() for h in os.getenv('ALLOWED_HOSTS', 'localhost,127.0.0.1').split(',') if h.strip()]
 
+# TAMANHO MÁXIMO DE CORPO — casado com o limite de anexo do portal, não escolhido à toa.
+#
+# O padrão do Django são 2,5 MB, e o proxy de formulários monta o corpo com
+# `request.body`, que carrega tudo em memória de uma vez. Isso abria uma faixa morta:
+# a UI aceita anexo de resolução até 10 MB (RESOLUCAO_MAX_FILE_SIZE) e a API do portal
+# também, mas qualquer arquivo acima de 2,5 MB morria AQUI no meio — e não com um erro
+# de API, e sim com RequestDataTooBig virando uma página HTML de 400 que o front não
+# consegue sequer ler para explicar ao usuário.
+#
+# 12 MB = os 10 MB do anexo mais folga para o envelope multipart e os campos de texto.
+# Subir isto tem custo: é memória por requisição em voo. Se um dia o limite do portal
+# subir, os dois têm de subir juntos.
+DATA_UPLOAD_MAX_MEMORY_SIZE = int(os.getenv('DATA_UPLOAD_MAX_MEMORY_SIZE', 12 * 1024 * 1024))
+
 # Atrás de Traefik/nginx com TLS — define BEHIND_HTTPS_PROXY=true no .env (docker-compose)
 _BEHIND_HTTPS_PROXY = os.getenv('BEHIND_HTTPS_PROXY', '').strip().lower() in ('true', '1', 'yes')
 

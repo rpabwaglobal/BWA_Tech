@@ -23,7 +23,6 @@ from .serializers import (
     CatalogMotivoMiniSerializer,
     ChamadoResolucaoSerializer,
     ChamadoSuporteReadSerializer,
-    ChamadoSuporteWriteSerializer,
     ChamadoSuportePatchSerializer,
     ChamadoSuporteTimelineSerializer,
 )
@@ -77,8 +76,8 @@ def _user_can_access_chamado(request, chamado_id: int) -> bool:
 
 class ChamadoSuporteViewSet(CompartilhamentoSetorMixin, viewsets.ModelViewSet):
     """
-    Compatível com o contrato documentado:
-    POST /suporte/
+    Compatível com o contrato documentado (somente leitura e atualização —
+    a criação vive no portal):
     GET /suporte/por-usuario/
     GET /suporte/catalogo/
     PATCH /suporte/<pk>/
@@ -117,8 +116,6 @@ class ChamadoSuporteViewSet(CompartilhamentoSetorMixin, viewsets.ModelViewSet):
         return qs.filter(usuario_email__iexact=user_email)
 
     def get_serializer_class(self):
-        if self.action == 'create':
-            return ChamadoSuporteWriteSerializer
         return ChamadoSuporteReadSerializer
 
     def list(self, request, *args, **kwargs):
@@ -128,37 +125,19 @@ class ChamadoSuporteViewSet(CompartilhamentoSetorMixin, viewsets.ModelViewSet):
         )
 
     def create(self, request, *args, **kwargs):
-        serializer = ChamadoSuporteWriteSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        # Atômico pra garantir que o WS broadcast só dispare se o save persistir.
-        # `on_commit` faz o broadcast rodar APÓS o commit do DB — se algo
-        # estourar antes, o WS não envia evento fantasma.
-        with transaction.atomic():
-            instance = serializer.save()
-            # Deriva o setor do chamado pelo e-mail do solicitante (best-effort).
-            self._derivar_setor(instance)
-            read = ChamadoSuporteReadSerializer(instance)
-            payload = read.data
-            transaction.on_commit(lambda: broadcast_chamado('chamado_created', payload))
-        return Response(payload, status=status.HTTP_201_CREATED)
+        """Chamado nasce no portal; o BWA Tech só recebe.
 
-    @staticmethod
-    def _derivar_setor(chamado):
-        """Setor do chamado = setor primário do usuário dono do e-mail. Silencioso
-        se não houver correspondência (chamados do portal externo)."""
-        if chamado.setor_id:
-            return
-        from apps.accounts.models import User
-        from apps.accounts.scoping import setor_primario_do_usuario
-        email = (chamado.usuario_email or '').strip().lower()
-        if not email:
-            return
-        u = User.objects.filter(email__iexact=email).first()
-        if u:
-            s = setor_primario_do_usuario(u)
-            if s:
-                chamado.setor = s
-                chamado.save(update_fields=['setor'])
+        O override é obrigatório, não decorativo: `ModelViewSet` traz um `create()`
+        próprio, e apagar este aqui devolveria a criação em vez de fechá-la.
+
+        Fechar pelo verbo — tirar `post` de `http_method_names` — seria pior: o
+        mesmo POST serve à ação `compartilhar/` do `CompartilhamentoSetorMixin`,
+        e o compartilhamento por setor cairia junto.
+        """
+        return Response(
+            {'detail': 'Chamados são abertos no portal; o BWA Tech apenas recebe.'},
+            status=status.HTTP_405_METHOD_NOT_ALLOWED,
+        )
 
     def partial_update(self, request, *args, **kwargs):
         instance = self.get_object()

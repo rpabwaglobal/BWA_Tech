@@ -29,7 +29,6 @@ import { SortableContext, useSortable, verticalListSortingStrategy } from '@dnd-
 import { CSS } from '@dnd-kit/utilities';
 import {
   Loader2,
-  Plus,
   ExternalLink,
   Copy,
   Check,
@@ -113,7 +112,7 @@ import {
   type SuporteColumnGroup,
 } from '@/lib/suporteChamadosColumns';
 import { exportCardsToCSV, exportCardsToXLSX } from '@/lib/exportCards';
-import { logSuporteChamadoChanges, logSuporteTicketCriado } from '@/lib/suporteTimelineLog';
+import { logSuporteChamadoChanges } from '@/lib/suporteTimelineLog';
 import { userService, participaDoTrabalho, type User } from '@/services/userService';
 import { suporteTimelineService } from '@/services/suporteTimelineService';
 import {
@@ -479,7 +478,6 @@ export default function Support() {
   const [items, setItems] = useState<ChamadoSuporte[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [createOpen, setCreateOpen] = useState(false);
   const [detailChamado, setDetailChamado] = useState<ChamadoSuporte | null>(null);
   const [activeDrag, setActiveDrag] = useState<ChamadoSuporte | null>(null);
   const [concludingTicketId, setConcludingTicketId] = useState<number | null>(null);
@@ -1393,16 +1391,6 @@ export default function Support() {
                   </p>
                 </div>
                 <div className="p-1.5">
-                  <DropdownMenuItem
-                    className="gap-2 rounded-md py-2.5"
-                    onClick={() => setCreateOpen(true)}
-                  >
-                    <Plus className="h-4 w-4 shrink-0 text-[var(--color-primary)]" />
-                    <span className="flex-1 text-left font-medium">Novo chamado</span>
-                  </DropdownMenuItem>
-
-                  <DropdownMenuSeparator className="my-2" />
-
                   {/* Toggle de cores nos cards. Persistido em localStorage
                       (key: bwa_suporte_show_card_colors_v1). Espelha padrão
                       de ProjectDetails. */}
@@ -1788,18 +1776,6 @@ export default function Support() {
           </div>
         </DialogContent>
       </Dialog>
-
-      <CreateChamadoDialog
-        open={createOpen}
-        onOpenChange={setCreateOpen}
-        user={user}
-        onCreated={() => {
-          bumpTimeline();
-          setCreateOpen(false);
-          void load();
-        }}
-        onError={(m) => setError(m)}
-      />
 
       <ChamadoDetailDialog
         chamado={detailChamado}
@@ -2240,292 +2216,6 @@ function SupportCardPreview({ chamado, users }: { chamado: ChamadoSuporte; users
         </div>
       ) : null}
     </div>
-  );
-}
-
-function CreateChamadoDialog({
-  open,
-  onOpenChange,
-  user,
-  onCreated,
-  onError,
-}: {
-  open: boolean;
-  onOpenChange: (v: boolean) => void;
-  user: {
-    first_name: string;
-    last_name: string;
-    username: string;
-    email: string;
-  } | null;
-  onCreated: (created: ChamadoSuporte) => void;
-  onError: (m: string) => void;
-}) {
-  const [submitting, setSubmitting] = useState(false);
-  const [usuarioNome, setUsuarioNome] = useState('');
-  const [usuarioEmail, setUsuarioEmail] = useState('');
-  const [usuarioSetor, setUsuarioSetor] = useState('');
-  const [empresa, setEmpresa] = useState('');
-  const [descricao, setDescricao] = useState('');
-  const [tipoId, setTipoId] = useState('');
-  const [itemId, setItemId] = useState('');
-  const [motivoId, setMotivoId] = useState('');
-  /** Fallback manual (API externa sem GET catalogo) */
-  const [tipoManual, setTipoManual] = useState('');
-  const [itemManual, setItemManual] = useState('');
-  const [motivoManual, setMotivoManual] = useState('');
-  const [anexoUrl, setAnexoUrl] = useState('');
-  const [catalogLoading, setCatalogLoading] = useState(false);
-  const [catalog, setCatalog] = useState<CatalogoSuporteResponse | null>(null);
-  const [catalogFailed, setCatalogFailed] = useState(false);
-
-  useEffect(() => {
-    if (!open || !user) return;
-    setUsuarioNome(displayUserName(user));
-    setUsuarioEmail(user.email ?? '');
-  }, [open, user]);
-
-  useEffect(() => {
-    if (!open) return;
-    let cancelled = false;
-    setCatalogLoading(true);
-    setCatalogFailed(false);
-    void suporteService
-      .fetchCatalog()
-      .then((data) => {
-        if (cancelled) return;
-        const usable =
-          Array.isArray(data.tipos) &&
-          Array.isArray(data.motivos) &&
-          data.tipos.length > 0 &&
-          data.motivos.length > 0;
-        if (!usable) {
-          setCatalog(null);
-          setCatalogFailed(true);
-          return;
-        }
-        setCatalog(data);
-        const firstTipo = data.tipos[0];
-        if (firstTipo) {
-          setTipoId(String(firstTipo.id));
-          const firstItem = firstTipo.itens[0];
-          setItemId(firstItem ? String(firstItem.id) : '');
-        } else {
-          setTipoId('');
-          setItemId('');
-        }
-        const firstMotivo = data.motivos[0];
-        setMotivoId(firstMotivo ? String(firstMotivo.id) : '');
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setCatalog(null);
-          setCatalogFailed(true);
-          setTipoId('');
-          setItemId('');
-          setMotivoId('');
-        }
-      })
-      .finally(() => {
-        if (!cancelled) setCatalogLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [open]);
-
-  const tipoSelecionado = catalog?.tipos.find((t) => String(t.id) === tipoId);
-  const itemOptions: { value: string; label: string }[] =
-    tipoSelecionado?.itens.map((it) => ({ value: String(it.id), label: it.nome })) ?? [];
-  const tipoOptions: { value: string; label: string }[] =
-    catalog?.tipos.map((t) => ({ value: String(t.id), label: t.nome })) ?? [];
-  const motivoOptions: { value: string; label: string }[] =
-    catalog?.motivos.map((m) => ({ value: String(m.id), label: m.nome })) ?? [];
-  const useCatalogSelects = Boolean(
-    catalog && !catalogFailed && tipoOptions.length > 0 && motivoOptions.length > 0,
-  );
-
-  useEffect(() => {
-    if (!tipoSelecionado?.itens.length) {
-      setItemId('');
-      return;
-    }
-    const ok = tipoSelecionado.itens.some((it) => String(it.id) === itemId);
-    if (!ok) setItemId(String(tipoSelecionado.itens[0].id));
-  }, [tipoId, tipoSelecionado, itemId]);
-
-  const submit = async () => {
-    let t: number;
-    let i: number;
-    let m: number;
-
-    if (useCatalogSelects) {
-      t = Number(tipoId);
-      i = Number(itemId);
-      m = Number(motivoId);
-      if (!Number.isFinite(t) || !Number.isFinite(i) || !Number.isFinite(m)) {
-        onError('Escolha tipo, item e motivo na lista.');
-        return;
-      }
-    } else {
-      t = Number(tipoManual);
-      i = Number(itemManual);
-      m = Number(motivoManual);
-      if (!Number.isFinite(t) || !Number.isFinite(i) || !Number.isFinite(m)) {
-        onError(
-          'Informe tipo, item e motivo como números válidos (IDs do catálogo), ou verifique se a API expõe GET …/suporte/catalogo/.',
-        );
-        return;
-      }
-    }
-
-    if (!usuarioNome.trim() || !usuarioEmail.trim() || !descricao.trim()) {
-      onError('Preencha nome, e-mail e descrição.');
-      return;
-    }
-
-    try {
-      setSubmitting(true);
-      const created = await suporteService.create({
-        usuario_nome: usuarioNome.trim(),
-        usuario_email: usuarioEmail.trim(),
-        usuario_setor: usuarioSetor.trim() || null,
-        empresa: empresa.trim() || null,
-        descricao: descricao.trim(),
-        tipo: t,
-        item: i,
-        motivo: m,
-        anexo_url: anexoUrl.trim() || null,
-        status: 'Aberto',
-        responsavel: null,
-        responsavel_solucao: null,
-        descricao_resolucao: null,
-      });
-      await logSuporteTicketCriado(
-        created.id,
-        `Ticket criado. Solicitante: ${usuarioNome.trim()} (${usuarioEmail.trim()}).`,
-      );
-      onCreated(created);
-      setDescricao('');
-      setAnexoUrl('');
-    } catch (e: unknown) {
-      const data =
-        e && typeof e === 'object' && 'response' in e
-          ? (e as { response?: { data?: unknown } }).response?.data
-          : null;
-      onError(data ? JSON.stringify(data) : 'Erro ao criar chamado.');
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[520px] max-h-[90vh] overflow-y-auto">
-        <DialogHeader>
-          <DialogTitle>Novo chamado de suporte</DialogTitle>
-          <DialogDescription>
-            Tipos, itens e motivos são carregados automaticamente quando a API expõe o endpoint de catálogo.
-          </DialogDescription>
-        </DialogHeader>
-
-        {catalogLoading ? (
-          <div className="flex items-center justify-center gap-2 py-8 text-sm text-[var(--color-muted-foreground)]">
-            <Loader2 className="h-4 w-4 animate-spin" />
-            Carregando catálogo…
-          </div>
-        ) : (
-          <div className="grid gap-[12px] py-[8px]">
-            <div className="grid gap-[6px]">
-              <Label>Nome</Label>
-              <Input value={usuarioNome} onChange={(e) => setUsuarioNome(e.target.value)} />
-            </div>
-            <div className="grid gap-[6px]">
-              <Label>E-mail</Label>
-              <Input type="email" value={usuarioEmail} onChange={(e) => setUsuarioEmail(e.target.value)} />
-            </div>
-            <div className="grid gap-[6px]">
-              <Label>Setor</Label>
-              <Input value={usuarioSetor} onChange={(e) => setUsuarioSetor(e.target.value)} placeholder="Opcional" />
-            </div>
-            <div className="grid gap-[6px]">
-              <Label>Empresa</Label>
-              <Input value={empresa} onChange={(e) => setEmpresa(e.target.value)} placeholder="Opcional" />
-            </div>
-
-            {useCatalogSelects ? (
-              <>
-                <div className="grid gap-[6px]">
-                  <Label>Tipo</Label>
-                  <FilterSelect options={tipoOptions} value={tipoId} onChange={setTipoId} placeholder="Selecione o tipo" />
-                </div>
-                <div className="grid gap-[6px]">
-                  <Label>Item</Label>
-                  <FilterSelect
-                    options={itemOptions}
-                    value={itemId}
-                    onChange={setItemId}
-                    disabled={!tipoSelecionado?.itens.length}
-                    placeholder={tipoSelecionado?.itens.length ? 'Selecione o item' : 'Sem itens para este tipo'}
-                  />
-                </div>
-                <div className="grid gap-[6px]">
-                  <Label>Motivo</Label>
-                  <FilterSelect
-                    options={motivoOptions}
-                    value={motivoId}
-                    onChange={setMotivoId}
-                    placeholder="Selecione o motivo"
-                  />
-                </div>
-              </>
-            ) : (
-              <>
-            {catalogFailed ? (
-                  <p className="text-xs text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/30 rounded-[8px] px-[10px] py-[8px]">
-                    Não foi possível carregar <code className="text-[11px]">suporte/catalogo/</code> ou o catálogo
-                    veio vazio. Use os IDs numéricos abaixo ou ajuste{' '}
-                    <code className="text-[11px]">VITE_FORMULARIOS_SUPORTE_CATALOGO_PATH</code>.
-                  </p>
-                ) : null}
-                <div className="grid grid-cols-3 gap-[8px]">
-                  <div className="grid gap-[6px]">
-                    <Label>Tipo (id)</Label>
-                    <Input inputMode="numeric" value={tipoManual} onChange={(e) => setTipoManual(e.target.value)} />
-                  </div>
-                  <div className="grid gap-[6px]">
-                    <Label>Item (id)</Label>
-                    <Input inputMode="numeric" value={itemManual} onChange={(e) => setItemManual(e.target.value)} />
-                  </div>
-                  <div className="grid gap-[6px]">
-                    <Label>Motivo (id)</Label>
-                    <Input inputMode="numeric" value={motivoManual} onChange={(e) => setMotivoManual(e.target.value)} />
-                  </div>
-                </div>
-              </>
-            )}
-
-            <div className="grid gap-[6px]">
-              <Label>Descrição</Label>
-              <Textarea value={descricao} onChange={(e) => setDescricao(e.target.value)} rows={4} />
-            </div>
-            <div className="grid gap-[6px]">
-              <Label>URL do anexo</Label>
-              <Input value={anexoUrl} onChange={(e) => setAnexoUrl(e.target.value)} placeholder="https://…" />
-            </div>
-          </div>
-        )}
-
-        <DialogFooter>
-          <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
-            Cancelar
-          </Button>
-          <Button type="button" disabled={submitting || catalogLoading} onClick={() => void submit()}>
-            {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Criar'}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
   );
 }
 

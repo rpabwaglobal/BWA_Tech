@@ -183,7 +183,7 @@ catálogo de permissões, nunca por comparação de cargo.
 
 | Método | Rota | View | Permissão | O que faz |
 |---|---|---|---|---|
-| `POST` | `/api/formularios/suporte/` | ChamadoSuporteViewSet.create | IsAuthenticated | Cria chamado. Atômico: deriva o setor pelo e-mail e agenda o broadcast WS em transaction.on_commit. |
+| `POST` | `/api/formularios/suporte/` | ChamadoSuporteViewSet.create | IsAuthenticated | Sempre 405: 'Chamados são abertos no portal; o BWA Tech apenas recebe.' O verbo POST continua na rota por causa da ação `compartilhar/` — não o remova de `http_method_names`. |
 | `GET` | `/api/formularios/suporte/` | ChamadoSuporteViewSet.list | IsAuthenticated | Sempre 405 com a mensagem 'Use GET suporte/por-usuario/ para listar chamados.' |
 | `GET` | `/api/formularios/suporte/catalogo/` | ChamadoSuporteViewSet.catalogo | IsAuthenticated | {tipos: [...com itens ativos aninhados], motivos: [...]}. Só tipos ativos que tenham ao menos um item ativo. |
 | `GET` | `/api/formularios/suporte/por-usuario/` | ChamadoSuporteViewSet.por_usuario | IsAuthenticated | Lista chamados. Params: usuario_email (só para quem tem view_all_tickets), tipo_id, status (validado contra o enum, 400 se inválido), limit/offset (clamp 1..200). Com limit OU offset a resposta vira {count, results}; sem eles, lista pura. |

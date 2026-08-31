@@ -79,6 +79,37 @@ export function getFormulariosApiBase(): string {
   );
 }
 
+/**
+ * Origem HTTP do portal, para resolver anexos devolvidos como caminho RELATIVO.
+ *
+ * A API do portal devolve `anexo_usuario`/`anexo_suporte` como URL absoluta quando o
+ * storage é MinIO (link pré-assinado), mas como caminho `/media/...` quando é
+ * FileSystemStorage. No segundo caso um `href` cru resolveria contra o host do BWA Tech
+ * e daria 404 — o proxy só encaminha `/api/formularios/*`, nunca a media do portal.
+ *
+ * Ordem: override explícito → base direta da API → alvo do proxy de dev. Sem nenhum
+ * deles devolve `null`, e o chamador mantém o valor original intacto.
+ */
+export function getPortalMediaOrigin(): string | null {
+  const candidatos = [
+    import.meta.env.VITE_FORMULARIOS_MEDIA_BASE as string | undefined,
+    import.meta.env.VITE_FORMULARIOS_API_BASE as string | undefined,
+    import.meta.env.VITE_FORMULARIOS_PROXY_TARGET as string | undefined,
+  ];
+
+  for (const candidato of candidatos) {
+    const valor = candidato?.trim();
+    if (!valor?.startsWith('http')) continue;
+    try {
+      return new URL(valor).origin;
+    } catch {
+      continue;
+    }
+  }
+
+  return null;
+}
+
 function authScheme(): 'token' | 'bearer' {
   const raw = (import.meta.env.VITE_FORMULARIOS_AUTH_SCHEME as string | undefined)?.toLowerCase();
   return raw === 'bearer' ? 'bearer' : 'token';

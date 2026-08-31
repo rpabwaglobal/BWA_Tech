@@ -15,6 +15,7 @@ from urllib.parse import urlparse
 
 import requests
 from django.conf import settings
+from django.core.exceptions import RequestDataTooBig
 from django.http import HttpResponse
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -31,6 +32,25 @@ logger = logging.getLogger(__name__)
 _SAFE_PATH_RE = re.compile(r'^[A-Za-z0-9_\-./]*$')
 
 _PORTAL_PATCH_ALLOWED = frozenset({'status', 'responsavel_solucao', 'descricao_resolucao'})
+
+
+def _e_criacao_de_chamado(method: str, path: str) -> bool:
+    """POST em `suporte/` na raiz — a abertura de um chamado novo no portal.
+
+    Bloqueio ESTREITO de propósito: só este par método+caminho. O proxy é genérico,
+    e o portal já expõe outro POST sob `/api/formularios/` (`sugestoes/`); barrar o
+    verbo inteiro levaria junto qualquer rota que venha a existir.
+
+    A razão de fechar aqui, e não só escondendo o botão no front: o proxy autentica
+    no portal com UMA conta de serviço compartilhada, e `usuario_email` vinha de campo
+    livre. Enquanto o POST passasse, qualquer autenticado abriria chamado em nome de
+    outra pessoa, por baixo dessa conta.
+    """
+    if method != 'POST':
+        return False
+    partes = [p for p in path.split('/') if p]
+    return len(partes) == 1 and partes[0] == 'suporte'
+
 
 #: TEMPO DE ESPERA PELO PORTAL: (conectar, ler).
 #:
@@ -248,6 +268,18 @@ class PortalFormulariosProxyView(APIView):
         # Bloqueio de path traversal e caracteres perigosos
         if '..' in sub.split('/') or not _SAFE_PATH_RE.match(sub):
             return Response({'detail': 'Path inválido.'}, status=400)
+
+        # Chamado nasce no portal. Barrado antes de qualquer rede — não há por que
+        # gastar conexão com o upstream para receber a recusa de volta.
+        if _e_criacao_de_chamado(request.method.upper(), sub):
+            return Response(
+                {
+                    'detail': 'Chamados são abertos no portal; o BWA Tech apenas recebe.',
+                    'reason': 'criacao_de_chamado_desativada',
+                },
+                status=405,
+            )
+
         url = f'{base}/api/formularios/{sub}'
         if request.GET:
             from urllib.parse import urlencode
@@ -279,10 +311,30 @@ class PortalFormulariosProxyView(APIView):
             )
 
         method = request.method.upper()
-        patch_body = request.body
+        # `request.body` materializa o corpo inteiro em memória e estoura
+        # `DATA_UPLOAD_MAX_MEMORY_SIZE` de uma vez. Sem este try, o anexo grande
+        # não vira erro de API: vira uma página HTML de 400 que o front não
+        # consegue ler, e o usuário só vê "algo deu errado".
+        try:
+            corpo_bruto = request.body
+        except RequestDataTooBig:
+            limite_mb = getattr(settings, 'DATA_UPLOAD_MAX_MEMORY_SIZE', 0) / (1024 * 1024)
+            logger.warning('Corpo acima de DATA_UPLOAD_MAX_MEMORY_SIZE em %s %s', method, url)
+            return Response(
+                {
+                    'detail': (
+                        f'Arquivo grande demais para o envio (limite de {limite_mb:.0f} MB '
+                        'por requisição). Comprima o anexo ou envie um link.'
+                    ),
+                    'reason': 'corpo_excede_limite',
+                },
+                status=413,
+            )
+
+        patch_body = corpo_bruto
         parsed_patch_body: dict = {}
-        if method == 'PATCH' and request.body:
-            patch_body = _enrich_portal_patch_body(method, url, request.body)
+        if method == 'PATCH' and corpo_bruto:
+            patch_body = _enrich_portal_patch_body(method, url, corpo_bruto)
             parsed_patch_body = _parse_json_dict(patch_body)
 
         # Primeira tentativa. Em caso de 401 (JWT cacheado já revogado pelo portal

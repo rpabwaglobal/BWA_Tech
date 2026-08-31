@@ -1,4 +1,4 @@
-import formulariosApi, { usesLocalFormulariosBackend } from './formulariosApi';
+import formulariosApi, { getPortalMediaOrigin, usesLocalFormulariosBackend } from './formulariosApi';
 
 /** Marcador no início de `descricao_resolucao` quando o ticket está «parado por pendências» (a API só tem «Em andamento»). */
 export const SUPORTE_PENDENCIA_MARKER = '__PENDENCIA_BWA__';
@@ -42,22 +42,38 @@ export type ChamadoSuporte = {
 /** Resposta bruta do portal externo — usa `anexo` em vez de `anexo_url`. */
 type ChamadoSuportePortalRaw = ChamadoSuporte & { anexo?: string | null };
 
+/** Torna utilizável no browser um anexo devolvido pelo portal.
+ *
+ * URL absoluta (o caso do storage MinIO, que assina o link) passa intacta; caminho
+ * relativo — `/media/suporte/...`, do FileSystemStorage — ganha a origem do portal,
+ * senão o `href` resolveria contra tech.bwa.global e daria 404. Sem origem
+ * configurada devolve o valor como veio, que é o comportamento antigo. */
+function resolverUrlAnexo(bruto: string | null | undefined): string | null {
+  const valor = String(bruto ?? '').trim();
+  if (!valor) return null;
+
+  if (/^(https?:|blob:|data:)/i.test(valor)) return valor;
+
+  const origem = getPortalMediaOrigin();
+  if (!origem) return valor;
+
+  return valor.startsWith('/') ? `${origem}${valor}` : `${origem}/${valor}`;
+}
+
 /** URL do anexo do SOLICITANTE, independente do nome do campo na API de origem.
  * O portal migrou de `anexo` para `anexo_usuario`; mantemos `anexo`/`anexo_url`
  * como fallback para compatibilidade retroativa. */
 export function getChamadoAnexoUrl(
   chamado: Pick<ChamadoSuporte, 'anexo_url' | 'anexo_usuario'> & { anexo?: string | null },
 ): string | null {
-  const url = String(chamado.anexo_url ?? chamado.anexo_usuario ?? chamado.anexo ?? '').trim();
-  return url || null;
+  return resolverUrlAnexo(chamado.anexo_url ?? chamado.anexo_usuario ?? chamado.anexo);
 }
 
 /** URL do anexo enviado pelo SUPORTE na resolução do chamado (portal: `anexo_suporte`). */
 export function getChamadoAnexoSuporteUrl(
   chamado: Pick<ChamadoSuporte, 'anexo_suporte'>,
 ): string | null {
-  const url = String(chamado.anexo_suporte ?? '').trim();
-  return url || null;
+  return resolverUrlAnexo(chamado.anexo_suporte);
 }
 
 /** Normaliza chamado vindo do portal (`anexo`) para o contrato interno (`anexo_url`). */
@@ -69,31 +85,6 @@ export function normalizeChamadoSuporte(raw: ChamadoSuportePortalRaw): ChamadoSu
 function normalizeChamadoList(data: ChamadoSuportePortalRaw[]): ChamadoSuporte[] {
   return data.map(normalizeChamadoSuporte);
 }
-
-/** Payload de criação para o portal (campo `anexo`, não `anexo_url`). */
-function toPortalCreateBody(payload: CreateChamadoSuportePayload): Record<string, unknown> {
-  const { anexo_url, ...rest } = payload;
-  const body: Record<string, unknown> = { ...rest };
-  const url = (anexo_url ?? '').trim();
-  if (url) body.anexo = url;
-  return body;
-}
-
-export type CreateChamadoSuportePayload = {
-  usuario_nome: string;
-  usuario_email: string;
-  usuario_setor?: string | null;
-  tipo: number;
-  item: number;
-  motivo: number;
-  empresa?: string | null;
-  descricao: string;
-  anexo_url?: string | null;
-  status?: SuporteStatusApi;
-  responsavel?: string | null;
-  responsavel_solucao?: string | null;
-  descricao_resolucao?: string | null;
-};
 
 export type PatchChamadoSuportePayload = {
   status?: SuporteStatusApi;
@@ -260,12 +251,6 @@ export const suporteService = {
       return normalizeChamadoList(data.results);
     }
     return [];
-  },
-
-  async create(payload: CreateChamadoSuportePayload): Promise<ChamadoSuporte> {
-    const body = usesLocalFormulariosBackend() ? payload : toPortalCreateBody(payload);
-    const { data } = await formulariosApi.post<ChamadoSuportePortalRaw>('suporte/', body);
-    return normalizeChamadoSuporte(data);
   },
 
   async patch(id: number, payload: PatchChamadoSuportePayload): Promise<ChamadoSuporte> {

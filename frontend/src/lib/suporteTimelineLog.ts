@@ -11,15 +11,6 @@ async function postTimelineSafe(
   }
 }
 
-/** Texto exibido na timeline quando o ticket é criado (registro inicial). */
-export async function logSuporteTicketCriado(chamadoId: number, descricao?: string): Promise<void> {
-  await postTimelineSafe({
-    chamado_id: chamadoId,
-    tipo_evento: 'criado',
-    descricao: descricao?.trim() || 'Ticket criado.',
-  });
-}
-
 export type SuporteStageLabelFn = (c: ChamadoSuporte) => string;
 
 function normResp(v: string | null | undefined): string {
