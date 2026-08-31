@@ -1,11 +1,15 @@
+import { useRef } from 'react';
 import { Outlet, useLocation } from 'react-router-dom';
 import Sidebar from './Sidebar';
 import { useSidebar } from '@/context/SidebarContext';
 import { NotificationsButton } from '@/components/NotificationsButton';
 import { cn } from '@/lib/utils';
 import { useTheme } from '@/context/ThemeContext';
-import { Moon, Sun } from 'lucide-react';
 import { ROUTES } from '@/routes';
+
+/** Oito raios, um a cada 45 graus. Menos que isso lê como estrela; mais, como
+ *  um borrão no tamanho em que o disco aparece. */
+const RAIOS_DO_SOL = [0, 45, 90, 135, 180, 225, 270, 315];
 
 const pageTitlesExact: Record<string, string> = {
   [ROUTES.painel]: 'Dashboard',
@@ -26,6 +30,7 @@ export default function Layout() {
   const location = useLocation();
   const { collapsed } = useSidebar();
   const { theme, toggleTheme } = useTheme();
+  const botaoDoTema = useRef<HTMLButtonElement>(null);
   const pathname = location.pathname;
 
   let pageTitle = pageTitlesExact[pathname];
@@ -86,7 +91,18 @@ export default function Layout() {
 
           {/* Coluna direita: actions (tema, notificações) */}
           <div className="flex items-center gap-[16px]">
+            {/* ── Sol/lua, e o círculo que abre a partir dele ──
+                O disco morfa em vez de trocar de ícone: o núcleo é o mesmo, e é
+                a mordida crescendo que faz a lua. Toda a aparência vive em
+                `.interruptor-tema__*` no index.css.
+
+                SEM FUNDO PRÓPRIO, DE PROPÓSITO: a mordida é pintada com
+                `var(--color-card)`, a cor do cabeçalho. Se o botão tivesse fundo
+                (ou um hover que o mudasse), a mordida teria de acompanhar cada
+                estado — e no primeiro esquecimento apareceria um círculo cinza
+                dentro da lua. */}
             <button
+              ref={botaoDoTema}
               type="button"
               role="switch"
               aria-checked={theme === 'dark'}
@@ -96,40 +112,33 @@ export default function Layout() {
                   : 'Modo claro ativo. Clique para modo escuro'
               }
               title={theme === 'dark' ? 'Alternar para modo claro' : 'Alternar para modo escuro'}
-              onClick={toggleTheme}
+              onClick={() => {
+                // O CENTRO DO BOTÃO é de onde o círculo abre. Medido no clique,
+                // e não guardado: a barra lateral recolhe e o cabeçalho se
+                // reorganiza, então uma medida velha nasceria fora do lugar.
+                const r = botaoDoTema.current?.getBoundingClientRect();
+                toggleTheme(
+                  r ? { x: r.left + r.width / 2, y: r.top + r.height / 2 } : undefined,
+                );
+              }}
               className={cn(
-                'relative inline-flex h-9 w-14 shrink-0 cursor-pointer items-center rounded-full border border-[var(--color-border)] p-1 shadow-inner transition-colors',
-                'bg-[var(--color-muted)] hover:bg-[var(--color-accent)]',
+                'interruptor-tema flex h-9 w-9 shrink-0 cursor-pointer items-center justify-center rounded-full',
+                'transition-colors hover:bg-[var(--color-accent)]',
               )}
             >
-              <span
-                className="pointer-events-none absolute inset-0 flex items-center justify-between px-[6px]"
-                aria-hidden
-              >
-                <Sun
-                  className={cn(
-                    'h-[14px] w-[14px] shrink-0 transition-opacity',
-                    theme === 'light'
-                      ? 'text-amber-500 opacity-100'
-                      : 'text-[var(--color-muted-foreground)] opacity-40',
-                  )}
-                />
-                <Moon
-                  className={cn(
-                    'h-[14px] w-[14px] shrink-0 transition-opacity',
-                    theme === 'dark'
-                      ? 'text-indigo-300 opacity-100'
-                      : 'text-[var(--color-muted-foreground)] opacity-40',
-                  )}
-                />
+              <span className="interruptor-tema__disco" aria-hidden>
+                <span className="interruptor-tema__raios">
+                  {RAIOS_DO_SOL.map((grau) => (
+                    <span
+                      key={grau}
+                      className="interruptor-tema__raio"
+                      style={{ transform: `rotate(${grau}deg) translateY(-11px)` }}
+                    />
+                  ))}
+                </span>
+                <span className="interruptor-tema__nucleo" />
+                <span className="interruptor-tema__mordida" />
               </span>
-              <span
-                className={cn(
-                  'relative z-10 h-7 w-7 rounded-full border border-[var(--color-border)] bg-[var(--color-card)] shadow-md transition-transform duration-200 ease-out',
-                  theme === 'dark' ? 'translate-x-5' : 'translate-x-0',
-                )}
-                aria-hidden
-              />
             </button>
             <NotificationsButton />
           </div>

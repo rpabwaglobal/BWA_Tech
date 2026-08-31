@@ -100,6 +100,23 @@ antes de reverter, e reverta a migração antes do código.
 
 ---
 
+## 2.6.0
+
+Data: 31/08/2026 · migração de banco: **não**
+
+- **Trocar entre o modo claro e o escuro virou um círculo que abre a partir do
+  botão**, varrendo a tela até o canto mais distante. Antes a troca era seca, no
+  meio de um piscar.
+
+- **E o botão virou um sol que se transforma em lua.** Não são dois ícones se
+  revezando: é o mesmo disco, com os raios recuando e uma sombra crescendo até
+  deixá-lo em crescente.
+
+- De quebra, as barras de rolagem e os campos nativos passam a acompanhar o
+  tema — no escuro eles continuavam claros.
+
+---
+
 ## 2.5.6
 
 Data: 31/08/2026 · migração de banco: **não**

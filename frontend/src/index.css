@@ -20,6 +20,12 @@
   --color-popover-foreground: var(--color-foreground);
 
   --color-primary: hsl(275 33% 45%);
+  /* O sol e a lua do interruptor de tema. Cores PRÓPRIAS, e não `--color-primary`:
+     o roxo da marca não lê como sol nem como lua, e é justamente o
+     reconhecimento imediato que faz o interruptor dispensar rótulo. Os valores
+     saem do que o botão antigo já usava — `text-amber-500` e `text-indigo-300`. */
+  --color-sol: hsl(38 92% 50%);
+  --color-lua: hsl(226 100% 84%);
   --color-primary-foreground: hsl(0 0% 100%);
 
   --color-secondary: hsl(285 33% 95%);
@@ -88,6 +94,11 @@
   --color-popover-foreground: var(--color-foreground);
 
   --color-primary: hsl(275 50% 65%);
+  /* No escuro o sol nunca aparece aceso (o disco já virou lua), mas os raios
+     ainda desbotam a partir dele durante a transição — deixá-lo mais claro
+     evita que o desbotamento passe por um amarelo sujo. */
+  --color-sol: hsl(38 95% 60%);
+  --color-lua: hsl(226 100% 88%);
   --color-primary-foreground: hsl(270 28% 10%);
 
   --color-secondary: hsl(270 20% 18%);
@@ -814,4 +825,115 @@ body.arrastando * {
   .daily-entra,
   .daily-pessoa-avante,
   .daily-pessoa-atras { animation: none; }
+}
+
+/* ── Troca de tema: o círculo que abre a partir do botão ─────────────────
+   Portado do Batelier (`Gerenciador De Bats`). A animação em si vive em
+   `lib/temaCircular.ts`; aqui ficam só as regras que o navegador precisa para
+   os retratos da View Transitions API.
+
+   `animation: none` DESLIGA O CRUZAMENTO PADRÃO. Sem isto o Chromium já faz um
+   fade entre o retrato velho e o novo, e o fade por baixo do círculo suja o
+   efeito — em vez de uma borda limpa correndo pela tela, vê-se a tela inteira
+   clareando ao mesmo tempo.
+
+   `mix-blend-mode: normal` pelo mesmo motivo: o padrão é `plus-lighter`, feito
+   para somar bem durante o cruzamento. Sem cruzamento, ele só estoura as cores
+   claras enquanto o círculo passa. */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation: none;
+  mix-blend-mode: normal;
+}
+/* O retrato NOVO fica por cima, e é ele que o círculo revela. Invertido, o
+   círculo viraria um buraco no tema antigo. */
+::view-transition-old(root) { z-index: 1; }
+::view-transition-new(root) { z-index: 2; }
+
+/* ── O interruptor que vira sol ou lua ───────────────────────────────────
+   Também do Batelier, com as medidas multiplicadas por 1,47 — lá o disco tem
+   15px numa barra de título de 32; aqui o cabeçalho tem 64 e comporta 22.
+
+   O TRUQUE DA LUA: não há dois ícones trocando. O sol é um NÚCLEO com raios em
+   volta; a lua é o MESMO núcleo com uma "mordida" — um segundo círculo, pintado
+   da cor do fundo, que cresce deslocado para o canto e come um pedaço. Como a
+   mordida usa a cor do cabeçalho, ela é invisível: o que se vê é o núcleo
+   virando crescente.
+
+   Por isso o botão NÃO tem fundo próprio. Se tivesse, a mordida teria de
+   acompanhar a cor dele em cada estado (repouso, hover, foco) — e no primeiro
+   esquecimento apareceria um círculo cinza no meio da lua. */
+.interruptor-tema__disco {
+  position: relative;
+  width: 22px;
+  height: 22px;
+  border-radius: 9999px;
+  /* 1.5s: o disco gira devagar enquanto o círculo do tema corre a tela (1.7s).
+     Os dois terminam quase juntos, e o giro parece a causa da troca. */
+  transition: transform 1.5s cubic-bezier(0.65, 0, 0.35, 1);
+}
+.interruptor-tema:hover .interruptor-tema__disco { transform: rotate(24deg); }
+.dark .interruptor-tema__disco { transform: rotate(-32deg); }
+.dark .interruptor-tema:hover .interruptor-tema__disco { transform: rotate(-8deg); }
+
+.interruptor-tema__nucleo {
+  position: absolute;
+  left: 3.5px;
+  top: 3.5px;
+  width: 15px;
+  height: 15px;
+  border-radius: 9999px;
+  background: var(--color-sol);
+  transition: background-color 1.5s cubic-bezier(0.65, 0, 0.35, 1);
+}
+.dark .interruptor-tema__nucleo { background: var(--color-lua); }
+
+.interruptor-tema__mordida {
+  position: absolute;
+  left: 3.5px;
+  top: 3.5px;
+  width: 15px;
+  height: 15px;
+  border-radius: 9999px;
+  /* A COR DO CABEÇALHO, e não uma cor fixa: é ela que faz a mordida sumir. */
+  background: var(--color-card);
+  transform: translate(4.5px, -4.5px) scale(0);
+  transition:
+    transform 1.5s cubic-bezier(0.65, 0, 0.35, 1),
+    background-color 1.5s cubic-bezier(0.65, 0, 0.35, 1);
+}
+.dark .interruptor-tema__mordida { transform: translate(4.5px, -4.5px) scale(1); }
+
+.interruptor-tema__raios {
+  position: absolute;
+  inset: 0;
+  opacity: 1;
+  transform: scale(1) rotate(0deg);
+  /* A opacidade some ANTES de o encolhimento terminar (1.1s contra 1.6s): os
+     raios desaparecem enquanto ainda recuam, em vez de encolherem visíveis até
+     virarem um ponto. */
+  transition: opacity 1.1s ease, transform 1.6s cubic-bezier(0.65, 0, 0.35, 1);
+}
+.dark .interruptor-tema__raios { opacity: 0; transform: scale(0.45) rotate(70deg); }
+
+.interruptor-tema__raio {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 1.5px;
+  height: 5px;
+  border-radius: 9999px;
+  background: var(--color-sol);
+  margin-left: -0.75px;
+  margin-top: -2.5px;
+  transform-origin: 50% 50%;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* Quem pede menos movimento recebe o sol e a lua, sem o caminho entre eles.
+     O círculo do tema já é desligado em `lib/temaCircular.ts`. */
+  .interruptor-tema__disco,
+  .interruptor-tema__nucleo,
+  .interruptor-tema__mordida,
+  .interruptor-tema__raios { transition: none; }
 }
