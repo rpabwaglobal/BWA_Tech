@@ -32,11 +32,21 @@
   --degrade-separador: linear-gradient(
     to right, var(--marca-roxo) 0%, var(--marca-ciano) 100%
   );
-  /* O das listas: as mesmas cores, mas SUMINDO no fim. Um filete que atravessa
-     de ponta a ponta em cada linha vira grade; esvanecendo, ele separa sem
-     picotar a lista. */
+  /* O das listas: as mesmas cores, mas SIMÉTRICO e sumindo nas duas pontas.
+     Um filete que atravessa de ponta a ponta em cada linha vira grade;
+     esvanecendo, ele separa sem picotar a lista.
+
+     ROXO NO MEIO, CIANO NAS PONTAS. O do cabeçalho tem direção — atravessa a
+     tela de uma cor à outra. Este não vai a lugar nenhum: ele marca o meio da
+     linha e se dissolve para os dois lados, então as duas metades são espelho
+     uma da outra. */
   --degrade-separador-esvanecido: linear-gradient(
-    to right, var(--marca-roxo) 0%, var(--marca-ciano) 55%, transparent 100%
+    to right,
+    transparent 0%,
+    var(--marca-ciano) 15%,
+    var(--marca-roxo) 50%,
+    var(--marca-ciano) 85%,
+    transparent 100%
   );
   --color-sol: hsl(38 92% 50%);
   --color-lua: hsl(226 100% 84%);

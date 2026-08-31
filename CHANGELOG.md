@@ -100,6 +100,15 @@ antes de reverter, e reverta a migração antes do código.
 
 ---
 
+## 2.6.4
+
+Data: 31/08/2026 · migração de banco: **não**
+
+- **O filete entre os itens do Dashboard ficou simétrico**: roxo no meio, ciano
+  nas pontas, sumindo dos dois lados.
+
+---
+
 ## 2.6.3
 
 Data: 31/08/2026 · migração de banco: **não**
