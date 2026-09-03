@@ -100,6 +100,16 @@ antes de reverter, e reverta a migração antes do código.
 
 ---
 
+## 2.6.6
+
+Data: 03/09/2026 · migração de banco: **não**
+
+- **O círculo da troca de tema passa a nascer sempre no botão do sol, e a
+  cobrir a tela inteira**, em qualquer resolução. Havia caminhos em que ele
+  nascia no meio da tela ou parava antes da borda.
+
+---
+
 ## 2.6.5
 
 Data: 31/08/2026 · migração de banco: **não**
