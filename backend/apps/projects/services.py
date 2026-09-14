@@ -6,9 +6,9 @@ from collections import defaultdict
 from django.db import models, transaction
 from django.utils import timezone
 
-from .models import (Sprint, Project, ProjectCompartilhamento, Card, CardStatus, ProjectStatus,
-                     KanbanStage, ProjectKanbanStageConfig, CardLog, CardLogEventType,
-                     CARD_STATUS_FECHADOS)
+from .models import (Sprint, Project, ProjectCompartilhamento, Card, CardAnexo, CardStatus,
+                     ProjectStatus, KanbanStage, ProjectKanbanStageConfig, CardLog,
+                     CardLogEventType, CARD_STATUS_FECHADOS)
 
 
 def _norm_nome_projeto(nome: str) -> str:
@@ -37,6 +37,31 @@ def _copiar_logs_card(origem: Card, destino: Card) -> None:
         CardLog.objects.filter(pk=novo_log.pk).update(data=log.data)
 
 
+def _copiar_anexos_card(origem: Card, destino: Card) -> None:
+    """Leva os anexos do card para a cópia na sprint nova.
+
+    APONTA PARA O MESMO ARQUIVO, e não copia bytes. Um anexo de dezenas de
+    megabytes duplicado a cada virada de sprint encheria o volume por um ganho
+    nenhum: o conteúdo é idêntico. Só a LINHA é nova.
+
+    Isso é seguro porque nada apaga o arquivo do disco quando a linha morre —
+    não há signal de limpeza no `CardAnexo`. Se um dia houver, ele terá de
+    conferir se outro anexo referencia o mesmo caminho antes de apagar, senão o
+    card da sprint nova fica com um anexo quebrado.
+
+    O card de origem CONTINUA com os anexos dele: a sprint encerrada é
+    histórico, e um histórico com o anexo faltando mente sobre o que aconteceu.
+    """
+    for anexo in origem.anexos.all().order_by('criado_em', 'id'):
+        CardAnexo.objects.create(
+            card=destino,
+            arquivo=anexo.arquivo.name,
+            nome_original=anexo.nome_original,
+            tamanho=anexo.tamanho,
+            enviado_por=anexo.enviado_por,
+        )
+
+
 def _replicar_card_para_sprint(card: Card, novo_projeto: Project, sprint_origem: Sprint, sprint_destino: Sprint, usuario_fechamento=None) -> Card:
     """
     Cria o card na sprint destino preservando criação, início de desenvolvimento e timeline.
@@ -58,6 +83,12 @@ def _replicar_card_para_sprint(card: Card, novo_projeto: Project, sprint_origem:
         complexidade_selected_development=card.complexidade_selected_development or '',
         complexidade_custom_items=card.complexidade_custom_items or [],
         card_comment=card.card_comment or '',
+        # LINKS ACOMPANHAM O CARD. Sem isto eles somem na virada da sprint: o
+        # card continua o mesmo trabalho na sprint seguinte, mas a planilha, o
+        # PRD e o painel que alguém anexou ficam para trás, no card da sprint
+        # encerrada — e ninguém procura lá. Dezessete cards tinham links quando
+        # este conserto foi escrito.
+        links=card.links or [],
         # SEM ISTO O CHECKBOX SE PERDE NA VIRADA DA SPRINT, EM SILÊNCIO.
         # Um card marcado para gerar formulário que ainda não foi finalizado é
         # replicado para a sprint seguinte; a cópia nascia com o padrão False, e
@@ -72,6 +103,12 @@ def _replicar_card_para_sprint(card: Card, novo_projeto: Project, sprint_origem:
     Card.objects.filter(pk=novo.pk).update(created_at=card.created_at)
     novo.refresh_from_db()
 
+    # DEPOIS DO SAVE, porque dependem da chave: um M2M não existe antes de a
+    # linha existir, e o anexo aponta para o card por FK.
+    if card.setores_compartilhados.exists():
+        novo.setores_compartilhados.set(card.setores_compartilhados.all())
+
+    _copiar_anexos_card(card, novo)
     _copiar_logs_card(card, novo)
 
     CardLog.objects.create(

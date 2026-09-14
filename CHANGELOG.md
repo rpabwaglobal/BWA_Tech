@@ -100,6 +100,16 @@ antes de reverter, e reverta a migração antes do código.
 
 ---
 
+## 2.6.8
+
+Data: 14/09/2026 · migração de banco: **não**
+
+- **O card que passa para a próxima sprint leva os links junto.** Eles ficavam
+  para trás no card da sprint encerrada, onde ninguém procura. Os **anexos** e o
+  **compartilhamento entre setores** tinham o mesmo problema e foram junto.
+
+---
+
 ## 2.6.7
 
 Data: 14/09/2026 · migração de banco: **não**
