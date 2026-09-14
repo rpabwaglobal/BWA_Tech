@@ -100,6 +100,16 @@ antes de reverter, e reverta a migração antes do código.
 
 ---
 
+## 2.6.10
+
+Data: 14/09/2026 · migração de banco: **não**
+
+- **A página da sprint deixou de recarregar tudo por mudanças que ela mesma
+  acabou de aplicar.** Concluir ou editar um card disparava uma recarga completa
+  do quadro logo em seguida, sem nada a corrigir.
+
+---
+
 ## 2.6.9
 
 Data: 14/09/2026 · migração de banco: **não**

@@ -7,6 +7,20 @@ export type CardMovedEvent = {
   actor_user_id: number | null;
 };
 
+/**
+ * Criação, exclusão ou edição de card na sprint.
+ *
+ * O QUEM E O QUAL JÁ VINHAM DO SERVIDOR e eram jogados fora aqui: o consumer
+ * envia `card_id` e `actor_user_id` (consumers.py, `kanban_changed`), mas a
+ * assinatura antiga era `() => void`. Sem esses dois, quem escuta não consegue
+ * distinguir o próprio eco de uma mudança alheia, e recarrega a tela inteira
+ * por uma alteração que ele mesmo já aplicou no estado local.
+ */
+export type KanbanChangedEvent = {
+  card_id: number | null;
+  actor_user_id: number | null;
+};
+
 function buildSprintKanbanWsUrl(sprintId: number | string, token: string): string {
   const path = `/ws/sprints/${sprintId}/kanban/?token=${encodeURIComponent(token)}`;
   const viteWs = import.meta.env.VITE_WS_URL as string | undefined;
@@ -37,7 +51,7 @@ export function useSprintKanbanWebSocket(opts: {
   enabled: boolean;
   onCardMoved?: (event: CardMovedEvent) => void;
   /** Disparado em movimentação, troca de responsável, criação/exclusão de card. */
-  onKanbanChanged?: () => void;
+  onKanbanChanged?: (event: KanbanChangedEvent) => void;
 }) {
   const { sprintId, enabled, onCardMoved, onKanbanChanged } = opts;
   const cbRef = useRef(onCardMoved);
@@ -99,7 +113,10 @@ export function useSprintKanbanWebSocket(opts: {
             type?: string;
           };
           if (msg.type === 'kanban_changed') {
-            kanbanCbRef.current?.();
+            kanbanCbRef.current?.({
+              card_id: typeof msg.card_id === 'number' ? msg.card_id : null,
+              actor_user_id: msg.actor_user_id ?? null,
+            });
             return;
           }
           if (msg.type !== 'card_moved') return;
@@ -110,7 +127,10 @@ export function useSprintKanbanWebSocket(opts: {
             new_status: msg.new_status,
             actor_user_id: msg.actor_user_id ?? null,
           });
-          kanbanCbRef.current?.();
+          kanbanCbRef.current?.({
+            card_id: msg.card_id,
+            actor_user_id: msg.actor_user_id ?? null,
+          });
         } catch {
           /* ignora payload malformado */
         }

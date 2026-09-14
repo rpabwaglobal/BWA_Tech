@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState, type MouseEvent } from 'react
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
 import { hasPermission } from '@/lib/permissions';
-import { useSprintKanbanWebSocket } from '@/hooks/useSprintKanbanWebSocket';
+import { useSprintKanbanWebSocket, type KanbanChangedEvent } from '@/hooks/useSprintKanbanWebSocket';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { CardAnexosSection } from '@/components/CardAnexosSection';
@@ -157,6 +157,11 @@ const getShortDisplayName = (user: UserType): string => {
   return name || user.username || '';
 };
 
+/** Por quanto tempo a marca de "eu já apliquei este card" vale. Fora do
+ *  componente: dentro, um `useCallback([])` capturaria a constante do primeiro
+ *  render, o que funciona por acidente e confunde quem lê. */
+const VALIDADE_DA_MARCA_MS = 15_000;
+
 export default function SprintDetails() {
   const { sprintId, cardId } = useParams<{ sprintId: string; cardId?: string }>();
   const navigate = useNavigate();
@@ -176,6 +181,46 @@ export default function SprintDetails() {
     // repetir o literal aqui já fez a invalidação divergir da gravação.
     invalidateCache(METRICS_BUNDLE_CACHE_KEY);
   }, [sprintId]);
+
+  /**
+   * Cards que ESTA tela acabou de atualizar sozinha.
+   *
+   * O eco do WebSocket chega logo depois de qualquer mutação — inclusive das
+   * que a própria página já aplicou no estado local. Recarregar o pacote
+   * inteiro nesse caso é trabalho jogado fora, e foi o que abriu espaço para o
+   * card finalizado voltar a aparecer como "em desenvolvimento".
+   *
+   * O CRITÉRIO É "EU JÁ APLIQUEI", e não "fui eu que fiz". A diferença importa:
+   * o `QuickCreateCardModal` desta tela é montado sem `onSuccess`, então um
+   * card criado por ele NÃO passa pelo estado local — e depende justamente
+   * deste recarregamento para aparecer. Um anti-eco por autor faria esse card
+   * sumir até um F5.
+   *
+   * A marca expira: se o evento não chegar (rede caiu, sprint saiu de
+   * andamento), a entrada velha não pode calar um recarregamento legítimo mais
+   * tarde.
+   */
+  const aplicadosLocalmenteRef = useRef<Map<string, number>>(new Map());
+  const marcarAplicadoLocalmente = useCallback((cardId: string | number) => {
+    aplicadosLocalmenteRef.current.set(String(cardId), Date.now());
+  }, []);
+  const jaApliqueiEsteCard = useCallback((cardId: number | null) => {
+    if (cardId === null) return false;
+    const chave = String(cardId);
+    const quando = aplicadosLocalmenteRef.current.get(chave);
+    if (quando === undefined) return false;
+
+    // NÃO CONSOME A MARCA. Escrevi assim primeiro, achando que um eco bastava:
+    // uma movimentação dispara DOIS avisos (o hook chama este handler pelo
+    // `card_moved` e de novo pelo `kanban_changed`), então o segundo não
+    // encontraria a marca e recarregaria assim mesmo — anti-eco nenhum. A marca
+    // vale pela janela toda e some pela validade.
+    if (Date.now() - quando >= VALIDADE_DA_MARCA_MS) {
+      aplicadosLocalmenteRef.current.delete(chave);
+      return false;
+    }
+    return true;
+  }, []);
 
   // Real-time: outros usuários movendo cards aparecem aqui sem F5.
   // Backend só dispara broadcast se a sprint estiver em andamento.
@@ -210,7 +255,12 @@ export default function SprintDetails() {
    * `kanban_changed`), e uma criacao em lote dispararia um por card.
    */
   const refetchAgendadoRef = useRef<number | null>(null);
-  const handleKanbanChangedRealtime = useCallback(() => {
+  const handleKanbanChangedRealtime = useCallback((evt: KanbanChangedEvent) => {
+    // ECO DE MUDANÇA QUE ESTA TELA JÁ APLICOU: nada a fazer. As duas condições
+    // são necessárias — ver a explicação em `aplicadosLocalmenteRef`.
+    const souEu = user?.id !== undefined && String(evt.actor_user_id) === String(user.id);
+    if (souEu && jaApliqueiEsteCard(evt.card_id)) return;
+
     if (refetchAgendadoRef.current !== null) {
       window.clearTimeout(refetchAgendadoRef.current);
     }
@@ -219,7 +269,7 @@ export default function SprintDetails() {
       invalidateCardCaches();
       void loadDataRef.current?.({ force: true });
     }, 400);
-  }, [invalidateCardCaches]);
+  }, [invalidateCardCaches, jaApliqueiEsteCard, user?.id]);
 
   useEffect(() => {
     return () => {
@@ -1215,6 +1265,7 @@ export default function SprintDetails() {
               : card,
           ),
         );
+        marcarAplicadoLocalmente(editingCard.id);
         // Invalida cache para próxima visita refletir a edição.
         invalidateCardCaches();
         
@@ -1238,6 +1289,7 @@ export default function SprintDetails() {
           responsavel_name: newCard.responsavel_name ?? (newCard.responsavel ? users.find(u => u.id === newCard.responsavel)?.first_name : undefined),
         };
         setCards((prevCards) => [...prevCards, cardWithUser]);
+        marcarAplicadoLocalmente(newCard.id);
 
         // Invalida cache para próxima visita já mostrar o novo card.
         invalidateCardCaches();
@@ -1329,6 +1381,7 @@ export default function SprintDetails() {
       await cardService.delete(cardToDelete.id);
       // Remover o card da lista local sem recarregar tudo
       setCards((prevCards) => prevCards.filter((card) => card.id !== cardToDelete.id));
+      marcarAplicadoLocalmente(cardToDelete.id);
       // Invalida cache para próxima visita.
       invalidateCardCaches();
       setDeleteCardDialogOpen(false);
