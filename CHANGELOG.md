@@ -100,6 +100,17 @@ antes de reverter, e reverta a migração antes do código.
 
 ---
 
+## 2.6.9
+
+Data: 14/09/2026 · migração de banco: **não**
+
+- **Na página da sprint, o card finalizado aparece como finalizado na hora.**
+  Ele voltava a se mostrar "em desenvolvimento" por até meio minuto depois de
+  concluído — o navegador estava servindo uma cópia guardada da tela, de antes
+  da mudança, e ela sobrescrevia o que já estava certo.
+
+---
+
 ## 2.6.8
 
 Data: 14/09/2026 · migração de banco: **não**

@@ -117,8 +117,27 @@ export const sprintService = {
    * SprintDetails fazia (1 sprint + 1 projects + N cards/proj + N kanban-config).
    * Backend usa CardKanbanSerializer (slim) + queries otimizadas.
    */
-  async getBundle(id: string): Promise<SprintBundle> {
-    const response = await api.get<SprintBundle>(`/sprints/${id}/bundle/`);
+  /**
+   * O pacote com tudo que a tela da sprint precisa.
+   *
+   * `semCacheHttp` FURA O CACHE DO NAVEGADOR, e não o da aplicação. São dois
+   * caches diferentes, e essa distinção era o bug: a resposta sai do servidor
+   * com `Cache-Control: private, max-age=30`, então depois de finalizar um card
+   * o refetch era servido pelo navegador com o pacote de ANTES da mudança — e
+   * sobrescrevia o estado local, que estava certo. O card voltava a aparecer
+   * como "em desenvolvimento" por até meio minuto.
+   *
+   * `invalidateCache()` no cliente não alcança isso: ele limpa o mapa em
+   * memória do SWR, não o cache HTTP. Só um `Cache-Control: no-cache` NO PEDIDO
+   * obriga o navegador a revalidar.
+   *
+   * Continua valendo a pena manter o cache do servidor: ele serve a navegação
+   * normal, que é a maioria. Só quem acabou de mudar algo precisa furá-lo.
+   */
+  async getBundle(id: string, opcoes?: { semCacheHttp?: boolean }): Promise<SprintBundle> {
+    const response = await api.get<SprintBundle>(`/sprints/${id}/bundle/`, {
+      headers: opcoes?.semCacheHttp ? { 'Cache-Control': 'no-cache' } : undefined,
+    });
     return response.data;
   },
 };

@@ -528,7 +528,11 @@ export default function SprintDetails() {
 
     // SWR: usa cache (mesmo stale) se houver, e revalida em background.
     // `users` não vem no bundle — vai paralelo, também cacheado.
-    const fetchBundle = () => sprintService.getBundle(sprintId);
+    // `force` significa "acabei de mudar algo": aí o pedido precisa furar
+    // TAMBÉM o cache do navegador, senão volta o pacote de antes da mudança.
+    const fetchBundle = () => sprintService.getBundle(sprintId, {
+      semCacheHttp: options?.force === true,
+    });
     const { cached, fresh, revalidate } = cachedFetch<SprintBundle>(
       cacheKey,
       fetchBundle,
