@@ -100,6 +100,16 @@ antes de reverter, e reverta a migração antes do código.
 
 ---
 
+## 2.6.7
+
+Data: 14/09/2026 · migração de banco: **não**
+
+- **Os chamados de Suporte voltaram a funcionar.** O portal saiu da porta 3334 e
+  passou a atender na porta padrão; o BWA Tech continuava procurando no endereço
+  antigo, que não responde mais.
+
+---
+
 ## 2.6.6
 
 Data: 03/09/2026 · migração de banco: **não**

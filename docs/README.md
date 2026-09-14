@@ -118,7 +118,7 @@ flowchart TB
         RD[("Redis 7<br/>broker · canais")]
     end
 
-    EXT["Portal externo de chamados<br/>api.bwa.global:3334"]
+    EXT["Portal externo de chamados<br/>api.bwa.global"]
 
     SPA -->|HTTPS| TLS --> REST
     SPA -.->|WebSocket| TLS -.-> WS
