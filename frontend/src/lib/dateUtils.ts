@@ -1,3 +1,4 @@
+import { prazoVencido } from './prazoDoCard';
 // Feriados nacionais brasileiros (fixos)
 const FERIADOS_FIXOS = [
   { mes: 1, dia: 1 },   // Confraternização Universal
@@ -173,16 +174,13 @@ export function formatDateTime(dateTimeString: string): string {
   });
 }
 
-// Verifica se um card está atrasado (status em_desenvolvimento e data_fim < agora)
+// Verifica se um card em desenvolvimento já passou do prazo.
+// A comparação mora em `prazoDoCard`, junto com a da entrega: o prazo "18:30"
+// vale até 18:30:59 dos dois lados, senão o selo da tela contradiz o número
+// gravado na métrica.
 export function isCardAtrasado(card: { status: string; data_fim?: string | null }): boolean {
-  if (card.status !== 'em_desenvolvimento' || !card.data_fim) {
-    return false;
-  }
-  
-  const dataFim = new Date(card.data_fim);
-  const agora = new Date();
-  
-  return dataFim < agora;
+  if (card.status !== 'em_desenvolvimento') return false;
+  return prazoVencido(card.data_fim);
 }
 
 /** Formata segundos corridos como "2d 5h", "12h", "45min". */

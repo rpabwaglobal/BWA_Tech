@@ -11,6 +11,7 @@ from typing import Any
 from django.utils import timezone
 
 from apps.projects.models import Card, Project
+from apps.projects.prazo import dias_vencidos, prazo_vencido
 
 from .base import BaseReport, FilterDisplay, TableColumn
 
@@ -81,8 +82,8 @@ class Report(BaseReport):
         for project in data['projects']:
             for c in data['cards_by_project'].get(project.id, []):
                 atraso = ''
-                if c.data_fim and c.data_fim < now:
-                    atraso = (now - c.data_fim).days
+                if prazo_vencido(c.data_fim, now):
+                    atraso = dias_vencidos(c.data_fim, now)
                 rows.append({
                     'projeto': project.nome,
                     'sprint': project.sprint.nome if project.sprint_id else '',

@@ -24,7 +24,8 @@ from django.utils import timezone
 from apps.accounts.models import SetorCatalogo
 from apps.projects.models import Card, CardStatus, Project, Sprint
 from apps.projects.prazo import (
-    dias_de_atraso, entregue_atrasado, entregue_no_prazo, q_entregue_atrasado,
+    dias_de_atraso, dias_vencidos, entregue_atrasado, entregue_no_prazo,
+    prazo_vencido, q_entregue_atrasado, q_prazo_vencido,
 )
 
 User = get_user_model()
@@ -197,3 +198,135 @@ class PrazoDeEntregaTests(TestCase):
             Card.objects.filter(q_entregue_atrasado()).values_list('id', flat=True))
 
         self.assertEqual(ids, {atrasado.id})
+
+
+class PrazoVencidoDeCardAbertoTests(TestCase):
+    """O outro lado da regra: o card que ainda nao foi entregue.
+
+    Estes testes existem porque a assimetria era invisivel olhando um lado so.
+    O selo "Fora do prazo" acendia as 18:30:00 enquanto a entrega feita as
+    18:30:40 era gravada como no prazo — duas respostas para o mesmo minuto.
+    """
+
+    def setUp(self):
+        self.admin = User.objects.create_user(
+            username='admin_vencido', email='admin.vencido@example.com',
+            password='x' * 12, role='admin', is_superuser=True, is_staff=True)
+        self.setor = SetorCatalogo.objects.create(
+            codename='setor_vencido', nome='Vencido')
+
+        agora = timezone.now()
+        self.sprint = Sprint.objects.create(
+            nome='Sprint do vencimento', data_inicio=agora - dt.timedelta(days=1),
+            fechamento_em=agora + dt.timedelta(days=7), duracao_dias=8,
+            supervisor=self.admin, setor=self.setor)
+        self.projeto = Project.objects.create(
+            nome='Projeto do vencimento', sprint=self.sprint, setor=self.setor)
+
+        self.prazo = timezone.make_aware(dt.datetime(2026, 8, 19, 18, 30, 0, 0))
+
+    def _aberto(self, prazo=..., nome='Aberto'):
+        """Card em desenvolvimento, sem conclusao."""
+        return Card.objects.create(
+            nome=nome, projeto=self.projeto,
+            status=CardStatus.EM_DESENVOLVIMENTO, criado_por=self.admin,
+            data_fim=self.prazo if prazo is ... else prazo)
+
+    def _instante(self, segundos_depois):
+        return self.prazo + dt.timedelta(seconds=segundos_depois)
+
+    # -- a simetria com a entrega ----------------------------------------
+
+    def test_dentro_do_minuto_do_prazo_ainda_nao_venceu(self):
+        for segundos in (0, 1, 30, 59):
+            with self.subTest(segundos=segundos):
+                self.assertFalse(
+                    prazo_vencido(self.prazo, self._instante(segundos)),
+                    'as 18:30:%02d o prazo das 18:30 nao pode estar vencido'
+                    % segundos)
+
+    def test_o_minuto_seguinte_ja_venceu(self):
+        self.assertTrue(prazo_vencido(self.prazo, self._instante(60)))
+
+    def test_antes_do_prazo_nao_venceu(self):
+        self.assertFalse(prazo_vencido(self.prazo, self._instante(-1)))
+
+    def test_o_selo_da_tela_nao_contradiz_a_metrica(self):
+        """O caso que motivou esta classe.
+
+        As 18:30:40, o card aberto nao pode estar "fora do prazo" se a mesma
+        entrega feita naquele instante seria gravada como no prazo.
+        """
+        instante = self._instante(40)
+        card = self._aberto()
+
+        aberto_atrasado = prazo_vencido(card.data_fim, instante)
+
+        card.finalizado_em = instante
+        entregue_dentro = entregue_no_prazo(card)
+
+        self.assertFalse(
+            aberto_atrasado,
+            'a tela diria "fora do prazo" para uma entrega que conta no prazo')
+        self.assertTrue(entregue_dentro)
+
+    # -- ausencia de prazo -----------------------------------------------
+
+    def test_card_sem_prazo_nunca_vence(self):
+        self.assertFalse(prazo_vencido(None, self._instante(10_000)))
+        self.assertEqual(dias_vencidos(None, self._instante(10_000)), 0)
+
+    # -- dias vencidos ---------------------------------------------------
+
+    def test_dias_vencidos_e_zero_dentro_do_minuto(self):
+        self.assertEqual(dias_vencidos(self.prazo, self._instante(59)), 0)
+
+    def test_dias_vencidos_conta_do_fim_do_minuto(self):
+        um_dia = 24 * 60 * 60
+        # 18:31 de amanha: exatamente um dia depois do limite real.
+        self.assertEqual(dias_vencidos(self.prazo, self._instante(60 + um_dia)), 1)
+        # Um segundo antes de fechar o dia ainda nao completou 1.
+        self.assertEqual(dias_vencidos(self.prazo, self._instante(59 + um_dia)), 0)
+
+    # -- ORM x Python ----------------------------------------------------
+
+    def test_o_orm_concorda_com_o_python_no_card_aberto(self):
+        """A trava de verdade: banco e Python julgando os mesmos cards.
+
+        `q_prazo_vencido` usa `data_fim <= agora - tolerancia` e a funcao usa
+        `agora >= data_fim + tolerancia`. Sao a mesma desigualdade rearranjada,
+        e este teste e o que garante que continuem sendo.
+        """
+        instante = self._instante(40)
+        casos = {
+            'antes do prazo': self._instante(-3600),
+            'no instante do prazo': self.prazo,
+            'dentro do minuto': self._instante(-20),
+            'no limite do minuto': self._instante(-60),
+            'um segundo passado': self._instante(-61),
+            'vencido por horas': self._instante(-7200),
+            'sem prazo': None,
+        }
+        criados = {}
+        for nome, prazo in casos.items():
+            criados[nome] = self._aberto(prazo=prazo, nome=nome)
+
+        do_orm = set(
+            Card.objects
+            .filter(projeto=self.projeto)
+            .filter(q_prazo_vencido(agora=instante))
+            .values_list('id', flat=True)
+        )
+        do_python = set(
+            card.id for card in criados.values()
+            if prazo_vencido(card.data_fim, instante)
+        )
+
+        self.assertEqual(
+            do_orm, do_python,
+            'banco e Python discordam em: %s' % sorted(
+                nome for nome, card in criados.items()
+                if (card.id in do_orm) != (card.id in do_python)))
+        # Nao vale concordarem em "ninguem venceu".
+        self.assertTrue(do_python, 'o cenario nao produziu nenhum vencido')
+        self.assertNotIn(criados['sem prazo'].id, do_orm)

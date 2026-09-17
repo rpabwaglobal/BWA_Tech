@@ -39,3 +39,42 @@ export function entregueNoPrazo(card: {
 
   return conclusao < prazo + TOLERANCIA_DO_PRAZO_MS;
 }
+
+/**
+ * O prazo já venceu neste instante? — a pergunta do card **ainda aberto**.
+ *
+ * É o outro lado da mesma regra, e estava sendo lido com outra régua: a
+ * entrega ganhava o minuto de tolerância, mas o selo "Fora do prazo" acendia
+ * a partir de 18:30:00. Resultado observável: às 18:30:30 o card aparecia
+ * atrasado na tela e, concluído às 18:30:40, era gravado como entregue no
+ * prazo. O mesmo card, no mesmo minuto, com dois veredictos.
+ *
+ * `agora` é parâmetro para que uma lista inteira seja julgada por um único
+ * instante — chamar `Date.now()` por linha julga linhas da mesma varredura
+ * por relógios diferentes.
+ */
+export function prazoVencido(
+  dataFim?: string | null,
+  agora: number = Date.now(),
+): boolean {
+  if (!dataFim) return false;
+
+  const prazo = new Date(dataFim).getTime();
+  if (Number.isNaN(prazo)) return false;
+
+  return agora >= prazo + TOLERANCIA_DO_PRAZO_MS;
+}
+
+/**
+ * Entregue DEPOIS do minuto do prazo.
+ *
+ * Não é a negação de `entregueNoPrazo`: card sem prazo ou sem conclusão não é
+ * atrasado nem no prazo — está fora da pergunta, e aqui isso vira `false`.
+ * Espelha `entregue_atrasado` do backend, com a mesma assimetria de propósito.
+ */
+export function entregueAtrasado(card: {
+  data_fim?: string | null;
+  finalizado_em?: string | null;
+}): boolean {
+  return entregueNoPrazo(card) === false;
+}

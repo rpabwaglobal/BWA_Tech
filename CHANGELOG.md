@@ -100,6 +100,37 @@ antes de reverter, e reverta a migração antes do código.
 
 ---
 
+## 2.6.12
+
+Data: 17/09/2026 · migração de banco: **não**
+
+- **O selo "Fora do prazo" deixou de acender antes da hora.** A versão anterior
+  deu um minuto de tolerância à *entrega*, mas o card ainda em aberto continuava
+  sendo marcado como atrasado a partir de 18:30:00 — não de 18:31:00. Dava uma
+  contradição de 59 segundos: às 18:30:30 a tela dizia "fora do prazo" e, se o
+  card fosse concluído às 18:30:40, ficava gravado como entregue no prazo. O
+  mesmo card, no mesmo minuto, com dois veredictos. Agora o prazo "18:30" vale
+  até 18:30:59 dos dois lados — na tela, na notificação de atraso e nos três
+  relatórios que contam cards em aberto.
+- **O selo "Atrasado" do quadro da sprint estava respondendo outra pergunta, e
+  acertava o rótulo ao contrário.** Para card já entregue, ele comparava o
+  *prazo* com o fechamento da sprint em vez de olhar *quando a entrega saiu*.
+  Medido na base: dos 902 cards entregues com prazo, ele marcava 28 que **não**
+  atrasaram e deixava sem selo os 100 que atrasaram — nenhum acerto em comum
+  com o número das Métricas. Agora usa a mesma regra do resto do sistema, então
+  **128 cards mudam de selo** nessa tela.
+- **A coluna "Atraso (dias)" do relatório de Gargalos** contava os dias por
+  subtração crua, enquanto a coluna equivalente do relatório de Backlog já
+  usava a regra. Os dois davam números diferentes para o mesmo card na janela
+  de um minuto depois de cada virada de dia.
+- **Auditoria dos 1.455 cards da base**, do primeiro ao último: 902 têm prazo e
+  conclusão e passam pela regra (802 no prazo, 100 atrasados); 165 estão em
+  aberto com prazo (153 vencidos); os demais não têm prazo gravado e ficam fora
+  da pergunta. Banco e código concordam card por card nos dois lados, sem uma
+  única divergência.
+
+---
+
 ## 2.6.11
 
 Data: 17/09/2026 · migração de banco: **não**

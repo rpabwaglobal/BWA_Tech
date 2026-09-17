@@ -5,6 +5,7 @@ from django.utils import timezone
 from django.db.models import Q
 from .models import Card, Notification, NotificationType, Sprint, WeeklyPriorityConfig
 from .notification_utils import send_notification
+from .prazo import prazo_vencido
 from .services import finalizar_sprint_replicacao
 
 logger = logging.getLogger(__name__)
@@ -35,7 +36,7 @@ def check_card_deadlines():
         recent_threshold = now - timedelta(hours=2)
         
         # Card atrasado
-        if card.data_fim < now:
+        if prazo_vencido(card.data_fim, now):
             # Verificar se já existe notificação de atraso recente
             existing = Notification.objects.filter(
                 card_id=card.id,

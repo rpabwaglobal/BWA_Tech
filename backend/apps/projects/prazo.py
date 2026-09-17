@@ -24,6 +24,7 @@ mesma pergunta destroem a confiança em todos eles. Mesmo motivo de
 from datetime import timedelta
 
 from django.db.models import DateTimeField, ExpressionWrapper, F, Q
+from django.utils import timezone
 
 # O prazo "18:30" vale até 18:30:59. Um minuto inteiro, porque é essa a unidade
 # que a pessoa consegue escolher na tela — não há como marcar segundos.
@@ -91,3 +92,54 @@ def q_entregue_atrasado(prefixo: str = '') -> Q:
         & Q(**{f'{campo_conclusao}__isnull': False})
         & Q(**{f'{campo_conclusao}__gte': limite})
     )
+
+
+# ---------------------------------------------------------------------------
+# O OUTRO LADO DA MESMA REGRA: o card que ainda não foi entregue.
+#
+# "Foi entregue atrasado?" e "o prazo já venceu?" são perguntas diferentes, mas
+# o prazo é o mesmo objeto — e estava sendo lido com duas réguas. Enquanto a
+# entrega ganhava o minuto de tolerância, o card aberto era marcado "Fora do
+# prazo" a partir de 18:30:00, não de 18:31:00.
+#
+# Isso produzia uma contradição observável: às 18:30:30 o card aparecia como
+# atrasado na tela; concluído às 18:30:40, era gravado como entregue NO PRAZO.
+# O mesmo card, no mesmo minuto, com dois veredictos.
+# ---------------------------------------------------------------------------
+
+
+def prazo_vencido(data_fim, agora=None) -> bool:
+    """O prazo já expirou neste instante?
+
+    Para card AINDA ABERTO. Sem prazo devolve False — não há promessa a vencer.
+    `agora` é parâmetro para que quem varre uma lista use um único instante:
+    chamar `timezone.now()` por card faz linhas da mesma varredura serem
+    julgadas por relógios diferentes.
+    """
+    if not data_fim:
+        return False
+    return (agora or timezone.now()) >= _limite(data_fim)
+
+
+def dias_vencidos(data_fim, agora=None) -> int:
+    """Quantos dias o prazo já passou. Zero se ainda não venceu.
+
+    O instante é resolvido UMA vez: chamar `timezone.now()` na guarda e outra
+    na subtração deixaria a função com dois relógios, e um card na fronteira
+    do dia poderia passar pela guarda e devolver um dia a menos.
+    """
+    instante = agora or timezone.now()
+    if not prazo_vencido(data_fim, instante):
+        return 0
+    return (instante - _limite(data_fim)).days
+
+
+def q_prazo_vencido(prefixo: str = '', agora=None) -> Q:
+    """A mesma regra, para o ORM.
+
+    Aqui não é preciso `ExpressionWrapper`: `agora` é uma constante, então
+    `data_fim + tolerância <= agora` vira `data_fim <= agora - tolerância` —
+    aritmética em Python, e o banco compara coluna com valor.
+    """
+    instante = agora or timezone.now()
+    return Q(**{f'{prefixo}data_fim__lte': instante - TOLERANCIA_DO_PRAZO})

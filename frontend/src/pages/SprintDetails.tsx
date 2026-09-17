@@ -34,6 +34,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { sprintService, type SprintBundle } from '@/services/sprintService';
 import { cachedFetch, invalidateCache, METRICS_BUNDLE_CACHE_KEY } from '@/lib/cachedFetch';
+import { entregueAtrasado, prazoVencido } from '@/lib/prazoDoCard';
 import { projectService } from '@/services/projectService';
 import { cardService, CARD_AREAS, CARD_TYPES, CARD_PRIORITIES, CARD_STATUSES } from '@/services/cardService';
 import { userService } from '@/services/userService';
@@ -1663,14 +1664,20 @@ export default function SprintDetails() {
 
   const selectedColumnDefs = SPRINT_CARDS_COLUMN_DEFS.filter((c) => selectedColumnIds.includes(c.id));
   const selectedColumnDefsSafe = selectedColumnDefs;
+  // O selo "Atrasado" desta lista fica ao lado do prazo DO CARD, então tem de
+  // responder sobre o prazo do card — e passa pela mesma regra do kanban, das
+  // metricas e dos relatorios.
+  //
+  // Antes respondia outra coisa, e o rotulo acertava ao contrario: para card
+  // finalizado comparava o PRAZO com o fechamento da sprint, ignorando quando
+  // a entrega saiu. Medido na base: dos 902 cards finalizados com prazo, ele
+  // marcava 28 que NAO atrasaram e deixava sem selo os 100 que atrasaram —
+  // zero acertos em comum com a regra.
   const isCardLateForSprintView = (card: CardType): boolean => {
     if (!card.data_fim) return false;
-    const due = new Date(card.data_fim).getTime();
-    if (card.status === 'finalizado') {
-      return due > new Date(sprint.fechamento_em).getTime();
-    }
     if (card.status === 'inviabilizado') return false;
-    return due < Date.now();
+    if (card.status === 'finalizado') return entregueAtrasado(card);
+    return prazoVencido(card.data_fim);
   };
 
   /** Nome base: «nome da sprint» - datahora (local), seguro para nome de arquivo */

@@ -22,7 +22,7 @@ from apps.suggestions.models import ProjectSuggestion
 from .base import BaseReport, FilterDisplay, TableColumn
 from ..periodo import fim_do_periodo, inicio_do_periodo
 from .dev_time_stats import aggregate_dev_time
-from apps.projects.prazo import entregue_no_prazo
+from apps.projects.prazo import entregue_no_prazo, q_prazo_vencido
 
 
 class Report(BaseReport):
@@ -64,7 +64,7 @@ class Report(BaseReport):
         active_sprint = self.sprints_visiveis().filter(finalizada=False).order_by('-data_inicio').first()
 
         # Em aberto atrasados
-        open_late = cards.exclude(status__in=['finalizado', 'inviabilizado']).filter(data_fim__lt=now).count()
+        open_late = cards.exclude(status__in=['finalizado', 'inviabilizado']).filter(q_prazo_vencido(agora=now)).count()
 
         # Top usuário do período
         per_user: dict[int, dict[str, Any]] = {}

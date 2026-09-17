@@ -20,7 +20,9 @@ from apps.projects.dev_time_format import format_minutos_uteis, format_segundos_
 from .base import BaseReport, FilterDisplay, TableColumn
 from .dev_time_stats import accumulate_card_dev_time, bucket_averages, _new_bucket
 from ..periodo import fim_do_periodo, inicio_do_periodo
-from apps.projects.prazo import dias_de_atraso, entregue_atrasado
+from apps.projects.prazo import (
+    dias_de_atraso, dias_vencidos, entregue_atrasado, q_prazo_vencido,
+)
 
 
 class Report(BaseReport):
@@ -65,10 +67,10 @@ class Report(BaseReport):
         )
         late_delivered = [c for c in all_delivered if entregue_atrasado(c)]
 
-        # Em aberto com prazo passado (cards não-terminais com data_fim < hoje)
+        # Em aberto cujo prazo já venceu (a regra dá o minuto de tolerância)
         open_late_qs = (
             base.exclude(status__in=['finalizado', 'inviabilizado'])
-                .filter(data_fim__lt=now)
+                .filter(q_prazo_vencido(agora=now))
         )
         open_late = self.paginate_with_progress(
             open_late_qs, label='Analisando cards em aberto',
@@ -164,7 +166,10 @@ class Report(BaseReport):
                 'atraso_dias': atraso,
             })
         for c in data['open_late']:
-            atraso = (now - c.data_fim).days
+            # Pela regra, e não por subtração crua: a coluna irmã acima usa
+            # `dias_de_atraso`, e duas fórmulas na mesma coluna do mesmo
+            # relatório fariam o leitor duvidar das duas.
+            atraso = dias_vencidos(c.data_fim, now)
             rows.append({
                 'categoria': 'Em aberto atrasado',
                 'nome': c.nome,
