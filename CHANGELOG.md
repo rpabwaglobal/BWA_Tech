@@ -100,6 +100,18 @@ antes de reverter, e reverta a migração antes do código.
 
 ---
 
+## 2.6.11
+
+Data: 17/09/2026 · migração de banco: **não**
+
+- **Quem entrega dentro do minuto do prazo deixou de contar como atrasado.** O
+  prazo é escolhido em minutos, mas a entrega é registrada em segundos: um card
+  com prazo às 18:30 e conclusão às 18:30:26 aparecia como "Fora do prazo"
+  mostrando, na tela, exatamente o mesmo horário do prazo. Quatro cards estavam
+  nessa situação; os outros 100 atrasos, de horas ou dias, seguem como atrasos.
+
+---
+
 ## 2.6.10
 
 Data: 14/09/2026 · migração de banco: **não**

@@ -14,6 +14,7 @@ from django.utils import timezone
 from datetime import datetime, timedelta
 
 logger = logging.getLogger(__name__)
+from .prazo import q_entregue_atrasado
 from .models import (
     Sprint,
     Project,
@@ -298,9 +299,13 @@ class SprintViewSet(CompartilhamentoSetorMixin, viewsets.ModelViewSet):
         not_excluded = Q(projects__arquivado=False) & Q(projects__is_system=False)
         # Critério de atraso (alinhado com Metrics.tsx):
         # - Aberto atrasado: data_fim < hoje E status não-terminal
-        # - Entregue atrasado: finalizado_em > data_fim (do próprio card)
+        # - Entregue atrasado: `q_entregue_atrasado` (apps/projects/prazo.py)
         # NÃO comparamos com sprint.fechamento_em — a fonte de verdade é
         # `data_fim` do card. Inviabilizado nunca conta como entrega.
+        #
+        # A REGRA VIVE EM `prazo.py`, e não aqui: ela estava escrita em oito
+        # lugares, e um conserto local faria esta tela discordar dos relatórios.
+        atrasado_na_entrega = q_entregue_atrasado('projects__cards__')
         qs = (
             Sprint.objects.all()
             .annotate(
@@ -329,8 +334,7 @@ class SprintViewSet(CompartilhamentoSetorMixin, viewsets.ModelViewSet):
                         )
                         | (
                             Q(projects__cards__status='finalizado')
-                            & Q(projects__cards__finalizado_em__isnull=False)
-                            & Q(projects__cards__finalizado_em__gt=F('projects__cards__data_fim'))
+                            & atrasado_na_entrega
                         )
                     ),
                 ),
@@ -338,8 +342,7 @@ class SprintViewSet(CompartilhamentoSetorMixin, viewsets.ModelViewSet):
                     'projects__cards',
                     filter=not_excluded
                     & Q(projects__cards__status='finalizado')
-                    & Q(projects__cards__finalizado_em__isnull=False)
-                    & Q(projects__cards__finalizado_em__gt=F('projects__cards__data_fim')),
+                    & atrasado_na_entrega,
                 ),
                 cards_abertos_atrasados=Count(
                     'projects__cards',

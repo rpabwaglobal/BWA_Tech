@@ -20,6 +20,7 @@ from apps.projects.dev_time_format import format_minutos_uteis, format_segundos_
 from .base import BaseReport, FilterDisplay, TableColumn
 from .dev_time_stats import accumulate_card_dev_time, bucket_averages, _new_bucket
 from ..periodo import fim_do_periodo, inicio_do_periodo
+from apps.projects.prazo import dias_de_atraso, entregue_atrasado
 
 
 class Report(BaseReport):
@@ -40,7 +41,7 @@ class Report(BaseReport):
             .filter(projeto__arquivado=False, projeto__is_system=False)
         )
 
-        # Entregues atrasados (finalizado_em > data_fim)
+        # Entregues atrasados — regra em `apps/projects/prazo.py`
         late_delivered_qs = base.filter(
             status='finalizado',
             finalizado_em__isnull=False,
@@ -57,12 +58,12 @@ class Report(BaseReport):
             late_delivered_qs = late_delivered_qs.filter(**{f'{date_field}__lt': period_end})
 
         # Materializa em chunks com progresso, depois filtra in-memory pra ter
-        # certeza que o filtro Python (finalizado_em > data_fim) funcione.
+        # certeza que o filtro Python (`entregue_atrasado`) funcione.
         all_delivered = self.paginate_with_progress(
             late_delivered_qs, label='Analisando entregas',
             progress_start=15, progress_end=45, chunk_size=100,
         )
-        late_delivered = [c for c in all_delivered if c.finalizado_em > c.data_fim]
+        late_delivered = [c for c in all_delivered if entregue_atrasado(c)]
 
         # Em aberto com prazo passado (cards não-terminais com data_fim < hoje)
         open_late_qs = (
@@ -140,7 +141,7 @@ class Report(BaseReport):
         now = timezone.now()
         rows = []
         for c in data['late_delivered']:
-            atraso = (c.finalizado_em - c.data_fim).days
+            atraso = dias_de_atraso(c)
             rows.append({
                 'categoria': 'Entregue atrasado',
                 'nome': c.nome,

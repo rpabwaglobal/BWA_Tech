@@ -22,6 +22,7 @@ from apps.suggestions.models import ProjectSuggestion
 from .base import BaseReport, FilterDisplay, TableColumn
 from ..periodo import fim_do_periodo, inicio_do_periodo
 from .dev_time_stats import aggregate_dev_time
+from apps.projects.prazo import entregue_no_prazo
 
 
 class Report(BaseReport):
@@ -53,7 +54,7 @@ class Report(BaseReport):
 
         # On-time
         with_due = [c for c in delivered_list if c.data_fim]
-        on_time = sum(1 for c in with_due if c.finalizado_em <= c.data_fim)
+        on_time = sum(1 for c in with_due if entregue_no_prazo(c))
         on_time_pct = round(on_time * 100 / len(with_due), 1) if with_due else None
 
         # Tempo médio em desenvolvimento (campos persistidos)

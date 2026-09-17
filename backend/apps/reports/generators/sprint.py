@@ -19,6 +19,7 @@ from apps.projects.dev_time_format import format_minutos_uteis, format_segundos_
 
 from .base import BaseReport, FilterDisplay, TableColumn
 from .dev_time_stats import aggregate_dev_time
+from apps.projects.prazo import entregue_atrasado
 
 
 class Report(BaseReport):
@@ -64,7 +65,7 @@ class Report(BaseReport):
         atrasados = 0
         for c in cards:
             if c.status == 'finalizado' and c.finalizado_em and c.data_fim:
-                if c.finalizado_em > c.data_fim:
+                if entregue_atrasado(c):
                     atrasados += 1
 
         finalized_cards = [c for c in cards if c.status == 'finalizado' and c.finalizado_em]

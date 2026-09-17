@@ -40,6 +40,7 @@ import { cn } from '@/lib/utils';
 import { ROUTES } from '@/routes';
 import { cachedFetch, METRICS_BUNDLE_CACHE_KEY } from '@/lib/cachedFetch';
 import { TelaComCarregamento } from '@/components/TelaComCarregamento';
+import { entregueNoPrazo } from '@/lib/prazoDoCard';
 import { NumeroCrescente } from '@/components/NumeroCrescente';
 
 /** Alias usado em todo o módulo. Slim para todos os cálculos de métricas
@@ -907,10 +908,11 @@ export default function Metrics() {
       // três últimos — esta checagem é defesa adicional.
       if (!getSprintForCard(card) || !card.data_fim || !card.responsavel || !card.finalizado_em) continue;
       const uid = String(card.responsavel);
-      const scheduledEnd = new Date(card.data_fim).getTime();
-      const completedAt = new Date(card.finalizado_em).getTime();
-      // No prazo se a data real de conclusão NÃO passou do prazo agendado.
-      const isOnTime = completedAt <= scheduledEnd;
+      // A REGRA VEM DE `lib/prazoDoCard`, espelho de `apps/projects/prazo.py`.
+      // O prazo é escolhido em minutos e a conclusão gravada em segundos, então
+      // comparar cru marcava como atrasado quem entregou dentro do minuto.
+      // Aqui os dois campos já foram checados acima, então nunca é `null`.
+      const isOnTime = entregueNoPrazo(card) === true;
       const cur = byUser.get(uid) ?? { total: 0, onTime: 0, onTimeCards: [], lateCards: [] };
       cur.total += 1;
       if (isOnTime) {
@@ -1036,22 +1038,18 @@ export default function Metrics() {
   }, [onTimeListModalUserId, onTimeListModalRow]);
 
   /** Abre o modal compartilhado dos gráficos com a lista de cards do usuário.
-   * Separa em onTimeCards/lateCards baseado em finalizado_em <= data_fim. */
+   * Separa em onTimeCards/lateCards com `entregueNoPrazo`. */
   const openChartCardsModal = useCallback(
     (title: string, description: string, cards: CardType[]) => {
       const onTimeCards: CardType[] = [];
       const lateCards: CardType[] = [];
       for (const card of cards) {
-        if (!card.data_fim || !card.finalizado_em) {
-          // Sem deadline ou sem data de conclusão real: trata como "no prazo"
-          // por convenção (não temos dados pra dizer o contrário).
-          onTimeCards.push(card);
-          continue;
-        }
-        const scheduledEnd = new Date(card.data_fim).getTime();
-        const completedAt = new Date(card.finalizado_em).getTime();
-        if (completedAt <= scheduledEnd) onTimeCards.push(card);
-        else lateCards.push(card);
+        const noPrazo = entregueNoPrazo(card);
+        // `null` = sem prazo ou sem conclusão. Continua caindo em "no prazo"
+        // por convenção, como antes: não há dado para dizer o contrário, e
+        // marcar de vermelho quem nunca teve prazo seria pior.
+        if (noPrazo === false) lateCards.push(card);
+        else onTimeCards.push(card);
       }
       setChartCardsModal({ title, description, onTimeCards, lateCards });
       // Aba inicial: prefere "No prazo" se houver, senão cai pra "Fora do prazo".

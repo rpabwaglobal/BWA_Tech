@@ -21,6 +21,7 @@ from apps.projects.dev_time_format import format_minutos_uteis, format_segundos_
 from .base import BaseReport, FilterDisplay, TableColumn
 from ..periodo import fim_do_periodo, inicio_do_periodo
 from .dev_time_stats import aggregate_dev_time
+from apps.projects.prazo import entregue_no_prazo
 
 
 User = get_user_model()
@@ -68,9 +69,9 @@ class Report(BaseReport):
             progress_start=15, progress_end=70, chunk_size=100,
         )
 
-        # On-time: finalizado_em <= data_fim (cards com ambas as datas).
+        # On-time: `entregue_no_prazo` (apps/projects/prazo.py), cards com ambas as datas.
         with_due = [c for c in delivered if c.data_fim]
-        on_time = sum(1 for c in with_due if c.finalizado_em <= c.data_fim)
+        on_time = sum(1 for c in with_due if entregue_no_prazo(c))
         late = len(with_due) - on_time
         pct = round(on_time * 100 / len(with_due), 1) if with_due else None
 
@@ -148,7 +149,7 @@ class Report(BaseReport):
         for c in data['delivered']:
             on_time = ''
             if c.data_fim and c.finalizado_em:
-                on_time = 'Sim' if c.finalizado_em <= c.data_fim else 'Não'
+                on_time = 'Sim' if entregue_no_prazo(c) else 'Não'
             out.append({
                 'nome': c.nome,
                 'projeto': c.projeto.nome if c.projeto_id else '',
