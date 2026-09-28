@@ -44,8 +44,7 @@ from .models import (
     SetorSolicitante,
 )
 from .services import (_norm_nome_projeto, finalizar_sprint_replicacao,
-                       get_sprint_ids_atribuiveis, reancorar_card_na_sprint,
-                       sprint_em_andamento_do_setor)
+                       reancorar_card_na_sprint, sprint_em_andamento_do_setor)
 from apps.accounts.profile_picture_utils import get_profile_picture_url
 from apps.accounts.models import Role
 from apps.accounts.permissions import PodeVerConteudo, HasPerm, NaoVisitanteEscreve
@@ -3301,34 +3300,145 @@ class CardScoreViewSet(viewsets.ModelViewSet):
         # Escopa por setor via o card dono (card__setor).
         return scope_card_scores(qs, self.request.user)  # fail-open enquanto flag OFF
 
+    def _cards_pontuaveis(self, request):
+        """A base dos dois endpoints do seletor, para eles nao divergirem.
+
+        TODO CARD PODE RECEBER SCORE: nenhum status, sprint ou projeto arquivado
+        e recusado. O Score apenas atribui pontuacao segundo os criterios
+        configurados, e decidir *quais* cards merecem nota nao e papel daqui.
+
+        PROJETO DE SISTEMA FICA FORA, e e o unico recorte de conteudo.
+        "Sugestoes", "Suporte", "Descartados" e "Monitoramento de Feedbacks" nao
+        sao trabalho entregue — o card de monitoramento e uma PROJECAO de um
+        pedido de feedback, com a coluna controlada pelo sistema e sem ninguem
+        que possa arrasta-lo.
+
+        Pela FLAG e nao pelo nome. A flag so e confiavel porque a replicacao de
+        sprint passou a carrega-la: antes cada virada criava uma copia
+        desmarcada, e 11 projetos estavam assim na base, com 5 cards que este
+        filtro deixaria passar.
+
+        `scope_cards` NAO e recorte de pontuacao, e permissao. Action
+        `detail=False` nao passa pelo `get_queryset()` da classe (que e onde vive
+        o `scope_card_scores`), entao o escopo por setor precisa ser reaplicado a
+        mao. Sem ele, quem tem `manage_score` sem `view_cross_setor` recebia o
+        backlog vivo da empresa inteira, com descricao e script_url de cada card.
+        """
+        qs = Card.objects.filter(projeto__is_system=False)
+        return scope_cards(qs, request.user)  # fail-open enquanto flag OFF
+
     @action(detail=False, methods=['get'], url_path='pickable-cards')
     def pickable_cards(self, request):
-        """Lista leve de cards para o seletor do modal (uma request, sem paginação).
+        """Cards do seletor do modal de Score, PAGINADOS e filtrados no servidor.
 
-        Só aparecem cards de sprints EM ANDAMENTO ou PLANEJADAS (não finalizadas e
-        com fechamento ainda no futuro). Cards de sprints finalizadas/expiradas, ou
-        de projetos sem sprint, não são atribuíveis e ficam de fora. Cards já
-        FINALIZADOS também são excluídos (não faz sentido pontuar algo concluído).
+        ERA UMA RESPOSTA UNICA COM TUDO. Funcionou enquanto o seletor recusava
+        card concluido e sprint encerrada; quando esses recortes cairam, a lista
+        foi de 190 para 1515 cards e a resposta para ~1 MB — que o navegador
+        ainda engole, mas o modal desenha um preview por card, e 1515 previews de
+        uma vez travam a abertura.
 
-        Action `detail=False`: NÃO passa pelo `get_queryset()` da classe (que é
-        onde vive o `scope_card_scores`) e monta um queryset de Card próprio —
-        por isso o escopo precisa ser reaplicado aqui, à mão. Sem ele, quem tem
-        `manage_score` (permissão de cargo, que não implica `view_cross_setor`)
-        recebia numa única requisição, sem paginação, o backlog vivo da empresa
-        inteira: o `CardPickerSerializer` devolve nome, descrição, script_url e
-        responsável de cada card."""
-        sprint_ids = get_sprint_ids_atribuiveis()
+        A FILTRAGEM TEM DE SER AQUI, e nao no cliente. Paginar e continuar
+        filtrando em memoria faria a busca enxergar apenas a pagina carregada:
+        digitar o nome de um card da pagina 20 nao acharia nada, e o resultado
+        pareceria "esse card nao existe". Por isso `q`, `responsavel` e `sprint`
+        sao parametros, e a busca e sobre a BASE inteira.
+
+        Parametros:
+          `q`            texto livre, casa em nome OU descricao
+          `responsavel`  id do usuario, ou `__sem__` para os nao atribuidos
+          `sprint`       id da sprint
+          `page`, `page_size`  da `PaginacaoPadrao` (20 por padrao, teto 200)
+
+        `select_related` inclui `score` porque o preview mostra a nota que o card
+        ja tem — sem ele sao 40 consultas extras por pagina.
+        """
         qs = (
-            Card.objects
+            self._cards_pontuaveis(request)
             .select_related('projeto', 'projeto__sprint', 'responsavel', 'score')
-            .filter(projeto__arquivado=False, projeto__is_system=False)
-            .filter(projeto__sprint_id__in=sprint_ids)
-            .exclude(status=CardStatus.FINALIZADO)
-            .order_by('-created_at')
         )
-        qs = scope_cards(qs, request.user)  # fail-open enquanto flag OFF
-        serializer = CardPickerSerializer(qs, many=True)
-        return Response(serializer.data)
+
+        texto = (request.query_params.get('q') or '').strip()
+        if texto:
+            qs = qs.filter(Q(nome__icontains=texto) | Q(descricao__icontains=texto))
+
+        responsavel = (request.query_params.get('responsavel') or '').strip()
+        if responsavel == '__sem__':
+            qs = qs.filter(responsavel__isnull=True)
+        elif responsavel:
+            qs = qs.filter(responsavel_id=responsavel)
+
+        sprint = (request.query_params.get('sprint') or '').strip()
+        if sprint:
+            qs = qs.filter(projeto__sprint_id=sprint)
+
+        # `-created_at` DESEMPATADO POR `-id`: sem o segundo campo, cards com o
+        # mesmo `created_at` (a replicacao de sprint COPIA o do original, entao
+        # isso acontece) podem trocar de lugar entre uma pagina e a seguinte, e o
+        # mesmo card aparece duas vezes ou nenhuma na rolagem infinita.
+        qs = qs.order_by('-created_at', '-id')
+
+        pagina = self.paginate_queryset(qs)
+        serializer = CardPickerSerializer(pagina, many=True)
+        return self.get_paginated_response(serializer.data)
+
+    @action(detail=False, methods=['get'], url_path='pickable-filters')
+    def pickable_filters(self, request):
+        """As opcoes dos filtros do seletor: sprints e responsaveis.
+
+        ENDPOINT PROPRIO PORQUE AS OPCOES NAO PODEM VIR DA PAGINA. Antes o modal
+        montava a lista de responsaveis varrendo os cards que tinha em maos, o
+        que funcionava quando ele tinha TODOS. Paginando, aquele dropdown
+        passaria a oferecer so os responsaveis das paginas ja buscadas — a mesma
+        armadilha da busca, num segundo lugar, e mais silenciosa: um nome que
+        falta num filtro nao parece defeito, parece que a pessoa nao tem card.
+
+        LEVE DE PROPOSITO: dois `values_list` distintos sobre a mesma base, sem
+        serializer e sem trazer card nenhum. E o que permite ao modal ter filtros
+        completos sem carregar a base.
+        """
+        base = self._cards_pontuaveis(request)
+
+        # `.order_by()` VAZIO ANTES DO `.distinct()`, e nao e decoracao.
+        # `Card.Meta.ordering` e `['projeto', 'prioridade', 'created_at']`, e o
+        # Django poe as colunas do ORDER BY no SELECT — o DISTINCT passa a
+        # distinguir por elas tambem. Sem esta linha o endpoint devolvia 1515
+        # "sprints distintas" e 1351 "responsaveis distintos", com repeticao,
+        # em vez de 12 e 10.
+        sprints = [
+            {'value': str(sid), 'label': nome}
+            for sid, nome in (
+                base.filter(projeto__sprint__isnull=False)
+                .order_by()
+                .values_list('projeto__sprint_id', 'projeto__sprint__nome')
+                .distinct()
+            )
+        ]
+        # Pela DATA e nao pelo nome: "Sprint 10.26" vem antes de "Sprint 2.26"
+        # em ordem alfabetica, e o seletor ficaria fora de ordem cronologica.
+        ordem = dict(
+            Sprint.objects.filter(pk__in=[s['value'] for s in sprints])
+            .values_list('id', 'data_inicio')
+        )
+        sprints.sort(key=lambda s: ordem.get(int(s['value'])) or timezone.now(), reverse=True)
+
+        responsaveis = []
+        tem_sem_responsavel = base.filter(responsavel__isnull=True).exists()
+        for uid, first, last, username, role in (
+            base.filter(responsavel__isnull=False)
+            .order_by()  # mesmo motivo do `sprints` acima
+            .values_list('responsavel_id', 'responsavel__first_name',
+                         'responsavel__last_name', 'responsavel__username',
+                         'responsavel__role')
+            .distinct()
+        ):
+            nome = f'{first or ""} {last or ""}'.strip() or username
+            responsaveis.append({'value': str(uid), 'label': nome, 'role': role or ''})
+        responsaveis.sort(key=lambda r: r['label'].lower())
+        if tem_sem_responsavel:
+            responsaveis.insert(
+                0, {'value': '__sem__', 'label': 'Sem Responsável', 'role': ''})
+
+        return Response({'sprints': sprints, 'responsaveis': responsaveis})
 
     def _aplicar_valores(self, card_score, valores):
         """Substitui os valores do score pelos informados. `valores` = lista de

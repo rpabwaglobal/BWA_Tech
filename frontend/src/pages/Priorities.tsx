@@ -28,6 +28,7 @@ import { cn, normalizeExternalUrl } from '@/lib/utils';
 import { ROUTES } from '@/routes';
 import { TelaComCarregamento } from '@/components/TelaComCarregamento';
 import { DailyMode } from '@/components/priorities/DailyMode';
+import { VerCardModal } from '@/components/VerCardModal';
 // Formatação de data sem dependência externa
 
 /**
@@ -126,18 +127,6 @@ export default function Priorities() {
   const [selectedCard, setSelectedCard] = useState<CardType | null>(null);
   const [cardLoading, setCardLoading] = useState(false);
   const [users, setUsers] = useState<UserType[]>([]);
-  const [cardFormData, setCardFormData] = useState({
-    nome: '',
-    descricao: '',
-    script_url: '',
-    area: 'backend',
-    tipo: 'feature',
-    prioridade: 'media',
-    status: 'a_desenvolver',
-    responsavel: '',
-    data_inicio: '',
-    data_fim: '',
-  });
   
   // Estados para modais de prioridades da semana
   const [definePriorityDialogOpen, setDefinePriorityDialogOpen] = useState(false);
@@ -540,21 +529,6 @@ export default function Priorities() {
     }
   };
 
-  const preencherFormularioDoCard = useCallback((card: Partial<CardType> & { nome?: string }) => {
-    setCardFormData({
-      nome: card.nome || '',
-      descricao: card.descricao || '',
-      script_url: card.script_url || '',
-      area: card.area || 'backend',
-      tipo: card.tipo || 'feature',
-      prioridade: card.prioridade || 'media',
-      status: card.status || 'a_desenvolver',
-      responsavel: card.responsavel || '',
-      data_inicio: card.data_inicio || '',
-      data_fim: card.data_fim || '',
-    });
-  }, []);
-
   /**
    * Abre o modal de leitura do card.
    *
@@ -574,9 +548,7 @@ export default function Priorities() {
     setViewCardDialogOpen(true);
 
     if (cardConhecido) {
-      const jaNaTela = cardConhecido as unknown as CardType;
-      setSelectedCard(jaNaTela);
-      preencherFormularioDoCard(jaNaTela);
+      setSelectedCard(cardConhecido as unknown as CardType);
     } else {
       setSelectedCard(null);
       setCardLoading(true);
@@ -585,7 +557,6 @@ export default function Priorities() {
     try {
       const card = await cardService.getById(cardId);
       setSelectedCard(card);
-      preencherFormularioDoCard(card);
     } catch (error) {
       console.error('Erro ao carregar card:', error);
     } finally {
@@ -1156,227 +1127,18 @@ export default function Priorities() {
       )}
 
       {/* Modal de Visualização do Card */}
-      <Dialog open={viewCardDialogOpen} onOpenChange={(open) => {
-        setViewCardDialogOpen(open);
-        if (!open) {
-          setSelectedCard(null);
-        }
-      }}>
-        <DialogContent onClose={() => {
+      {/* O card em leitura: componente compartilhado com a tela de Score.
+          Eram 221 linhas aqui dentro; duplica-las la teria criado dois
+          formularios do mesmo card, para divergirem sem ninguem notar. */}
+      <VerCardModal
+        aberto={viewCardDialogOpen}
+        onClose={() => {
           setViewCardDialogOpen(false);
           setSelectedCard(null);
-        }} className="max-w-[600px]">
-          <DialogHeader>
-            <DialogTitle>Ver Card</DialogTitle>
-            <DialogDescription>
-              Visualize as informações do card (somente visualização)
-            </DialogDescription>
-          </DialogHeader>
-
-          {cardLoading ? (
-            <div className="flex items-center justify-center py-8">
-              <Loader2 className="h-8 w-8 animate-spin text-[var(--color-primary)]" />
-            </div>
-          ) : (
-            <form className="space-y-[16px] mt-[16px] max-h-[70vh] overflow-y-auto pr-[8px]">
-              <div className="space-y-[8px]">
-                <Label htmlFor="card-nome">Nome do Card *</Label>
-                <Input
-                  id="card-nome"
-                  placeholder="Ex: Certidões PE"
-                  value={cardFormData.nome}
-                  onChange={() => {}}
-                  required
-                  disabled={true}
-                />
-              </div>
-
-              <div className="space-y-[8px]">
-                <Label htmlFor="card-descricao">Descrição / Instruções</Label>
-                <Textarea
-                  id="card-descricao"
-                  placeholder="Descreva o card, instruções detalhadas, requisitos, etc..."
-                  value={cardFormData.descricao}
-                  onChange={() => {}}
-                  rows={4}
-                  disabled={true}
-                />
-              </div>
-
-              <div className="space-y-[8px] rounded-lg border border-[var(--color-border)] p-[12px]">
-                <div className="space-y-[6px]">
-                  <Label>Link do Script</Label>
-                  {cardFormData.script_url ? (
-                    <a
-                      href={normalizeExternalUrl(cardFormData.script_url)}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="flex items-center gap-[6px] rounded-md bg-[var(--color-accent)] px-[10px] py-[6px] text-sm text-[var(--color-primary)] underline underline-offset-2 hover:opacity-75 break-all"
-                    >
-                      <ExternalLink className="h-[13px] w-[13px] shrink-0" />
-                      {cardFormData.script_url}
-                    </a>
-                  ) : (
-                    <p className="text-xs text-[var(--color-muted-foreground)]">Sem script.</p>
-                  )}
-                </div>
-
-                {selectedCard?.links && selectedCard.links.length > 0 && (
-                  <>
-                    <div className="border-t border-[var(--color-border)]" />
-                    <div className="space-y-[6px]">
-                      <Label>Links adicionais</Label>
-                      <div className="space-y-[4px]">
-                        {selectedCard.links.map((link, idx) => (
-                          <a
-                            key={idx}
-                            href={normalizeExternalUrl(link.url)}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            title={link.url}
-                            className="flex items-center gap-[6px] rounded-md bg-[var(--color-accent)] px-[10px] py-[6px] text-sm text-[var(--color-primary)] underline underline-offset-2 hover:opacity-75"
-                          >
-                            <ExternalLink className="h-[13px] w-[13px] shrink-0" />
-                            <span className="flex-1 truncate">{link.label.trim() ? link.label : link.url}</span>
-                          </a>
-                        ))}
-                      </div>
-                    </div>
-                  </>
-                )}
-              </div>
-
-              <div className="grid grid-cols-2 gap-[16px]">
-                <div className="space-y-[8px]">
-                  <Label htmlFor="card-area">Área *</Label>
-                  <select
-                    id="card-area"
-                    className="flex h-[40px] w-full rounded-[8px] border border-[var(--color-input)] bg-[var(--color-background)] px-[12px] py-[8px] text-sm ring-offset-[var(--color-background)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-ring)] focus-visible:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed"
-                    value={cardFormData.area}
-                    onChange={() => {}}
-                    required
-                    disabled={true}
-                  >
-                    {CARD_AREAS.map((area) => (
-                      <option key={area.value} value={area.value}>{area.label}</option>
-                    ))}
-                  </select>
-                </div>
-
-                <div className="space-y-[8px]">
-                  <Label htmlFor="card-tipo">Tipo *</Label>
-                  <select
-                    id="card-tipo"
-                    className="flex h-[40px] w-full rounded-[8px] border border-[var(--color-input)] bg-[var(--color-background)] px-[12px] py-[8px] text-sm ring-offset-[var(--color-background)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-ring)] focus-visible:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed"
-                    value={cardFormData.tipo}
-                    onChange={() => {}}
-                    required
-                    disabled={true}
-                  >
-                    {CARD_TYPES.map((tipo) => (
-                      <option key={tipo.value} value={tipo.value}>{tipo.label}</option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-[16px]">
-                <div className="space-y-[8px]">
-                  <Label htmlFor="card-prioridade">Prioridade *</Label>
-                  <select
-                    id="card-prioridade"
-                    className="flex h-[40px] w-full rounded-[8px] border border-[var(--color-input)] bg-[var(--color-background)] px-[12px] py-[8px] text-sm ring-offset-[var(--color-background)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-ring)] focus-visible:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed"
-                    value={cardFormData.prioridade}
-                    onChange={() => {}}
-                    required
-                    disabled={true}
-                  >
-                    {CARD_PRIORITIES.map((prioridade) => (
-                      <option key={prioridade.value} value={prioridade.value}>{prioridade.label}</option>
-                    ))}
-                  </select>
-                </div>
-
-                <div className="space-y-[8px]">
-                  <Label htmlFor="card-status">Status *</Label>
-                  <select
-                    id="card-status"
-                    className="flex h-[40px] w-full rounded-[8px] border border-[var(--color-input)] bg-[var(--color-background)] px-[12px] py-[8px] text-sm ring-offset-[var(--color-background)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-ring)] focus-visible:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed"
-                    value={cardFormData.status}
-                    onChange={() => {}}
-                    required
-                    disabled={true}
-                  >
-                    {CARD_STATUSES.map((status) => (
-                      <option key={status.value} value={status.value}>{status.label}</option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-
-              <div className="space-y-[8px]">
-                <Label htmlFor="card-responsavel">Responsável</Label>
-                <UserSelect
-                  users={users}
-                  value={cardFormData.responsavel || ''}
-                  onChange={() => {}}
-                  disabled={true}
-                  placeholder="Selecione um responsável"
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-[16px]">
-                <div className="space-y-[8px]">
-                  <Label htmlFor="card-data_inicio">Data e Hora de Início</Label>
-                  <DateTimePicker
-                    id="card-data_inicio"
-                    value={cardFormData.data_inicio}
-                    onChange={() => {}}
-                    disabled={true}
-                  />
-                  <p className="text-xs text-[var(--color-muted-foreground)]">
-                    Preenchida automaticamente com a data e hora atual
-                  </p>
-                </div>
-
-                <div className="space-y-[8px]">
-                  <Label htmlFor="card-data_fim">Data e Hora de Entrega</Label>
-                  <DateTimePicker
-                    id="card-data_fim"
-                    value={cardFormData.data_fim}
-                    onChange={() => {}}
-                    disabled={true}
-                  />
-                </div>
-              </div>
-
-              <DialogFooter>
-                <Button 
-                  type="button" 
-                  variant="outline" 
-                  onClick={() => {
-                    setViewCardDialogOpen(false);
-                    setSelectedCard(null);
-                  }}
-                >
-                  Fechar
-                </Button>
-                {selectedCard?.projeto && (
-                  <Button 
-                    type="button"
-                    onClick={() => {
-                      setViewCardDialogOpen(false);
-                      navigate(ROUTES.projeto(String(selectedCard.projeto)));
-                    }}
-                  >
-                    Ir para Projeto
-                  </Button>
-                )}
-              </DialogFooter>
-            </form>
-          )}
-        </DialogContent>
-      </Dialog>
+        }}
+        card={selectedCard}
+        carregando={cardLoading}
+      />
 
       {/* Modal para definir prioridade da semana */}
       {isSupervisor && periodo === 'semana' && (

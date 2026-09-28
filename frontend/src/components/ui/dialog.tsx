@@ -11,6 +11,27 @@ interface DialogProps {
   containerClassName?: string;
 }
 
+/** Quem pediu menos movimento não recebe animação — e, sem animação, não há
+ *  `animationend`. Ver `fechar` abaixo. */
+function semMovimento() {
+  return !!window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches;
+}
+
+/**
+ * Rede de segurança para o desmonte, em milissegundos.
+ *
+ * O fechamento espera o `animationend`. Se a animação não rodar por qualquer
+ * motivo que não seja `prefers-reduced-motion` — CSS que não carregou, aba em
+ * segundo plano que engaveta animações, o nó recebendo `display: none` de um
+ * ancestral —, o evento nunca chega e o modal fica PRESO ABERTO, cobrindo a tela
+ * com um backdrop que não sai. Um painel lateral travado é um incômodo; um modal
+ * travado impede de usar o sistema.
+ *
+ * Folga generosa sobre os 140ms da animação: aqui o objetivo é não ser
+ * alcançado no caminho normal.
+ */
+const PRAZO_MAXIMO_DA_SAIDA = 400;
+
 /**
  * O BACKDROP COBRE A TELA INTEIRA, SEMPRE.
  *
@@ -20,21 +41,88 @@ interface DialogProps {
  * escurecido — e cobrava um preço visível: a faixa reservada tinha 488px e o
  * painel ocupa 480, então sobravam tiras sem desfoque acima, abaixo e à direita
  * dele, mostrando a página crua ao redor de um painel flutuante.
+ *
+ * ENTRA E SAI ANIMADO, e a saída é o que obrigou a estrutura abaixo.
+ *
+ * Antes era `if (!open) return null`: o modal aparecia e sumia no mesmo quadro.
+ * Animar a entrada seria trivial, mas a SAÍDA não: nó desmontado não anima, e
+ * desmontar no mesmo quadro em que a classe de saída entraria faz a animação
+ * nunca rodar. É a mesma armadilha documentada em `useTimelineRecolhivel`.
+ *
+ * Daí o estado interno: `open` é o que quem chama QUER, `renderizando` é o que
+ * está na tela. Quando `open` cai, o modal continua montado com a classe de
+ * saída, e só então desmonta.
  */
 const Dialog: React.FC<DialogProps> = ({ open, onOpenChange, children, containerClassName }) => {
-  if (!open) return null;
+  const [renderizando, setRenderizando] = React.useState(open);
+  const [saindo, setSaindo] = React.useState(false);
+
+  React.useEffect(() => {
+    if (open) {
+      setRenderizando(true);
+      setSaindo(false);
+      return;
+    }
+    // Já estava fechado: nada a animar. Sem esta guarda, montar o componente
+    // com `open=false` dispararia uma saída de um modal que nunca apareceu.
+    if (!renderizando) return;
+
+    if (semMovimento()) {
+      setRenderizando(false);
+      return;
+    }
+    setSaindo(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+
+  // A rede de segurança do desmonte. Vive num efeito próprio porque precisa ser
+  // cancelada quando o `animationend` chega primeiro — o caminho normal.
+  React.useEffect(() => {
+    if (!saindo) return;
+    const id = window.setTimeout(() => {
+      setSaindo(false);
+      setRenderizando(false);
+    }, PRAZO_MAXIMO_DA_SAIDA);
+    return () => window.clearTimeout(id);
+  }, [saindo]);
+
+  if (!renderizando) return null;
+
+  /**
+   * Fim da animação de SAÍDA — é aqui que o modal realmente desmonta.
+   *
+   * Duas armadilhas, as duas tratadas:
+   *
+   * 1. `animationend` BORBULHA. Qualquer filho animado (e o conteúdo dos modais
+   *    deste projeto anima: `card-entra`, `slot-entra`, e outros) dispararia
+   *    este handler e desmontaria o modal no meio da abertura. Daí a conferência
+   *    do alvo contra `currentTarget`.
+   * 2. A animação de ENTRADA também passa por aqui. Por isso só age com `saindo`.
+   */
+  const aoTerminarSaida = (e: React.AnimationEvent<HTMLDivElement>) => {
+    if (e.target !== e.currentTarget || !saindo) return;
+    setSaindo(false);
+    setRenderizando(false);
+  };
 
   const contentWrapperClassName = cn(
     'fixed left-1/2 top-1/2 z-[60] w-full -translate-x-1/2 -translate-y-1/2 px-4',
     containerClassName ?? 'max-w-lg',
+    saindo ? 'modal-sai' : 'modal-entra',
   );
 
   return (
     <>
       {createPortal(
         <div
-          className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm"
-          onClick={() => onOpenChange(false)}
+          className={cn(
+            'fixed inset-0 z-50 bg-black/50 backdrop-blur-sm',
+            saindo ? 'modal-fundo-sai' : 'modal-fundo-entra',
+          )}
+          // Clicar no fundo de um modal que já está saindo não deve pedir outro
+          // fechamento: o `pointer-events: none` da classe de saída já barra,
+          // e a guarda existe para o caso de a animação não rodar.
+          onClick={() => { if (!saindo) onOpenChange(false); }}
           aria-hidden
         />,
         document.body
@@ -43,6 +131,7 @@ const Dialog: React.FC<DialogProps> = ({ open, onOpenChange, children, container
         <div
           className={contentWrapperClassName}
           onClick={(e) => e.stopPropagation()}
+          onAnimationEnd={aoTerminarSaida}
         >
           {children}
         </div>,

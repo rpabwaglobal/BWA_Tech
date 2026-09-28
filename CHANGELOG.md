@@ -100,6 +100,70 @@ antes de reverter, e reverta a migração antes do código.
 
 ---
 
+## 2.7.0
+
+Data: 28/09/2026 · migração de banco: **não**
+
+Sobe o MENOR porque dá para fazer coisas que antes não dava: pontuar um card já
+entregue, filtrar o seletor por sprint e abrir o card em leitura de dentro do
+Score.
+
+### Score
+
+- **O score acompanha o card na virada da sprint.** Ele ficava no card da sprint
+  encerrada, e como a tela lê o status ao vivo do card apontado, mostrava o
+  status congelado no fechamento: quatro scores apareciam como "Em
+  Desenvolvimento", "Em Homologação" ou "A Desenvolver" para trabalho já
+  entregue. Cinco dos oito scores da base estavam presos em cards da Sprint 8.26.
+  **Há comando para corrigir o que já está gravado** — ver o fim desta entrada.
+- **Todo card pode receber nota.** Antes o seletor recusava card finalizado, com
+  o argumento de que não faz sentido pontuar algo concluído — e o efeito era o
+  oposto do que a tela promete: pontuar virava algo que alguém tinha de *lembrar*
+  de fazer antes de concluir. Eram 132 cards entregues fora do alcance na sprint
+  vigente, contra 59 dentro. Sprint encerrada e projeto arquivado também entram.
+- **Card de projeto de sistema não entra** (Sugestões, Suporte, Descartados,
+  Monitoramento de Feedbacks): não é trabalho entregue.
+- **O seletor carrega aos poucos**, conforme se rola, e a busca procura em
+  **todos** os cards e não só nos carregados. Sem isso a lista abria com 1515
+  previews de uma vez.
+- **Seletor de sprint** no "Atribuir Score", com as sprints em ordem cronológica.
+- **Clicar no card** abre-o em leitura, e o botão do rodapé abre **aquele card**
+  no quadro do projeto — antes navegava só para a página do projeto e deixava a
+  pessoa procurando.
+- **O modal de editar desenha o card igual ao de atribuir.** Ele dependia de
+  achar o card na lista do seletor, que excluía finalizado — justamente o card
+  que se costuma editar. Mostrava só o nome.
+- A tela **cabe na altura da janela**: a rolagem é da tabela, não da página.
+- Etiquetas de setor do mesmo tamanho, centradas e com inicial maiúscula; filtros
+  com a largura do próprio conteúdo e a busca ocupando a sobra; cabeçalhos de
+  Projeto, Setor, Status e Score centrados; contador "Mostrando x de x" removido.
+
+### Em todo o sistema
+
+- **Os modais abrem e fecham animados.** O componente desmontava no mesmo quadro
+  em que a animação de saída começaria, então ela nunca rodava. Vale para todos
+  os modais, porque o componente é um só. Quem pede menos movimento continua sem
+  animação.
+- **A flag de projeto de sistema atravessa a virada de sprint.** A replicação não
+  a copiava, então cada virada criava uma cópia de "Sugestões", "Suporte" e
+  "Descartados" como projeto de trabalho comum — 11 projetos estavam assim na
+  base, e **toda regra que depende dessa flag falhava em silêncio a partir da
+  Sprint 7.26**. **Há comando para corrigir o que já está gravado.**
+- O relatório de Gargalos contava os dias de atraso dos cards em aberto por
+  subtração crua, divergindo do relatório de Backlog para o mesmo card.
+
+### Depois do deploy, rodar na VPS
+
+```
+python manage.py corrigir_score_preso_em_card_replicado --aplicar
+python manage.py remarcar_projetos_de_sistema --aplicar
+```
+
+Os dois **simulam por padrão**: sem `--aplicar` apenas mostram o que fariam. O
+primeiro move 5 scores para o card vivo; o segundo remarca 11 projetos.
+
+---
+
 ## 2.6.12
 
 Data: 17/09/2026 · migração de banco: **não**

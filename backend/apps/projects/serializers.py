@@ -1778,13 +1778,31 @@ class CardScoreSerializer(serializers.ModelSerializer):
     instanciado sobre uma instância já persistida, para montar a resposta. Por
     isso ele não carrega o `_checar_destino_do_setor` dos irmãos. Se algum dia
     esses métodos voltarem ao padrão do DRF (`is_valid()` + `save()`), `card`
-    precisa do gate: a resposta traz `card_nome`, `card_status`,
-    `responsavel_name`, `responsavel_role`, `sprint_nome` e o `historico` inteiro.
+    precisa do gate: a resposta traz `card_nome`, `card_status`, a DESCRICAO e o
+    `script_url` do card, `responsavel_name`, `responsavel_role`, `sprint_nome` e
+    o `historico` inteiro. A listagem passa por `scope_card_scores` e exige
+    `manage_score`, e e isso que sustenta expor esse tanto.
     """
     valores = CardScoreValueSerializer(many=True, read_only=True)
     card_nome = serializers.CharField(source='card.nome', read_only=True)
     card_status = serializers.CharField(source='card.status', read_only=True)
     card_status_display = serializers.CharField(source='card.get_status_display', read_only=True)
+    # O RESTO DO CARD, para o modal de EDITAR desenhar o preview igual ao de
+    # atribuir. Antes ele dependia de achar o card em `pickable-cards`, que
+    # exclui card finalizado de proposito — ou seja, justamente o card que se
+    # costuma editar. O modal caia num texto com o nome e nada mais.
+    #
+    # Vem daqui e nao de uma segunda requisicao: a tela ja carrega a lista de
+    # scores inteira, e buscar o card de novo ao abrir o modal atrasaria a
+    # abertura pelo tempo da rede para mostrar dado que ja estava em maos.
+    card_prioridade = serializers.CharField(source='card.prioridade', read_only=True)
+    card_area = serializers.CharField(source='card.area', read_only=True)
+    card_area_display = serializers.CharField(source='card.get_area_display', read_only=True)
+    card_tipo = serializers.CharField(source='card.tipo', read_only=True)
+    card_tipo_display = serializers.CharField(source='card.get_tipo_display', read_only=True)
+    card_descricao = serializers.CharField(source='card.descricao', read_only=True)
+    card_data_fim = serializers.DateTimeField(source='card.data_fim', read_only=True)
+    card_script_url = serializers.CharField(source='card.script_url', read_only=True)
     setor_solicitante_display = serializers.CharField(
         source='get_setor_solicitante_display', read_only=True
     )
@@ -1801,6 +1819,9 @@ class CardScoreSerializer(serializers.ModelSerializer):
         model = CardScore
         fields = [
             'id', 'card', 'card_nome', 'card_status', 'card_status_display',
+            'card_prioridade', 'card_area', 'card_area_display',
+            'card_tipo', 'card_tipo_display', 'card_descricao',
+            'card_data_fim', 'card_script_url',
             'setor_solicitante', 'setor_solicitante_display',
             'score_final', 'valores', 'historico',
             'sprint_nome', 'sprint_em_andamento',

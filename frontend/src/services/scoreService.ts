@@ -1,4 +1,4 @@
-import api, { fetchAllPaginated } from './api';
+import api, { fetchAllPaginated, type PaginatedResponse } from './api';
 import { userService } from './userService';
 
 // ----------------------------------------------------------------------------
@@ -58,6 +58,17 @@ export type CardScore = {
   card_nome: string;
   card_status: string;
   card_status_display: string;
+  // O resto do card, para o modal de editar desenhar o preview igual ao de
+  // atribuir sem depender de `pickable-cards` — que exclui card finalizado, ou
+  // seja, justamente o card que se costuma editar.
+  card_prioridade: string | null;
+  card_area: string | null;
+  card_area_display: string | null;
+  card_tipo: string | null;
+  card_tipo_display: string | null;
+  card_descricao: string | null;
+  card_data_fim: string | null;
+  card_script_url: string | null;
   setor_solicitante: string | null;
   setor_solicitante_display: string | null;
   score_final: string;
@@ -162,8 +173,54 @@ export const scoreService = {
   },
 
   /** Lista leve de cards para o seletor (uma request, sem paginação). */
-  async getPickableCards(): Promise<PickableCard[]> {
-    const response = await api.get<PickableCard[]>('/card-scores/pickable-cards/');
+  /**
+   * Uma PAGINA de cards do seletor, filtrada NO SERVIDOR.
+   *
+   * Nao existe mais "todos os cards": eram 1515, ~1 MB, e o modal desenha um
+   * preview por card. Os filtros vao como parametro porque paginar e filtrar em
+   * memoria faria a busca enxergar so a pagina carregada — digitar o nome de um
+   * card da pagina 20 nao acharia nada, e pareceria que o card nao existe.
+   */
+  async getPickableCardsPage(params: {
+    q?: string;
+    responsavel?: string;
+    sprint?: string;
+    pageSize?: number;
+  } = {}): Promise<PaginatedResponse<PickableCard>> {
+    const response = await api.get<PaginatedResponse<PickableCard>>(
+      '/card-scores/pickable-cards/',
+      {
+        params: {
+          page_size: params.pageSize ?? 40,
+          ...(params.q ? { q: params.q } : {}),
+          ...(params.responsavel ? { responsavel: params.responsavel } : {}),
+          ...(params.sprint ? { sprint: params.sprint } : {}),
+        },
+      },
+    );
+    return response.data;
+  },
+
+  /** A proxima pagina, pelo `next` que a resposta anterior trouxe. */
+  async getPickableCardsNext(url: string): Promise<PaginatedResponse<PickableCard>> {
+    const response = await api.get<PaginatedResponse<PickableCard>>(url);
+    return response.data;
+  },
+
+  /**
+   * As opcoes dos filtros do seletor.
+   *
+   * Endpoint proprio porque elas NAO podem sair da pagina carregada: montar a
+   * lista de responsaveis varrendo os cards em maos funcionava quando o modal
+   * tinha todos. Paginando, o dropdown ofereceria so os das paginas buscadas, e
+   * um nome que falta num filtro nao parece defeito — parece que a pessoa nao
+   * tem card.
+   */
+  async getPickableFilters(): Promise<{
+    sprints: { value: string; label: string }[];
+    responsaveis: { value: string; label: string; role: string }[];
+  }> {
+    const response = await api.get('/card-scores/pickable-filters/');
     return response.data;
   },
 

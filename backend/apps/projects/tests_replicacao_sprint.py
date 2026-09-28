@@ -224,3 +224,227 @@ class ReplicacaoDeCardEntreSprintsTests(APITestCase):
         self.assertEqual(novo.responsavel, self.dev)
         self.assertEqual(novo.projeto, self.projeto_novo)
         self.assertEqual(novo.created_at, card.created_at)
+
+
+# O PONTO CEGO DA TRAVA ACIMA. `test_nenhum_campo_novo_escapa_da_replicacao`
+# pula relacoes reversas de proposito ("relacao reversa, nao e campo do card"),
+# e foi exatamente ali que o SCORE se perdeu: um OneToOne que ficava no card da
+# sprint encerrada, fazendo a tela de Score exibir o status congelado no
+# fechamento. Quatro scores apareciam como em desenvolvimento / em homologacao /
+# a desenvolver para trabalho ja entregue.
+#
+# Cada relacao abaixo tem a razao VERIFICADA de nao atravessar. Onde o
+# comportamento e so o atual e nao uma decisao, esta escrito que e.
+RELACOES_QUE_NAO_ATRAVESSAM = {
+    'events': (
+        'Tabela sem uso: 0 linhas na base inteira quando isto foi medido.'
+    ),
+    'weekly_priorities': (
+        'Prioridade e da SEMANA, nao do card. Atravessar faria a prioridade de '
+        'uma semana encerrada reaparecer na seguinte sem ninguem escolher.'
+    ),
+    'pedido_feedback': (
+        'O pedido nasce na CONCLUSAO do card. A copia existe justamente porque '
+        'o trabalho nao terminou, entao nao ha pedido para levar.'
+    ),
+    'pedido_exibido': (
+        'Mesmo motivo de `pedido_feedback` — e a outra ponta do mesmo OneToOne.'
+    ),
+    'reopen_requests': (
+        'Pedido de reabertura e de um card concluido, e card concluido nao e '
+        'replicado. Medido: 0 linhas na base.'
+    ),
+    'due_date_change_requests': (
+        'Pedido resolvido e historico e fica com o card da sprint em que foi '
+        'decidido. Medido na base: 101 aprovados, 9 recusados, ZERO pendentes. '
+        'ATENCAO: se um dia houver pendente, ele fica orfao no card morto. '
+        'Isso e o comportamento atual, nao uma decisao tomada.'
+    ),
+    'pins': (
+        'COMPORTAMENTO ATUAL, NAO DECISAO. O pin e do usuario (tela Meus '
+        'Afazeres). Se um card fixado for replicado, o pin fica no card da '
+        'sprint encerrada e a pessoa passa a acompanhar o card morto: o mesmo '
+        'defeito do score. Medido: 3 pins na base, todos em cards que sao o '
+        'ultimo da propria cadeia, entao HOJE nao ha ninguem afetado.'
+    ),
+}
+
+# Relacoes que ATRAVESSAM, mas por um caminho que a varredura nao reconhece
+# sozinha. Ficam separadas de proposito: por-las no dicionario acima diria que
+# nao atravessam, e seria mentira.
+RELACOES_COBERTAS_INDIRETAMENTE = {
+    'compartilhamentos': (
+        'E a tabela `through` do M2M `setores_compartilhados`, que a replicacao '
+        'copia com `novo.setores_compartilhados.set(...)`. A relacao reversa '
+        'nunca e tocada pelo nome.'
+    ),
+}
+
+
+class ScoreAtravessaAViradaTests(APITestCase):
+    """O score acompanha o TRABALHO, nao a linha de banco daquela semana."""
+
+    def setUp(self):
+        self.admin = User.objects.create_user(
+            username='admin_score_repl', email='admin.score.repl@example.com',
+            password='x' * 12, role='admin', is_superuser=True, is_staff=True)
+        self.setor = SetorCatalogo.objects.create(
+            codename='setor_score_repl', nome='Score Repl')
+
+        agora = timezone.now()
+        self.sprint_velha = Sprint.objects.create(
+            nome='Encerra', data_inicio=agora - dt.timedelta(days=10),
+            fechamento_em=agora - dt.timedelta(days=1), duracao_dias=9,
+            supervisor=self.admin, setor=self.setor)
+        self.sprint_nova = Sprint.objects.create(
+            nome='Seguinte', data_inicio=agora - dt.timedelta(hours=1),
+            fechamento_em=agora + dt.timedelta(days=7), duracao_dias=8,
+            supervisor=self.admin, setor=self.setor)
+        self.projeto_velho = Project.objects.create(
+            nome='Projeto', sprint=self.sprint_velha, setor=self.setor)
+        self.projeto_novo = Project.objects.create(
+            nome='Projeto', sprint=self.sprint_nova, setor=self.setor)
+
+    def _card_com_score(self, nota='7.50'):
+        from decimal import Decimal
+
+        from apps.projects.models import (
+            CardScore, ScoreHistory, ScoreHistoryAction,
+        )
+
+        card = Card.objects.create(
+            nome='Trabalho pontuado', projeto=self.projeto_velho,
+            status=CardStatus.EM_DESENVOLVIMENTO, criado_por=self.admin)
+        score = CardScore.objects.create(
+            card=card, score_final=Decimal(nota), setor_solicitante='comercial',
+            criado_por=self.admin)
+        ScoreHistory.objects.create(
+            card=card, acao=ScoreHistoryAction.choices[0][0],
+            score_final=Decimal(nota), usuario=self.admin)
+        return card, score
+
+    def _replicar(self, card):
+        return _replicar_card_para_sprint(
+            card, self.projeto_novo, self.sprint_velha, self.sprint_nova,
+            usuario_fechamento=self.admin,
+        )
+
+    # -- o defeito relatado ----------------------------------------------
+
+    def test_o_score_acompanha_o_card_na_virada(self):
+        """O caso da tela: score no card novo, nao no da sprint encerrada."""
+        from apps.projects.models import CardScore
+
+        card, score = self._card_com_score()
+        novo = self._replicar(card)
+
+        score.refresh_from_db()
+        self.assertEqual(
+            score.card_id, novo.id,
+            'o score ficou no card da sprint encerrada')
+        self.assertFalse(
+            CardScore.objects.filter(card=card).exists(),
+            'o score foi COPIADO em vez de movido: a nota apareceria duas '
+            'vezes na tela e contaria duas vezes em qualquer soma')
+
+    def test_o_status_que_a_tela_mostra_e_o_do_card_vivo(self):
+        """A consequencia visivel, e a razao da reclamacao.
+
+        O card antigo congela em 'em_desenvolvimento' no fechamento. Se o score
+        ficasse nele, a tela de Score mostraria isso para sempre, mesmo depois
+        de o trabalho ser entregue na sprint seguinte.
+        """
+        card, score = self._card_com_score()
+        novo = self._replicar(card)
+
+        novo.status = CardStatus.FINALIZADO
+        novo.save(update_fields=['status'])
+
+        score.refresh_from_db()
+        self.assertEqual(score.card.status, CardStatus.FINALIZADO)
+        self.assertEqual(
+            card.status, CardStatus.EM_DESENVOLVIMENTO,
+            'o card da sprint encerrada deve continuar congelado, ele e '
+            'historico')
+
+    def test_o_historico_do_score_vai_junto(self):
+        """A coluna Historico do Score sai de `card.score_historico`.
+
+        Deixa-lo atras esvaziaria a coluna no card que passou a carregar o
+        score: o dado existiria, mas em nome de ninguem.
+        """
+        from apps.projects.models import ScoreHistory
+
+        card, _ = self._card_com_score()
+        novo = self._replicar(card)
+
+        self.assertEqual(ScoreHistory.objects.filter(card=novo).count(), 1)
+        self.assertEqual(ScoreHistory.objects.filter(card=card).count(), 0)
+
+    def test_card_sem_score_nao_quebra_a_replicacao(self):
+        """A maioria dos cards nao tem score; o caminho tem de ser silencioso."""
+        from apps.projects.models import CardScore
+
+        card = Card.objects.create(
+            nome='Sem nota', projeto=self.projeto_velho,
+            status=CardStatus.EM_DESENVOLVIMENTO, criado_por=self.admin)
+
+        novo = self._replicar(card)
+
+        self.assertIsNotNone(novo.pk)
+        self.assertFalse(CardScore.objects.filter(card=novo).exists())
+        self.assertFalse(CardScore.objects.filter(card=card).exists())
+
+    def test_mover_o_score_nao_marca_como_reavaliado(self):
+        """`updated_at` do score nao sobe: mover o ponteiro nao e reavaliar.
+
+        Se subisse, a ordenacao da tela (`-updated_at`) colocaria todo card
+        replicado no topo como se alguem tivesse acabado de pontuar.
+        """
+        card, score = self._card_com_score()
+        antes = score.updated_at
+
+        self._replicar(card)
+
+        score.refresh_from_db()
+        self.assertEqual(
+            score.updated_at, antes,
+            'o `update()` virou `save()` em algum lugar e o auto_now disparou')
+
+    # -- a trava, agora cobrindo o que faltava ---------------------------
+
+    def test_nenhuma_relacao_nova_escapa_da_replicacao(self):
+        """O irmao de `test_nenhum_campo_novo_escapa_da_replicacao`.
+
+        Aquele cobre CAMPOS e pula relacoes reversas de proposito. Este cobre as
+        relacoes reversas, que e onde o score se perdeu. Para passar, a relacao
+        nova precisa ser tratada na replicacao ou declarada em
+        `RELACOES_QUE_NAO_ATRAVESSAM` com a razao.
+        """
+        import inspect
+
+        from apps.projects import services
+
+        fonte = inspect.getsource(services)
+        esquecidas = []
+        for rel in Card._meta.get_fields():
+            if not (rel.auto_created and not rel.concrete):
+                continue  # campo do card, coberto pelo outro teste
+            nome = rel.get_accessor_name()
+            if nome in RELACOES_QUE_NAO_ATRAVESSAM:
+                continue
+            if nome in RELACOES_COBERTAS_INDIRETAMENTE:
+                continue
+            # Tratada na replicacao? O accessor ou o modelo tem de aparecer em
+            # services.py.
+            modelo = rel.related_model.__name__
+            if ('origem.' + nome) in fonte or (modelo + '.objects') in fonte:
+                continue
+            esquecidas.append(nome + ' (' + modelo + ')')
+
+        self.assertEqual(
+            esquecidas, [],
+            'Relacao(oes) do Card fora da replicacao de sprint: %s. Trate em '
+            '`_replicar_card_para_sprint` ou declare em '
+            '`RELACOES_QUE_NAO_ATRAVESSAM` explicando por que nao atravessa.'
+            % ', '.join(esquecidas))

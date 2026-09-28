@@ -979,3 +979,89 @@ body.arrastando * {
   border-top: 1px solid transparent;
   border-image: var(--degrade-separador-esvanecido) 1;
 }
+
+/* ── Modal entrando e saindo ─────────────────────────────────────────────
+   O `Dialog` deste projeto fazia `if (!open) return null`: aparecia e sumia no
+   mesmo quadro. Animar a SAÍDA foi o que obrigou a mexer nele, porque nó
+   desmontado não anima — a mesma armadilha que `useTimelineRecolhivel` descreve,
+   e a razão de o desmonte agora esperar o `animationend`.
+
+   O modal nasce do CENTRO, um pouco menor e um pouco abaixo, e volta pelo mesmo
+   caminho. Não vem de uma borda porque não mora em nenhuma: ele é o assunto da
+   tela enquanto está aberto.
+
+   180ms para entrar e 140ms para sair. Saída mais curta de propósito — quem
+   fechou já decidiu, e esperar a animação de quem está indo embora é o tipo de
+   atraso que faz a interface parecer lenta. Curvas diferentes pelo mesmo motivo:
+   `(0.22, 1, 0.36, 1)` desacelera na chegada, `(0.4, 0, 1, 1)` acelera na
+   partida.
+
+   `scale` E `translateY` juntos, com pouca amplitude nos dois: só escala parece
+   um pop-up de anúncio, só deslocamento parece que o modal escorregou. */
+@keyframes modal-entra {
+  from { opacity: 0; transform: translateY(8px) scale(0.97); }
+  to   { opacity: 1; transform: none; }
+}
+@keyframes modal-sai {
+  from { opacity: 1; transform: none; }
+  to   { opacity: 0; transform: translateY(8px) scale(0.97); }
+}
+.modal-entra {
+  animation: modal-entra 180ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.modal-sai {
+  animation: modal-sai 140ms cubic-bezier(0.4, 0, 1, 1) forwards;
+  /* O modal que está saindo não recebe clique: nos 140ms finais ele ainda está
+     na tela, e um clique ali acertaria um botão de um diálogo já fechado. */
+  pointer-events: none;
+}
+
+/* O FUNDO ACOMPANHA, mas só no opacity. Animar o `backdrop-blur` custa caro e
+   o desfoque em transição aparece como um tremor na página inteira. */
+@keyframes modal-fundo-entra {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+@keyframes modal-fundo-sai {
+  from { opacity: 1; }
+  to   { opacity: 0; }
+}
+.modal-fundo-entra {
+  animation: modal-fundo-entra 180ms ease-out both;
+}
+.modal-fundo-sai {
+  animation: modal-fundo-sai 140ms ease-in forwards;
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* Quem pede menos movimento não passa por aqui: o `Dialog` desmonta direto,
+     em JS, porque sem animação não há `animationend` e o modal ficaria preso
+     aberto para sempre. Estas regras são a segunda trava, para o caso de a
+     animação rodar mesmo assim. */
+  .modal-entra,
+  .modal-sai,
+  .modal-fundo-entra,
+  .modal-fundo-sai { animation: none; }
+  .modal-sai,
+  .modal-fundo-sai { opacity: 0; }
+}
+
+/* ── Etiqueta de setor ───────────────────────────────────────────────────
+   Todas do mesmo tamanho, conteúdo centrado, inicial maiúscula.
+
+   `min-width` e não `width`: um setor de nome longo precisa poder crescer, e
+   cortar o texto para manter a grade seria trocar informação por alinhamento.
+   O piso resolve o que incomodava — etiquetas de uma palavra curta ficavam
+   visivelmente menores que as vizinhas na mesma coluna.
+
+   `capitalize` só levanta a primeira letra de cada palavra; ele NÃO baixa o
+   resto, então um setor gravado como "RH" continua "RH" em vez de virar "Rh". */
+.etiqueta-setor {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 7.5rem;
+  text-align: center;
+  text-transform: capitalize;
+}

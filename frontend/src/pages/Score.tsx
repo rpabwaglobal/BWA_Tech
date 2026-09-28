@@ -31,6 +31,8 @@ import {
 import { FilterSelect } from '@/components/ui/filter-select';
 import { FilterMultiSelect } from '@/components/ui/filter-multi-select';
 import { KanbanCardPreview } from '@/components/KanbanCardPreview';
+import { VerCardModal } from '@/components/VerCardModal';
+import { cardService, type Card as CardType } from '@/services/cardService';
 import type { KanbanCardPreviewData } from '@/components/KanbanCardPreview';
 import { scoreService } from '@/services/scoreService';
 import type {
@@ -82,13 +84,69 @@ const criterioHeader = (nome: string): string => COLUNA_CRITERIO[nome] ?? nome;
 // ===========================================================================
 // Página
 // ===========================================================================
+/**
+ * Campo de filtro com a largura da OPCAO MAIS LARGA, nunca menos.
+ *
+ * O pedido era "caber exatamente o conteudo interno e a barra nao ficar menor".
+ * `w-fit` no gatilho resolveria a primeira metade e estragaria tudo: o gatilho
+ * mostra o rotulo da opcao ESCOLHIDA, entao a largura mudaria a cada selecao e
+ * a barra inteira reflowaria no clique.
+ *
+ * Dai o medidor: uma camada invisivel com TODOS os rotulos empilhados na mesma
+ * celula de grade que o campo. A coluna nasce com a largura do mais largo, o
+ * campo ocupa essa largura, e escolher uma opcao curta nao encolhe nada. Sem
+ * `truncate` em lugar nenhum, porque a largura ja e suficiente por construcao.
+ *
+ * `h-0 overflow-hidden` no medidor: altura zero para nao empurrar o layout, mas
+ * o texto continua contribuindo para a largura `max-content` da coluna — e a
+ * altura da linha vem do campo de verdade.
+ *
+ * As folgas sao a geometria do gatilho do `FilterSelect`, somada: `px-[12px]`
+ * dos dois lados, mais o X de limpar (16) + gap (4) + a seta (16) + `ml-2` (8)
+ * a direita. Com badge de papel entra tambem o `w-[64px]` dele e o `gap-2`.
+ */
+function CampoDeFiltro({
+  rotulo,
+  opcoes,
+  placeholder,
+  comBadgeDePapel = false,
+  children,
+}: {
+  rotulo: string;
+  opcoes: { value: string; label: string }[];
+  placeholder: string;
+  comBadgeDePapel?: boolean;
+  children: React.ReactNode;
+}) {
+  // 12 (px esquerdo) + 12 (px direito) + 44 (X + seta + ml) = 68
+  // com badge de papel: + 64 (largura fixa do badge) + 8 (gap) = 140
+  const folga = comBadgeDePapel ? 'pl-[12px] pr-[128px]' : 'pl-[12px] pr-[56px]';
+  return (
+    <div className="shrink-0 min-w-[120px]">
+      <Label className="mb-1.5 block">{rotulo}</Label>
+      <div className="grid">
+        <div aria-hidden className="col-start-1 row-start-1 h-0 overflow-hidden">
+          {[{ value: '__ph__', label: placeholder }, ...opcoes].map((o) => (
+            <div key={o.value} className={`whitespace-nowrap text-sm ${folga}`}>
+              {o.label}
+            </div>
+          ))}
+        </div>
+        <div className="col-start-1 row-start-1">{children}</div>
+      </div>
+    </div>
+  );
+}
+
 export default function Score() {
   const [criterios, setCriterios] = useState<ScoreCriterion[]>([]);
   const [scores, setScores] = useState<CardScore[]>([]);
-  const [cards, setCards] = useState<PickableCard[]>([]);
+  // A PAGINA NAO CARREGA MAIS CARDS. Eram 1515 numa requisicao so, buscados no
+  // `mount` mesmo para quem nunca abrisse o modal. Quem precisa da lista e o
+  // `ScoreFormDialog`, e ele busca por pagina quando abre.
   const [setores, setSetores] = useState<SetorSolicitanteOption[]>([]);
   const [loading, setLoading] = useState(true);
-  const [cardsLoading, setCardsLoading] = useState(true);
+
   const [error, setError] = useState<string | null>(null);
 
   const [formOpen, setFormOpen] = useState(false);
@@ -212,22 +270,8 @@ export default function Score() {
     }
   };
 
-  // Cards do seletor: endpoint leve (uma request, sem paginação), em background.
-  const loadCards = async () => {
-    try {
-      setCardsLoading(true);
-      const crd = await scoreService.getPickableCards();
-      setCards(crd);
-    } catch (e) {
-      console.error('Erro ao carregar cards do seletor:', e);
-    } finally {
-      setCardsLoading(false);
-    }
-  };
-
   useEffect(() => {
     loadCore();
-    loadCards();
   }, []);
 
   const openNew = () => {
@@ -241,13 +285,11 @@ export default function Score() {
   };
 
   // Atualiza o estado local após salvar — sem recarregar nada (instantâneo).
+  //
+  // Nao mexe mais na lista do seletor: ela vive dentro do modal e e buscada a
+  // cada abertura, entao a nota nova ja chega do servidor na proxima vez.
   const applySavedScore = (saved: CardScore) => {
     setScores((prev) => [saved, ...prev.filter((s) => String(s.card) !== String(saved.card))]);
-    setCards((prev) =>
-      prev.map((c) =>
-        String(c.id) === String(saved.card) ? { ...c, score_final: saved.score_final } : c,
-      ),
-    );
   };
 
   const confirmDelete = async () => {
@@ -257,11 +299,9 @@ export default function Score() {
       setDeleting(true);
       await scoreService.deleteScore(alvo.id);
       setScores((prev) => prev.filter((s) => s.id !== alvo.id));
-      setCards((prev) =>
-        prev.map((c) =>
-          String(c.id) === String(alvo.card) ? { ...c, score_final: null } : c,
-        ),
-      );
+      // A lista do seletor nao e mais tocada daqui: ela vive dentro do modal e e
+      // buscada por pagina a cada abertura, entao a nota removida ja vem ausente
+      // do servidor na proxima vez.
       setScoreToDelete(null);
     } catch (e) {
       console.error('Erro ao excluir score:', e);
@@ -272,7 +312,26 @@ export default function Score() {
   };
 
   return (
-    <TelaComCarregamento carregando={loading} mensagem="Carregando Score…" className="flex flex-col gap-[16px] flex-1 min-h-0">
+    // ALTURA CRAVADA, e nao `flex-1 min-h-0`.
+    //
+    // `flex-1 min-h-0` parecia bastar e nao bastava: o `Layout` usa
+    // `min-h-screen`, que e um MINIMO — a cadeia cresce com o conteudo, entao
+    // `flex-1` nunca ganha um teto e a PAGINA rolava em vez da tabela. Somando,
+    // `TelaComCarregamento` ainda poe a `className` num div interno, atras de um
+    // `pagina-entra relative` sem flex, o que quebra a cadeia de novo.
+    //
+    // 128px = o header (64) mais o `p-[32px]` do `main` em cima e embaixo. E o
+    // mesmo calculo de Support, GeekDay, Reports, ProjectDetails e SprintDetails
+    // — cinco telas que chegaram a esta conclusao antes desta.
+    //
+    // `overflow-hidden` no container e o que empurra a rolagem para dentro: sem
+    // ele, a tabela larga estouraria a altura cravada e a barra voltaria para a
+    // pagina.
+    <TelaComCarregamento
+      carregando={loading}
+      mensagem="Carregando Score…"
+      className="flex h-[calc(100vh-64px-64px)] max-h-[calc(100vh-64px-64px)] min-h-0 min-w-0 flex-col gap-[16px] overflow-hidden"
+    >
       <div className="flex items-start justify-between gap-4 flex-wrap shrink-0">
         <div>
           <h1 className="text-3xl font-bold tracking-tight flex items-center gap-2">
@@ -284,7 +343,12 @@ export default function Score() {
             seu peso e sinal.
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        {/* `self-end` desce os botoes para a base do cabecalho, junto do card de
+            filtros. Com `items-start` eles ficavam no alto, alinhados ao titulo,
+            com a altura inteira do subtitulo de distancia do que vem abaixo. E
+            `self-end` e nao `items-end` no pai para que o bloco do titulo
+            continue ancorado no topo. */}
+        <div className="flex items-center gap-2 self-end">
           <Button variant="outline" onClick={() => setConfigOpen(true)}>
             <Settings2 className="h-4 w-4 mr-2" />
             Configurar formulário
@@ -305,7 +369,10 @@ export default function Score() {
       {/* Barra de filtros */}
       <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-card)] p-4 shrink-0">
         <div className="flex flex-wrap items-end gap-3">
-          <div className="flex-1 min-w-[280px]">
+          {/* A busca absorve o que os tres filtros devolveram ao caber no
+              proprio conteudo. `min-w` maior para que ela seja a ultima a
+              quebrar linha quando a janela aperta. */}
+          <div className="flex-1 min-w-[360px]">
             <Label className="mb-1.5 block">Projeto</Label>
             <div className="relative">
               <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-4 w-4 text-[var(--color-muted-foreground)]" />
@@ -317,8 +384,12 @@ export default function Score() {
               />
             </div>
           </div>
-          <div className="w-[280px]">
-            <Label className="mb-1.5 block">Responsável</Label>
+          <CampoDeFiltro
+            rotulo="Responsável"
+            opcoes={responsavelOptions}
+            placeholder="Todos"
+            comBadgeDePapel
+          >
             <FilterSelect
               options={responsavelOptions}
               value={respFilter}
@@ -326,18 +397,16 @@ export default function Score() {
               placeholder="Todos"
               searchPlaceholder="Buscar responsável..."
             />
-          </div>
-          <div className="w-[200px]">
-            <Label className="mb-1.5 block">Status</Label>
+          </CampoDeFiltro>
+          <CampoDeFiltro rotulo="Status" opcoes={statusOptions} placeholder="Todos">
             <FilterSelect
               options={statusOptions}
               value={statusFilter}
               onChange={setStatusFilter}
               placeholder="Todos"
             />
-          </div>
-          <div className="w-[200px]">
-            <Label className="mb-1.5 block">Score</Label>
+          </CampoDeFiltro>
+          <CampoDeFiltro rotulo="Score" opcoes={scoreRangeOptions} placeholder="Todos">
             <FilterMultiSelect
               options={scoreRangeOptions}
               value={scoreRanges}
@@ -345,7 +414,7 @@ export default function Score() {
               placeholder="Todos"
               searchPlaceholder="Buscar faixa..."
             />
-          </div>
+          </CampoDeFiltro>
           <label className="flex items-center gap-2 h-10 cursor-pointer">
             <Switch checked={sprintEmAndamento} onCheckedChange={setSprintEmAndamento} />
             <span className="text-sm">Sprint em andamento</span>
@@ -366,8 +435,8 @@ export default function Score() {
         <table className="w-full text-sm">
           <thead className="sticky top-0 z-10 bg-[var(--color-card)]">
             <tr className="border-b border-[var(--color-border)] text-left">
-              <th className="px-4 py-3 font-semibold">Projeto</th>
-              <th className="px-4 py-3 font-semibold">Setor</th>
+              <th className="px-4 py-3 font-semibold text-center">Projeto</th>
+              <th className="px-4 py-3 font-semibold text-center">Setor</th>
               {criteriosAtivos.map((c) => (
                 <th key={c.id} className="px-3 py-3 font-semibold text-center whitespace-nowrap">
                   {criterioHeader(c.nome)}
@@ -377,7 +446,7 @@ export default function Score() {
                 </th>
               ))}
               <th className="px-4 py-3 font-semibold text-center">Score</th>
-              <th className="px-4 py-3 font-semibold">Status</th>
+              <th className="px-4 py-3 font-semibold text-center">Status</th>
               <th className="px-4 py-3 font-semibold text-right">Ações</th>
             </tr>
           </thead>
@@ -434,8 +503,10 @@ export default function Score() {
                           </span>
                         </div>
                       </td>
-                      <td className="px-4 py-3">
-                        {setorLabel(score.setor_solicitante, setores)}
+                      <td className="px-4 py-3 text-center">
+                        <Badge variant="outline" className="etiqueta-setor whitespace-nowrap">
+                          {setorLabel(score.setor_solicitante, setores)}
+                        </Badge>
                       </td>
                       {criteriosAtivos.map((c) => (
                         <td key={c.id} className="px-3 py-3 text-center">
@@ -445,7 +516,7 @@ export default function Score() {
                       <td className="px-4 py-3 text-center">
                         <Badge className="text-sm font-semibold">{fmtScore(score.score_final)}</Badge>
                       </td>
-                      <td className="px-4 py-3">
+                      <td className="px-4 py-3 text-center">
                         <Badge
                           variant="outline"
                           className="w-[176px] justify-center whitespace-nowrap"
@@ -487,20 +558,11 @@ export default function Score() {
         </table>
       </div>
 
-      {filteredScores.length > 0 && (
-        <div className="text-xs text-[var(--color-muted-foreground)] shrink-0">
-          Mostrando {Math.min(visibleCount, filteredScores.length)} de {filteredScores.length} score(s)
-          {filteredScores.length !== scores.length && ` (${scores.length} no total)`}
-        </div>
-      )}
-
       {formOpen && (
         <ScoreFormDialog
           open={formOpen}
           onClose={() => setFormOpen(false)}
           criterios={criteriosAtivos}
-          cards={cards}
-          cardsLoading={cardsLoading}
           scores={scores}
           setores={setores}
           existing={editing}
@@ -563,13 +625,11 @@ export default function Score() {
 // Dialog: Atribuir / Editar Score
 // ===========================================================================
 function ScoreFormDialog({
-  open, onClose, criterios, cards, cardsLoading, scores, setores, existing, onSaved,
+  open, onClose, criterios, scores, setores, existing, onSaved,
 }: {
   open: boolean;
   onClose: () => void;
   criterios: ScoreCriterion[];
-  cards: PickableCard[];
-  cardsLoading: boolean;
   scores: CardScore[];
   setores: SetorSolicitanteOption[];
   existing: CardScore | null;
@@ -600,9 +660,148 @@ function ScoreFormDialog({
     }
   }, [cardId, existing, scores]);
 
-  // Browser de cards (modo criação)
+  // ------------------------------------------------------------------
+  // Browser de cards (modo criação): PAGINADO, e filtrado no SERVIDOR.
+  //
+  // Era uma lista completa em memória. Quando o seletor deixou de recusar card
+  // concluído e sprint encerrada, virou 1515 cards e ~1 MB — e o modal desenha
+  // um preview por card, então a abertura travava.
+  //
+  // A filtragem TEM de ser no servidor. Paginar e continuar filtrando em
+  // memória faria a busca enxergar só a página carregada: o nome de um card da
+  // página 20 não acharia nada, e pareceria que o card não existe.
+  // ------------------------------------------------------------------
   const [search, setSearch] = useState('');
   const [respFilter, setRespFilter] = useState('');
+  const [sprintFilter, setSprintFilter] = useState('');
+
+  const [cards, setCards] = useState<PickableCard[]>([]);
+  const [proximaPagina, setProximaPagina] = useState<string | null>(null);
+  const [totalDeCards, setTotalDeCards] = useState(0);
+  const [carregandoPrimeira, setCarregandoPrimeira] = useState(false);
+  const [carregandoMais, setCarregandoMais] = useState(false);
+
+  const [opcoesDeSprint, setOpcoesDeSprint] = useState<{ value: string; label: string }[]>([]);
+  const [opcoesDeResponsavel, setOpcoesDeResponsavel] = useState<
+    { value: string; label: string; role: string }[]
+  >([]);
+
+  /** Guarda o pedido em voo para descartar resposta de filtro que já mudou. */
+  const pedidoAtual = useRef(0);
+
+  // O card aberto para LEITURA, ao clicar no preview do modo editar.
+  //
+  // Busca o card completo: o preview desenhado aqui vem do score, que carrega o
+  // suficiente para o cartão mas não os links nem o resto que o modal de leitura
+  // mostra. Abre ANTES da busca — o próprio modal tem o ramo de carregamento, e
+  // esperar o `await` deixaria o clique um a dois segundos sem resposta na tela.
+  const [lendoCard, setLendoCard] = useState(false);
+  const [cardParaLeitura, setCardParaLeitura] = useState<CardType | null>(null);
+  const [carregandoLeitura, setCarregandoLeitura] = useState(false);
+
+  const abrirCardParaLeitura = useCallback(async () => {
+    if (!cardId) return;
+    setLendoCard(true);
+    setCardParaLeitura(null);
+    setCarregandoLeitura(true);
+    try {
+      setCardParaLeitura(await cardService.getById(String(cardId)));
+    } catch (e) {
+      console.error('Erro ao carregar o card para leitura:', e);
+    } finally {
+      setCarregandoLeitura(false);
+    }
+  }, [cardId]);
+
+  // As OPÇÕES dos filtros vêm de endpoint próprio, uma vez por abertura.
+  //
+  // Montá-las varrendo os cards carregados foi o que existia antes, e funcionava
+  // porque ele tinha todos. Paginando, o dropdown ofereceria só os responsáveis
+  // das páginas buscadas — a mesma armadilha da busca, e mais silenciosa: um
+  // nome que falta num filtro não parece defeito, parece que a pessoa não tem
+  // card.
+  useEffect(() => {
+    if (!open || existing) return;
+    let vivo = true;
+    scoreService
+      .getPickableFilters()
+      .then((f) => {
+        if (!vivo) return;
+        setOpcoesDeSprint(f.sprints);
+        setOpcoesDeResponsavel(f.responsaveis);
+      })
+      .catch((e) => console.error('Erro ao carregar filtros do seletor:', e));
+    return () => {
+      vivo = false;
+    };
+  }, [open, existing]);
+
+  // A PRIMEIRA PÁGINA, a cada mudança de filtro.
+  //
+  // A busca espera 300 ms: sem isso, cada letra digitada vira uma requisição, e
+  // as respostas podem chegar fora de ordem. O contador em `pedidoAtual` resolve
+  // o resto — resposta de um filtro antigo que chega atrasada é descartada em
+  // vez de sobrescrever a lista certa.
+  //
+  // No modo EDITAR não busca nada: o card vem do próprio score, e carregar a
+  // lista ali seria puro desperdício.
+  useEffect(() => {
+    if (!open || existing) return;
+
+    const meuPedido = ++pedidoAtual.current;
+    const espera = search.trim() ? 300 : 0;
+
+    setCarregandoPrimeira(true);
+    const id = window.setTimeout(() => {
+      scoreService
+        .getPickableCardsPage({
+          q: search.trim(),
+          responsavel: respFilter,
+          sprint: sprintFilter,
+        })
+        .then((r) => {
+          if (meuPedido !== pedidoAtual.current) return;
+          setCards(r.results);
+          setProximaPagina(r.next);
+          setTotalDeCards(r.count);
+        })
+        .catch((e) => {
+          if (meuPedido !== pedidoAtual.current) return;
+          console.error('Erro ao carregar cards do seletor:', e);
+          setCards([]);
+          setProximaPagina(null);
+          setTotalDeCards(0);
+        })
+        .finally(() => {
+          if (meuPedido === pedidoAtual.current) setCarregandoPrimeira(false);
+        });
+    }, espera);
+
+    return () => window.clearTimeout(id);
+  }, [open, existing, search, respFilter, sprintFilter]);
+
+  /** Próxima página, chamada pela rolagem. */
+  const carregarMais = useCallback(() => {
+    if (!proximaPagina || carregandoMais || carregandoPrimeira) return;
+    const meuPedido = pedidoAtual.current;
+    setCarregandoMais(true);
+    scoreService
+      .getPickableCardsNext(proximaPagina)
+      .then((r) => {
+        // Filtro mudou no meio do caminho: esta página é de outra pergunta.
+        if (meuPedido !== pedidoAtual.current) return;
+        setCards((prev) => {
+          // A REPLICAÇÃO DE SPRINT COPIA `created_at`, então cards empatam na
+          // ordenação. O backend desempata por `-id`, e esta guarda é a segunda
+          // trava: um id repetido viraria `key` duplicada no React.
+          const vistos = new Set(prev.map((c) => String(c.id)));
+          return [...prev, ...r.results.filter((c) => !vistos.has(String(c.id)))];
+        });
+        setProximaPagina(r.next);
+      })
+      .catch((e) => console.error('Erro ao carregar mais cards:', e))
+      .finally(() => setCarregandoMais(false));
+  }, [proximaPagina, carregandoMais, carregandoPrimeira]);
 
   const preview = computeScore(criterios, valores);
   const canSave = cardId !== '' && !saving;
@@ -611,7 +810,6 @@ function ScoreFormDialog({
     () => cards.find((c) => String(c.id) === String(cardId)) ?? null,
     [cards, cardId],
   );
-
   // O setor gravado pode ter saído do catálogo desde então; mantê-lo na lista
   // evita que reabrir o score apague em silêncio quem pediu a demanda.
   const setorOptions = useMemo(() => {
@@ -619,28 +817,8 @@ function ScoreFormDialog({
     return [...setores, { value: setor, label: setor }];
   }, [setores, setor]);
 
-  const responsavelOptions = useMemo(() => {
-    const map = new Map<string, { label: string; role: string }>();
-    for (const c of cards) {
-      if (c.responsavel && c.responsavel_name) {
-        map.set(String(c.responsavel), {
-          label: c.responsavel_name,
-          role: c.responsavel_role ?? '',
-        });
-      }
-    }
-    return Array.from(map, ([value, v]) => ({ value, label: v.label, role: v.role }))
-      .sort((a, b) => a.label.localeCompare(b.label));
-  }, [cards]);
-
-  const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    return cards.filter((c) => {
-      if (respFilter && String(c.responsavel ?? '') !== respFilter) return false;
-      if (q && !`${c.nome} ${c.descricao ?? ''}`.toLowerCase().includes(q)) return false;
-      return true;
-    });
-  }, [cards, search, respFilter]);
+  // `filtered` NÃO EXISTE MAIS. A lista que chega do servidor já é o resultado
+  // dos filtros; refiltrar aqui só poderia esconder card que o servidor mandou.
 
   const toPreview = useCallback((c: PickableCard): KanbanCardPreviewData => ({
     id: String(c.id),
@@ -659,18 +837,45 @@ function ScoreFormDialog({
     score_final: c.score_final,
   }), []);
 
+  /**
+   * O card do modo EDITAR, desenhado igual ao do modo atribuir.
+   *
+   * Prefere o card da lista quando ele esta lá — é o dado mais fresco, e cobre
+   * o score de um card ainda em andamento. Cai para os campos que o proprio
+   * score carrega quando nao esta, que e o caso de todo card finalizado.
+   */
+  const previewDoCardEditado = useMemo<KanbanCardPreviewData>(() => {
+    if (selectedCard) return toPreview(selectedCard);
+    return {
+      id: String(cardId),
+      nome: existing?.card_nome?.trim() || `Card #${cardId}`,
+      prioridade: existing?.card_prioridade ?? undefined,
+      status: existing?.card_status ?? undefined,
+      area: existing?.card_area ?? undefined,
+      area_display: existing?.card_area_display ?? undefined,
+      tipo: existing?.card_tipo ?? undefined,
+      tipo_display: existing?.card_tipo_display ?? undefined,
+      descricao: existing?.card_descricao ?? undefined,
+      data_fim: existing?.card_data_fim ?? null,
+      responsavel_name: existing?.responsavel_name ?? undefined,
+      responsavel_role: existing?.responsavel_role ?? undefined,
+      script_url: existing?.card_script_url ?? null,
+      score_final: existing?.score_final ?? null,
+    };
+  }, [selectedCard, toPreview, existing, cardId]);
+
   // Lista de cards memoizada: só recomputa quando os filtros ou o card
   // selecionado mudam. Assim, clicar numa opção de critério (que altera
   // `valores`) NÃO re-renderiza os ~581 previews — seleção fica instantânea.
   const cardListEl = useMemo(() => {
-    if (filtered.length === 0) {
+    if (cards.length === 0) {
       return (
         <div className="text-center text-sm text-[var(--color-muted-foreground)] py-10">
           Nenhum card encontrado.
         </div>
       );
     }
-    return filtered.map((c) => (
+    return cards.map((c) => (
       <KanbanCardPreview
         key={c.id}
         card={toPreview(c)}
@@ -683,7 +888,7 @@ function ScoreFormDialog({
         }
       />
     ));
-  }, [filtered, cardId, toPreview]);
+  }, [cards, cardId, toPreview]);
 
   const handleSave = async () => {
     if (!canSave) return;
@@ -753,15 +958,20 @@ function ScoreFormDialog({
             {existing ? (
               <>
                 <Label>Card</Label>
-                {selectedCard ? (
-                  <KanbanCardPreview card={toPreview(selectedCard)} className="w-[288px]" />
-                ) : (
-                  <div className="text-sm text-[var(--color-muted-foreground)]">
-                    {existing?.card_nome?.trim() ? existing.card_nome : `Card #${cardId}`}
-                  </div>
-                )}
+                {/* O MESMO PREVIEW DE ATRIBUIR, e nao um texto com o nome.
+                    Antes isto dependia de achar o card em `cards`, que vem de
+                    `pickable-cards` — e aquele endpoint EXCLUI card finalizado
+                    de proposito. Editar o score de um card entregue, que e o
+                    caso comum, caia sempre no texto seco. Agora o card vem do
+                    proprio score, entao existe sempre. */}
+                <KanbanCardPreview
+                  card={previewDoCardEditado}
+                  className="w-[288px]"
+                  onClick={abrirCardParaLeitura}
+                />
                 <p className="text-xs text-[var(--color-muted-foreground)]">
-                  O card não pode ser alterado ao editar um score.
+                  O card não pode ser alterado ao editar um score. Clique nele
+                  para ver os detalhes ou abri-lo no projeto.
                 </p>
               </>
             ) : (
@@ -776,26 +986,54 @@ function ScoreFormDialog({
                   />
                 </div>
                 <FilterSelect
-                  options={responsavelOptions}
+                  options={opcoesDeResponsavel}
                   value={respFilter}
                   onChange={setRespFilter}
                   placeholder="Responsável"
                   searchPlaceholder="Buscar responsável..."
                 />
+                <FilterSelect
+                  options={opcoesDeSprint}
+                  value={sprintFilter}
+                  onChange={setSprintFilter}
+                  placeholder="Sprint"
+                  searchPlaceholder="Buscar sprint..."
+                />
 
                 <div className="text-xs text-[var(--color-muted-foreground)]">
-                  {cardsLoading && cards.length === 0
+                  {carregandoPrimeira
                     ? 'Carregando cards…'
-                    : `${filtered.length} card(s)`}
+                    : cards.length < totalDeCards
+                      ? `${cards.length} de ${totalDeCards} card(s)`
+                      : `${totalDeCards} card(s)`}
                 </div>
                 <div className="flex-1 min-h-0 relative">
-                  <div className="absolute inset-0 overflow-y-auto pr-1 space-y-[8px]">
-                    {cardsLoading && cards.length === 0 ? (
+                  {/* A ROLAGEM É A PAGINAÇÃO. Dispara a 240px do fim, e não no
+                      fim exato: buscar só quando a barra encosta deixa um
+                      buraco visível esperando a rede. É o mesmo limiar da
+                      tabela principal desta tela. */}
+                  <div
+                    className="absolute inset-0 overflow-y-auto pr-1 space-y-[8px]"
+                    onScroll={(e) => {
+                      const el = e.currentTarget;
+                      if (el.scrollTop + el.clientHeight >= el.scrollHeight - 240) {
+                        carregarMais();
+                      }
+                    }}
+                  >
+                    {carregandoPrimeira ? (
                       <div className="flex items-center justify-center py-10">
                         <Loader2 className="h-6 w-6 animate-spin text-[var(--color-primary)]" />
                       </div>
                     ) : (
-                      cardListEl
+                      <>
+                        {cardListEl}
+                        {carregandoMais && (
+                          <div className="flex items-center justify-center py-4">
+                            <Loader2 className="h-5 w-5 animate-spin text-[var(--color-primary)]" />
+                          </div>
+                        )}
+                      </>
                     )}
                   </div>
                 </div>
@@ -914,6 +1152,18 @@ function ScoreFormDialog({
             </div>
           </div>
         </div>
+
+        {/* SEGUNDO modal, por cima deste. O `Dialog` do projeto usa portal e
+            `z-[60]`, então ele aparece acima sem precisar de nada. */}
+        <VerCardModal
+          aberto={lendoCard}
+          onClose={() => {
+            setLendoCard(false);
+            setCardParaLeitura(null);
+          }}
+          card={cardParaLeitura}
+          carregando={carregandoLeitura}
+        />
 
         <DialogFooter>
           <Button variant="outline" onClick={onClose} disabled={saving}>

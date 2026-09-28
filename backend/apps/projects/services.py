@@ -8,7 +8,7 @@ from django.utils import timezone
 
 from .models import (Sprint, Project, ProjectCompartilhamento, Card, CardAnexo, CardStatus,
                      ProjectStatus, KanbanStage, ProjectKanbanStageConfig, CardLog,
-                     CardLogEventType, CARD_STATUS_FECHADOS)
+                     CardLogEventType, CardScore, ScoreHistory, CARD_STATUS_FECHADOS)
 
 
 def _norm_nome_projeto(nome: str) -> str:
@@ -62,6 +62,32 @@ def _copiar_anexos_card(origem: Card, destino: Card) -> None:
         )
 
 
+def _mover_score_do_card(origem: Card, destino: Card) -> None:
+    """Leva o score para a cópia na sprint nova — MOVE, não copia.
+
+    O score é um julgamento sobre O TRABALHO, não sobre a linha de banco em que
+    ele estava naquela semana. Como `CardScore.card` é OneToOne, ficar no card
+    antigo significava a tela de Score exibir o status CONGELADO no instante do
+    fechamento da sprint: quatro scores apareciam como "Em Desenvolvimento",
+    "Em Homologação" e "A Desenvolver" para trabalho que já havia sido entregue
+    na sprint seguinte — e o card entregue, esse sim, não tinha score nenhum.
+
+    POR QUE MOVER E NÃO COPIAR: duplicar faria a mesma pontuação aparecer duas
+    vezes na tela e contar duas vezes em qualquer soma. O score acompanha o
+    trabalho vivo; a sprint encerrada guarda o card, não o julgamento.
+
+    O histórico vai junto pelo mesmo motivo — a coluna "Histórico do Score" sai
+    de `card.score_historico`, e deixá-lo atrás esvaziaria a coluna no card que
+    passou a carregar o score.
+
+    `update()` em vez de `save()`: são no máximo uma linha de score e poucas de
+    histórico, e o `updated_at` do score NÃO deve subir — mover o ponteiro não
+    é alguém reavaliando o card.
+    """
+    CardScore.objects.filter(card=origem).update(card=destino)
+    ScoreHistory.objects.filter(card=origem).update(card=destino)
+
+
 def _replicar_card_para_sprint(card: Card, novo_projeto: Project, sprint_origem: Sprint, sprint_destino: Sprint, usuario_fechamento=None) -> Card:
     """
     Cria o card na sprint destino preservando criação, início de desenvolvimento e timeline.
@@ -110,6 +136,7 @@ def _replicar_card_para_sprint(card: Card, novo_projeto: Project, sprint_origem:
 
     _copiar_anexos_card(card, novo)
     _copiar_logs_card(card, novo)
+    _mover_score_do_card(card, novo)
 
     CardLog.objects.create(
         card=novo,
@@ -448,6 +475,14 @@ def finalizar_sprint_replicacao(sprint, criado_por_user=None):
                     gerente_atribuido=project.gerente_atribuido,
                     desenvolvedor=project.desenvolvedor,
                     status=ProjectStatus.CRIADO,
+                    # `is_system` ACOMPANHA. Sem isto o projeto sistemico
+                    # (Sugestoes, Suporte, Descartados) renascia como projeto de
+                    # trabalho comum a cada virada, e toda regra que depende da
+                    # flag parava de valer a partir dali, em silencio. Medido na
+                    # base antes do conserto: "Sugestoes" marcado ate a sprint 6
+                    # e desmarcado da 7 em diante, com 5 cards em projetos que
+                    # deveriam ser sistemicos e nao eram.
+                    is_system=project.is_system,
                 )
                 projetos_destino_por_nome[nome_norm] = novo_projeto
                 projetos_criados += 1
@@ -555,6 +590,9 @@ def reancorar_card_na_sprint(card, sprint_destino):
             desenvolvedor=projeto_atual.desenvolvedor,
             status=ProjectStatus.CRIADO,
             setor=sprint_destino.setor,
+            # Mesmo motivo do outro caminho de replicacao: a flag acompanha, ou
+            # o projeto sistemico volta a contar como trabalho na sprint nova.
+            is_system=projeto_atual.is_system,
         )
         criou = True
         # O empréstimo entre setores acompanha o trabalho, COM o nível — quem
