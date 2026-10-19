@@ -14,6 +14,13 @@
 services:
   db:
     image: postgres:16.6-alpine
+    # SOBE SOZINHO DEPOIS DE REINICIAR A MAQUINA, e isso nao e preferencia.
+    # Sem esta linha o BWA Tech cai a cada reinicio da VPS: o backend tem
+    # `unless-stopped` e volta, o banco nao, e o backend entra em laco de
+    # reinicio por nao achar o Postgres. Aconteceu em 19/10/2026 — `db` e
+    # `redis` simplesmente nao apareciam no `docker ps`, e backend e worker
+    # ficavam em `Restarting` ate alguem subi-los a mao.
+    restart: unless-stopped
     env_file:
       - .env
     ports:
@@ -33,6 +40,11 @@ services:
     image: redis:7.4-alpine
     # Exige senha (REDIS_PASSWORD do .env). Sem persistência em disco (broker apenas).
     command: ["sh", "-c", "redis-server --requirepass \"$$REDIS_PASSWORD\" --save \"\" --appendonly no --protected-mode yes"]
+    # Mesmo motivo do `db`: sem ele, o worker do Celery sobe e fica `unhealthy`
+    # para sempre, e com ele param o tempo real e TODAS as tarefas agendadas —
+    # fechamento de sprint por data, promocao de feedback, alertas de prazo.
+    # Em silencio, porque nada disso gera erro em tela.
+    restart: unless-stopped
     env_file:
       - .env
     volumes:
@@ -108,6 +120,30 @@ services:
       CSRF_TRUSTED_ORIGINS: ${CSRF_TRUSTED_ORIGINS}
     command: ["celery", "-A", "config.celery", "worker", "--loglevel=INFO", "--concurrency=1", "--prefetch-multiplier=1"]
     restart: unless-stopped
+    # O HEALTHCHECK DA IMAGEM NAO SERVE AQUI, E ESTAVA MENTINDO.
+    #
+    # O Dockerfile define `curl localhost:8000/api/`, que vale para o backend.
+    # O worker roda a MESMA imagem com outro `command` e nao serve HTTP, entao
+    # herdava um check impossivel de passar: 46 falhas seguidas e `unhealthy`
+    # permanente enquanto processava tarefas normalmente. Um container
+    # eternamente vermelho ensina a ignorar a coluna de status — foi assim que a
+    # parada do db/redis em 19/10/2026 passou despercebida. Um check que nunca
+    # pode passar e pior que nenhum check.
+    #
+    # `inspect ping` pergunta ao worker pelo canal de controle do broker, que e
+    # o unico jeito honesto de saber se ele responde (processo vivo nao prova
+    # nada: um worker com o broker inacessivel continua de pe sem consumir).
+    #
+    # O DESTINO EXPLICITO (`-d`) E O QUE TORNA A SONDA RAPIDA. Sem ele o comando
+    # espera o `--timeout` inteiro por outros nos: medido em producao, 11,8s
+    # contra 1,8s com destino. `timeout` abaixo e maior que o `--timeout` de
+    # proposito, para a sonda terminar sozinha em vez de ser morta pelo Docker.
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A config.celery inspect ping -d celery@$$(hostname) --timeout 10 >/dev/null 2>&1"]
+      interval: 60s
+      timeout: 15s
+      start_period: 60s
+      retries: 3
     # CRÍTICO: o worker escreve os arquivos de relatório aqui (apps.reports.tasks
     # → BaseReport.render → job.file.save). Sem este volume, o backend gunicorn
     # não consegue ler os arquivos gerados pelo worker (FileNotFoundError em
@@ -136,6 +172,27 @@ services:
     # ainda não tinha permissão consistente para apagar/rotacionar o .bak).
     command: ["celery", "-A", "config.celery", "beat", "--loglevel=INFO", "--schedule=/tmp/celerybeat-schedule"]
     restart: unless-stopped
+    # Mesmo problema do worker: herdava o `curl localhost:8000` da imagem.
+    #
+    # O BEAT NAO TEM `inspect`. Ele nao escuta no broker, so publica — nao ha a
+    # quem perguntar. O sinal de vida que ele da e gravar o arquivo de schedule,
+    # entao a sonda confere a idade desse arquivo.
+    #
+    # O LIMIAR SAIU DA FONTE, NAO DE PALPITE. No Celery 5.3.4 desta imagem,
+    # `Scheduler.sync_every` = 180s e `max_interval` = 300s: no pior caso o beat
+    # dorme 5 minutos antes de gravar de novo. 900s da tres vezes essa folga.
+    # Apertar isso traria falso positivo por ritmo normal, e um check que pisca
+    # vermelho sozinho volta a ser exatamente o ruido que este bloco remove.
+    #
+    # O CAMINHO APARECE DUAS VEZES, aqui e no `--schedule` do `command` acima.
+    # Trocar um exige trocar o outro, senao `stat` falha e o container fica
+    # vermelho sem nada de errado.
+    healthcheck:
+      test: ["CMD-SHELL", "test $$(($$(date +%s) - $$(stat -c %Y /tmp/celerybeat-schedule))) -lt 900"]
+      interval: 60s
+      timeout: 10s
+      start_period: 180s
+      retries: 3
     # Beat não escreve relatórios hoje, mas se um dia uma task agendada
     # precisar mexer em media/ (cleanup de reports, p.ex.), o volume já tá lá.
     volumes:

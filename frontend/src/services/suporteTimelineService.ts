@@ -33,6 +33,11 @@ export const suporteTimelineService = {
     chamado_id: number;
     descricao: string;
     tipo_evento?: SuporteTimelineEventTipo;
+    /** CHAVE da etapa de destino (`finalizado`, `em_desenvolvimento`, …), em
+     *  eventos de troca de etapa. É por ela que os relatórios contam chamados
+     *  resolvidos; sem ela, o evento fica fora da contagem. O rótulo continua
+     *  na `descricao`, mas só para leitura humana. */
+    etapa_destino?: string;
   }): Promise<SuporteTimelineEntry> {
     const { data } = await api.post<SuporteTimelineEntry>('/formularios/suporte-timeline/', payload);
     return data;

@@ -277,6 +277,10 @@ class ChamadoSuporteTimelineSerializer(serializers.ModelSerializer):
             'tipo_evento',
             'tipo_evento_display',
             'descricao',
+            # A CHAVE da etapa de destino, enviada pelo frontend junto com o
+            # evento. Sem ela, o evento novo fica fora da contagem de chamados
+            # resolvidos dos relatórios — ver o campo no modelo.
+            'etapa_destino',
             'usuario',
             'usuario_name',
             'usuario_role_display',

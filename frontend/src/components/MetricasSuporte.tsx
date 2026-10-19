@@ -27,6 +27,7 @@ import { userService, type User } from '@/services/userService';
 import {
   ChamadoDetailDialog,
   getKanbanStageLabel,
+  getKanbanStageKey,
   patchForStage,
 } from '@/pages/Support';
 import { useAuth } from '@/context/AuthContext';
@@ -1415,7 +1416,7 @@ export function MetricasSuporte() {
         const patch = patchForStage('finalizado', chamado, assigneeName, noteTrim);
         const updated = await suporteService.patchResolucao(chamado.id, patch, arquivo);
         aplicarTicketAtualizado(updated);
-        await logSuporteChamadoChanges(chamado, updated, getKanbanStageLabel);
+        await logSuporteChamadoChanges(chamado, updated, getKanbanStageLabel, getKanbanStageKey);
         bumpTimeline();
         // A conclusão vira um evento de etapa na timeline → o SLA deste ticket
         // passa a ser mensurável; sem isso ele cairia em "Sem medição".
