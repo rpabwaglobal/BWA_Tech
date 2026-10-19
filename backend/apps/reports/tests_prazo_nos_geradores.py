@@ -188,14 +188,30 @@ class PrazoNosGeradoresTests(TestCase):
 
         Se alguém mudar TOLERANCIA_DO_PRAZO, os geradores têm de acompanhar.
         O teste amarra o cenário à constante em vez de a "60 segundos".
+
+        RELÓGIO CONGELADO, E NÃO É PRECIOSISMO. A primeira versão deste teste
+        montava os cards a partir de `self.agora` (de `setUp`) e deixava o
+        gerador ler `timezone.now()` — ou seja, um instante DEPOIS. Com margem
+        de um segundo, bastava a suíte estar carregada para o card "um segundo
+        antes do limite" cruzar o limite no meio do caminho e o teste falhar
+        sem nada ter quebrado. Aconteceu de verdade, numa suíte de 46 testes.
+
+        Congelar é o que permite manter a margem de UM segundo, que é o ponto:
+        alargá-la para trinta deixaria o teste estável e sem valor, porque ele
+        deixaria de medir a fronteira.
         """
+        from unittest.mock import patch
+
         quase = TOLERANCIA_DO_PRAZO - dt.timedelta(seconds=1)
         passou = TOLERANCIA_DO_PRAZO + dt.timedelta(seconds=1)
 
         self._aberto_vencido_ha(quase, 'Um segundo antes do limite')
         self._aberto_vencido_ha(passou, 'Um segundo depois do limite')
 
-        nomes = set(self._linhas(bottlenecks, 'bottlenecks'))
+        # O mesmo instante que montou os cards é o que o gerador vai ler.
+        with patch('apps.reports.generators.bottlenecks.timezone.now',
+                   return_value=self.agora):
+            nomes = set(self._linhas(bottlenecks, 'bottlenecks'))
 
         self.assertNotIn('Um segundo antes do limite', nomes)
         self.assertIn('Um segundo depois do limite', nomes)

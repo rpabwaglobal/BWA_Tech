@@ -28,9 +28,13 @@ function isWeekend(d: Date): boolean {
  * abertura é numa quinta/sexta e o prazo bate no fds.
  */
 export function add24BusinessHours(start: Date): Date {
-  // Guard: se quem chamou passou uma data inválida (ex.: `new Date(undefined)`),
-  // retorna a própria data inválida — caller decide o que fazer. Sem isso,
-  // getTime() é NaN e o while gira infinitamente.
+  // Guard: data inválida entra, data inválida sai — quem chamou decide o que
+  // fazer com ela.
+  //
+  // O comentário anterior dizia que sem este guard o `while` giraria para
+  // sempre. NÃO GIRA, e foi medido: `getDay()` de uma data inválida é `NaN`,
+  // `NaN === 0 || NaN === 6` é falso, e o laço nem chega a entrar. O guard fica
+  // por ser explícito sobre a intenção, não por evitar travamento.
   if (Number.isNaN(start.getTime())) return start;
   const result = new Date(start.getTime() + ONE_DAY_MS);
   while (isWeekend(result)) {
@@ -52,4 +56,46 @@ export function isSuporteOverdue(chamado: Pick<ChamadoSuporte, 'status' | 'data_
   if (Number.isNaN(opened.getTime())) return false;
   const deadline = add24BusinessHours(opened);
   return Date.now() > deadline.getTime();
+}
+
+/**
+ * Horas decorridas entre dois instantes, DESCONTANDO sábado e domingo.
+ *
+ * Existe para a tabela de SLA mostrar um número coerente com o veredicto. O
+ * veredicto sai de `add24BusinessHours` (a mesma função do selo "atrasado" da
+ * tela de Suporte); se o número exibido fosse de relógio cru, a linha diria
+ * "66h — no prazo" e ninguém entenderia.
+ *
+ * CONSISTENTE COM `add24BusinessHours` POR CONSTRUÇÃO, e isso não é acaso:
+ * aquela empurra o prazo em DIAS INTEIROS, o que preserva o horário do dia;
+ * esta desconta os milissegundos que caíram no fim de semana. As duas dão o
+ * mesmo veredicto em qualquer entrada. Conferido na mão:
+ *
+ *   aberto sex 10h, resolvido seg 09h → 71h cruas − 48h de fds = 23h ≤ 24 ✓
+ *                                        prazo = seg 10h, 09h < 10h    ✓
+ *   aberto sex 10h, resolvido seg 11h → 73h − 48h = 25h > 24          ✗
+ *                                        prazo = seg 10h, 11h > 10h    ✗
+ *
+ * Varre de hora em hora em vez de fazer aritmética de calendário: o período
+ * aqui é de horas ou poucos dias, e a versão simples é a que se consegue
+ * conferir lendo.
+ */
+export function businessHoursBetween(start: Date, end: Date): number {
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return NaN;
+  if (end <= start) return 0;
+
+  const UMA_HORA = 60 * 60 * 1000;
+  let uteis = 0;
+  let cursor = start.getTime();
+  const fim = end.getTime();
+
+  while (cursor < fim) {
+    const passo = Math.min(UMA_HORA, fim - cursor);
+    // O passo conta pelo dia em que COMEÇA. Com passo de uma hora, o erro
+    // máximo é de uma hora na virada de domingo para segunda — e o veredicto
+    // não depende disso, porque quem decide é `add24BusinessHours`.
+    if (!isWeekend(new Date(cursor))) uteis += passo / UMA_HORA;
+    cursor += passo;
+  }
+  return uteis;
 }
