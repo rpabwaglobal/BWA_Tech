@@ -17,6 +17,9 @@ export const ABAS_CONFIGURACOES = [
   { key: 'usuarios' as const, label: 'Usuários', perms: ['manage_users', 'manage_user_permissions'] },
   { key: 'cargos' as const, label: 'Cargos', perms: ['manage_cargos'] },
   { key: 'setores' as const, label: 'Setores', perms: ['manage_setores'] },
+  // Só a metade CADASTRADA (estaduais, municipais, recessos). Os nacionais são
+  // calculados em `@/lib/feriados` e ninguém os edita.
+  { key: 'feriados' as const, label: 'Feriados', perms: ['manage_feriados'] },
 ];
 
 export type AbaConfiguracoesKey = (typeof ABAS_CONFIGURACOES)[number]['key'];

@@ -204,3 +204,123 @@ class EndpointDeFeriadosTests(TestCase):
         r = self.client.get(self.url, {'inicio': 'ontem', 'fim': '2026-01-01'})
 
         self.assertEqual(r.status_code, 400)
+
+
+class CadastroDeFeriadosTests(TestCase):
+    """O CRUD da metade cadastrada, e quem pode mexer nela.
+
+    A SEPARACAO ENTRE AS DUAS ROTAS E O PONTO. `/api/feriados/` responde "quais
+    dias sao feriado" juntando calculado e cadastrado; `/api/feriados-
+    cadastrados/` administra as LINHAS. Um feriado nacional nao tem linha, entao
+    nao aparece aqui e nao ha como edita-lo — o que evita a tela de
+    administracao mostrar dias que ninguem consegue apagar.
+    """
+
+    def setUp(self):
+        self.admin = User.objects.create_user(
+            username='fer_admin', email='fer.admin@example.com',
+            password='x' * 12, role='admin')
+        self.comum = User.objects.create_user(
+            username='fer_comum', email='fer.comum@example.com',
+            password='x' * 12, role='colaborador')
+        self.url = '/api/feriados-cadastrados/'
+
+    def _como(self, user):
+        c = APIClient()
+        c.force_authenticate(user)
+        return c
+
+    # -- quem pode o que ---------------------------------------------------
+
+    def test_quem_nao_tem_a_permissao_nao_cadastra(self):
+        r = self._como(self.comum).post(self.url, {
+            'data': '2026-06-29', 'nome': 'Sao Pedro', 'abrangencia': 'municipal'})
+
+        self.assertEqual(r.status_code, 403)
+        self.assertFalse(Feriado.objects.exists())
+
+    def test_quem_nao_tem_a_permissao_ainda_consegue_LER(self):
+        """A tela mostra a lista a quem so consulta.
+
+        Ler nao e o mesmo que editar, e esconder a lista de quem nao administra
+        so geraria a pergunta "por que meu prazo pulou aquele dia?".
+        """
+        Feriado.objects.create(
+            data=date(2026, 6, 29), nome='Sao Pedro', abrangencia='municipal')
+
+        r = self._como(self.comum).get(self.url)
+
+        self.assertEqual(r.status_code, 200)
+
+    def test_admin_cadastra(self):
+        r = self._como(self.admin).post(self.url, {
+            'data': '2026-06-29', 'nome': 'Sao Pedro', 'abrangencia': 'municipal'})
+
+        self.assertEqual(r.status_code, 201, r.data)
+        self.assertTrue(Feriado.objects.filter(data=date(2026, 6, 29)).exists())
+
+    def test_exige_autenticacao(self):
+        self.assertIn(APIClient().get(self.url).status_code, (401, 403))
+
+    # -- as travas ---------------------------------------------------------
+
+    def test_recusa_cadastrar_um_dia_que_JA_e_nacional(self):
+        """Sem esta trava nasceria uma segunda resposta para o mesmo dia.
+
+        Alguem cadastraria "Natal" em 25/12 achando que estava fazendo falta. O
+        registro nao mudaria nada — o dia ja nao e util — mas o sistema voltaria
+        a ter duas fontes para o mesmo dia, que e o problema que o modulo de
+        feriados existe para encerrar.
+        """
+        r = self._como(self.admin).post(self.url, {
+            'data': '2026-12-25', 'nome': 'Natal', 'abrangencia': 'municipal'})
+
+        self.assertEqual(r.status_code, 400)
+        self.assertIn('data', r.data)
+
+    def test_recusa_data_repetida(self):
+        Feriado.objects.create(
+            data=date(2026, 6, 29), nome='Sao Pedro', abrangencia='municipal')
+
+        r = self._como(self.admin).post(self.url, {
+            'data': '2026-06-29', 'nome': 'Outro nome', 'abrangencia': 'empresa'})
+
+        self.assertEqual(r.status_code, 400)
+
+    # -- o efeito no calculo ----------------------------------------------
+
+    def test_cadastrar_tira_o_dia_do_calculo_na_hora(self):
+        """Fecha o circuito: cadastrar aqui muda o que `/api/feriados/` devolve.
+
+        Sem este teste, as duas metades poderiam passar em testes separados e
+        nunca se encontrarem.
+        """
+        self.assertNotIn(date(2026, 6, 29),
+                         feriados_entre(date(2026, 6, 1), date(2026, 6, 30)))
+
+        self._como(self.admin).post(self.url, {
+            'data': '2026-06-29', 'nome': 'Sao Pedro', 'abrangencia': 'municipal'})
+
+        self.assertIn(date(2026, 6, 29),
+                      feriados_entre(date(2026, 6, 1), date(2026, 6, 30)))
+
+    def test_excluir_devolve_o_dia_ao_calculo(self):
+        f = Feriado.objects.create(
+            data=date(2026, 6, 29), nome='Sao Pedro', abrangencia='municipal')
+
+        r = self._como(self.admin).delete('%s%d/' % (self.url, f.pk))
+
+        self.assertEqual(r.status_code, 204)
+        self.assertNotIn(date(2026, 6, 29),
+                         feriados_entre(date(2026, 6, 1), date(2026, 6, 30)))
+
+    def test_a_listagem_NAO_traz_os_nacionais(self):
+        """Eles nao tem linha. Mostra-los aqui ofereceria editar o que nao da."""
+        Feriado.objects.create(
+            data=date(2026, 6, 29), nome='Sao Pedro', abrangencia='municipal')
+
+        r = self._como(self.admin).get(self.url)
+        datas = [item['data'] for item in (r.data.get('results') or r.data)]
+
+        self.assertIn('2026-06-29', datas)
+        self.assertNotIn('2026-12-25', datas)

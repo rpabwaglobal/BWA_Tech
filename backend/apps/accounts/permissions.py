@@ -133,6 +133,17 @@ class CanManageSetores(permissions.BasePermission):
         return request.user.is_authenticated and request.user.has_perm('accounts.manage_setores')
 
 
+class CanManageFeriados(permissions.BasePermission):
+    """Cadastrar/editar/excluir feriados estaduais, municipais e recessos.
+
+    NÃO alcança os feriados nacionais: aqueles são calculados e não existem
+    como linha no banco. Ver `apps/projects/feriados.py`.
+    """
+
+    def has_permission(self, request, view):
+        return request.user.is_authenticated and request.user.has_perm('accounts.manage_feriados')
+
+
 class CanManageUserPermissions(_TravasDeAlvo, permissions.BasePermission):
     """Conceder/revogar permissões de OUTRO usuário."""
 

@@ -12,19 +12,32 @@ depende de uma segunda requisição e não trata o estado de carregamento aparec
 vazio sem explicação. Aqui o pior caso é um feriado municipal não descontado por
 alguns segundos, nunca uma tela em branco.
 
-SÓ LEITURA. Cadastrar feriado é pelo admin, que já tem controle de acesso,
-auditoria e histórico. Um endpoint de escrita aqui seria uma segunda porta para
-a mesma mesa.
+DOIS ENDPOINTS, E A SEPARAÇÃO É A DO MÓDULO DE FERIADOS:
+
+  `GET /api/feriados/` responde "quais dias são feriado", juntando o calculado
+  com o cadastrado. É o que o SLA consome, e é só leitura — não há como editar
+  um feriado nacional, porque ele não existe como linha no banco.
+
+  `/api/feriados-cadastrados/` administra as LINHAS: a metade que depende de
+  decisão humana. Escrita exige `manage_feriados`.
+
+Juntar os dois numa rota só convidaria o erro de alguém tentar apagar o Natal e
+receber um 404 confuso, ou pior, de a listagem de administração mostrar dias que
+não dá para editar.
 """
 from __future__ import annotations
 
 from datetime import date, timedelta
 
-from rest_framework import serializers, status
+from rest_framework import serializers, status, viewsets
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from apps.accounts.permissions import CanManageFeriados
+
 from .feriados import feriados_entre
+from .models import Feriado
 
 #: Teto do intervalo aceito. O frontend pede um ou dois anos; um pedido de
 #: séculos só gastaria CPU montando um conjunto que ninguém usa.
@@ -81,3 +94,48 @@ class FeriadosView(APIView):
             },
             status=status.HTTP_200_OK,
         )
+
+
+class FeriadoSerializer(serializers.ModelSerializer):
+    abrangencia_display = serializers.CharField(
+        source='get_abrangencia_display', read_only=True)
+
+    class Meta:
+        model = Feriado
+        fields = ('id', 'data', 'nome', 'abrangencia', 'abrangencia_display',
+                  'observacao', 'criado_em')
+        read_only_fields = ('id', 'criado_em')
+
+    def validate_data(self, valor):
+        """Recusa cadastrar um dia que JÁ é feriado nacional.
+
+        Sem esta trava, alguém cadastraria "Natal" em 25/12 achando que estava
+        fazendo falta. O registro não mudaria nada — o dia já não é útil — mas
+        passaria a existir uma segunda resposta para o mesmo dia, que é
+        exatamente o que o módulo de feriados foi criado para encerrar.
+        """
+        from .feriados import nacionais_do_ano
+
+        if valor in nacionais_do_ano(valor.year):
+            raise serializers.ValidationError(
+                'Este dia já é feriado nacional e é calculado automaticamente. '
+                'Cadastre aqui apenas feriados estaduais, municipais ou '
+                'recessos da empresa.')
+        return valor
+
+
+class FeriadosCadastradosViewSet(viewsets.ModelViewSet):
+    """CRUD da metade cadastrada. Mesmo padrão do `SetorViewSet`.
+
+    Ler é para qualquer pessoa autenticada — a tela de Configurações mostra a
+    lista a quem só pode consultar. Escrever exige `manage_feriados`.
+    """
+
+    queryset = Feriado.objects.all()
+    serializer_class = FeriadoSerializer
+    http_method_names = ['get', 'post', 'patch', 'delete', 'head', 'options']
+
+    def get_permissions(self):
+        if self.action in ('create', 'update', 'partial_update', 'destroy'):
+            return [CanManageFeriados()]
+        return [IsAuthenticated()]

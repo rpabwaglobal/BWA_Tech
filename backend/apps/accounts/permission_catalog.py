@@ -53,6 +53,10 @@ PERMISSION_CATALOG = [
     ('manage_user_permissions', 'Conceder e revogar permissões de outros usuários', 'Administração'),
     ('manage_cargos', 'Criar, editar e excluir cargos', 'Administração'),
     ('manage_setores', 'Criar, editar e excluir setores', 'Administração'),
+    # Só os feriados CADASTRADOS (estaduais, municipais, recessos). Os
+    # nacionais são calculados em `apps/projects/feriados.py` e ninguém os
+    # edita — ver o cabeçalho daquele módulo.
+    ('manage_feriados', 'Cadastrar feriados estaduais, municipais e recessos', 'Administração'),
 ]
 
 PERMISSION_AREA_BY_CODENAME = {codename: area for codename, _label, area in PERMISSION_CATALOG}

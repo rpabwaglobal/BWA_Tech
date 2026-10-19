@@ -6,6 +6,7 @@ import { cn } from '@/lib/utils';
 import { GerenciamentoUsuarios } from '@/components/settings/GerenciamentoUsuarios';
 import { GerenciamentoCargos } from '@/components/settings/GerenciamentoCargos';
 import { GerenciamentoSetores } from '@/components/settings/GerenciamentoSetores';
+import { GerenciamentoFeriados } from '@/components/settings/GerenciamentoFeriados';
 
 /** Cada aba exige a permissão que a própria API cobra — quem só administra
  * setores não vê a aba de cargos, e vice-versa. O perfil saiu daqui: virou
@@ -22,7 +23,7 @@ export default function Settings() {
 
   const [activeTab, setActiveTab] = useState<TabKey | null>(() => {
     const t = new URLSearchParams(window.location.search).get('tab');
-    if (t === 'usuarios' || t === 'cargos' || t === 'setores') return t;
+    if (t === 'usuarios' || t === 'cargos' || t === 'setores' || t === 'feriados') return t;
     return null;
   });
 
@@ -38,7 +39,7 @@ export default function Settings() {
           Configurações
         </h1>
         <p className="text-sm text-[var(--color-muted-foreground)]">
-          Você não tem permissão para gerenciar usuários, cargos ou setores. Suas configurações
+          Você não tem permissão para gerenciar usuários, cargos, setores ou feriados. Suas configurações
           pessoais ficam na engrenagem, no canto superior direito.
         </p>
       </div>
@@ -52,7 +53,7 @@ export default function Settings() {
           Configurações
         </h1>
         <p className="mt-1 text-sm text-[var(--color-muted-foreground)]">
-          Gerencie os usuários, os cargos e os setores da plataforma.
+          Gerencie os usuários, os cargos, os setores e os feriados da plataforma.
         </p>
       </div>
 
@@ -77,6 +78,7 @@ export default function Settings() {
       {abaAtual === 'usuarios' && <GerenciamentoUsuarios />}
       {abaAtual === 'cargos' && <GerenciamentoCargos />}
       {abaAtual === 'setores' && <GerenciamentoSetores />}
+      {abaAtual === 'feriados' && <GerenciamentoFeriados />}
     </div>
   );
 }
