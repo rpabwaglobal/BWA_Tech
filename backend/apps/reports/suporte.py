@@ -4,14 +4,23 @@ QUANDO UM CHAMADO CONTA: no instante em que o card foi movido de etapa pela
 última vez, segundo a timeline local (`ChamadoSuporteTimeline`, evento
 `etapa_alterada`). Não é a abertura, e não é a última atualização.
 
-ERA `ChamadoSuporte.data_atualizacao`, E ESTAVA ERRADO NOS DOIS RELATÓRIOS.
-Aquele campo é `auto_now=True`: reescrito em QUALQUER save — mover entre abas, o
-proxy do portal re-tocando o registro, corrigir uma nota. Um chamado resolvido em
-30/09 e tocado em 02/10 saía de setembro e aparecia em outubro, e quem puxava o
-relatório do mês não fechava a conta com o que a equipe havia entregue.
+ERA `ChamadoSuporte.data_atualizacao` NOS DOIS RELATÓRIOS. Aquele campo é
+`auto_now=True`: reescrito em QUALQUER save — mover entre abas, o proxy do portal
+re-tocando o registro, corrigir uma nota. A tela de Métricas já havia abandonado
+esse campo por isso e passado a ler a timeline; os relatórios ficaram para trás.
 
-A tela de Métricas já havia abandonado esse campo pelo mesmo motivo e passado a
-ler a timeline; os relatórios ficaram para trás.
+MAS O EFEITO NOS RELATÓRIOS NÃO ERA MÊS ERRADO: ERA ZERO. Medido contra a base,
+`support_resolved` devolve 0 em qualquer mês, e devolve 0 até sem filtro de
+período nenhum — porque a tabela local `ChamadoSuporte` tem ZERO linhas.
+
+OS CHAMADOS NÃO MORAM NESTE BANCO. Vivem no portal externo (api.bwa.global) e
+chegam por proxy; o frontend os busca por `formulariosApi`, não pela API local.
+O que fica gravado aqui é só a linha do tempo. Então esta consulta está CERTA e
+continua lendo uma tabela vazia: o KPI segue em zero até alguém decidir entre
+contar pela timeline, buscar no portal, ou tirar o campo do relatório.
+
+Quem de fato consertou o problema relatado foi a tela de Métricas, que lê os
+chamados do portal e combina com a timeline local.
 
 POR QUE UM MÓDULO, E NÃO O CONSERTO NO LUGAR ONDE APARECEU: a consulta estava
 escrita duas vezes, no gerador Executivo e no de Métricas, com um comentário em

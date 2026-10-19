@@ -5,10 +5,17 @@ filtrando por `ChamadoSuporte.data_atualizacao`, que e `auto_now=True` — ou
 seja, reescrito em QUALQUER save. Mover entre abas, o proxy do portal re-tocando
 o registro, corrigir uma nota: tudo movia a data.
 
-O efeito pratico: um chamado resolvido em 30/09 e tocado em 02/10 saia de
-setembro e aparecia em outubro. Quem puxava o relatorio do mes nao fechava a
-conta com o que a equipe havia entregue, e nao havia como desconfiar — o numero
-simplesmente vinha diferente.
+RESSALVA MEDIDA DEPOIS, e que o commit original nao sabia: nos RELATORIOS o
+efeito disso nao era mes errado, era ZERO. A tabela local `ChamadoSuporte` tem
+zero linhas em producao — os chamados vivem no portal externo e chegam por
+proxy. Entao a consulta aqui esta correta e continua sem dados para ler.
+
+Esta suite segue valendo: ela cria chamados locais, que e o cenario em que a
+consulta tem o que ler, e trava a regra para o dia em que a fonte mudar. O que
+ela NAO prova e que o KPI do relatorio mostre algo diferente de zero hoje.
+
+Quem consertou o problema que o usuario relatou foi a tela de Metricas, que le
+os chamados do portal.
 
 A tela de Metricas ja tinha abandonado `data_atualizacao` pelo mesmo motivo e
 passado a ler a timeline (`ChamadoSuporteTimeline`, evento `etapa_alterada`); o
