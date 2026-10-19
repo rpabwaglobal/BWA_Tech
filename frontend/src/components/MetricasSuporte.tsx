@@ -12,6 +12,7 @@ import {
   ResponsiveContainer,
 } from 'recharts';
 import { Loader2, Headset, Trophy, Users, Layers, Tag, Target } from 'lucide-react';
+import { add24BusinessHours, businessHoursBetween } from '@/lib/businessHours';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -76,9 +77,29 @@ function pad(n: number): string {
   return String(n).padStart(2, '0');
 }
 
-function ticketDate(t: ChamadoSuporte): Date | null {
-  if (!t.data_abertura) return null;
-  const d = new Date(t.data_abertura);
+/**
+ * A data pela qual o ticket entra (ou não) no período selecionado.
+ *
+ * COM `resolvidoEmMap`, usa a data de CONCLUSÃO. Sem ele, a de abertura.
+ *
+ * A distinção não é cosmética, era o defeito: escolher "setembro" mostrava
+ * tickets ABERTOS em setembro, inclusive os resolvidos em outubro. Quem puxa
+ * o relatório do mês quer saber o que foi ENTREGUE no mês — um ticket aberto
+ * em setembro e resolvido em outubro é entrega de outubro.
+ *
+ * Cada card escolhe: "Abertura de tickets por dia" é legitimamente sobre
+ * abertura; "Responsável pela solução" e a tabela de SLA são sobre resolução.
+ *
+ * Ticket sem conclusão registrada devolve `null` e fica FORA das visões de
+ * resolução — correto, porque ele não foi resolvido em período nenhum.
+ */
+function ticketDate(
+  t: ChamadoSuporte,
+  resolvidoEmMap?: Record<number, string>,
+): Date | null {
+  const iso = resolvidoEmMap ? resolvidoEmMap[t.id] : t.data_abertura;
+  if (!iso) return null;
+  const d = new Date(iso);
   return Number.isNaN(d.getTime()) ? null : d;
 }
 
@@ -129,7 +150,13 @@ type Opcoes = { anos: number[]; tipos: string[]; usuarios: string[] };
 
 /** Estado + UI de filtros de um card (período por ano/mês/intervalo + usuário +
  * tipo). Cada card instancia o próprio hook → filtros independentes, no header. */
-function useTicketFilter(tickets: ChamadoSuporte[], opcoes: Opcoes) {
+function useTicketFilter(
+  tickets: ChamadoSuporte[],
+  opcoes: Opcoes,
+  /** Passe o mapa de conclusões para o período recortar pela RESOLUÇÃO em vez
+   *  da abertura. Ver `ticketDate`. */
+  resolvidoEmMap?: Record<number, string>,
+) {
   const now = new Date();
   const [escopo, setEscopo] = useState<Escopo>('month');
   const [ano, setAno] = useState<number>(now.getFullYear());
@@ -141,7 +168,7 @@ function useTicketFilter(tickets: ChamadoSuporte[], opcoes: Opcoes) {
 
   const filtrados = useMemo(() => {
     return tickets.filter((t) => {
-      const d = ticketDate(t);
+      const d = ticketDate(t, resolvidoEmMap);
       if (!d) return false;
       if (escopo === 'year') {
         if (d.getFullYear() !== ano) return false;
@@ -155,7 +182,7 @@ function useTicketFilter(tickets: ChamadoSuporte[], opcoes: Opcoes) {
       if (tipo && catalogNome(t.tipo) !== tipo) return false;
       return true;
     });
-  }, [tickets, escopo, ano, mes, ini, fim, usuarios, tipo]);
+  }, [tickets, escopo, ano, mes, ini, fim, usuarios, tipo, resolvidoEmMap]);
 
   const label =
     escopo === 'year'
@@ -274,7 +301,7 @@ function GraficoAberturaPorDia({ tickets, opcoes }: { tickets: ChamadoSuporte[];
           <Headset className="h-5 w-5" />
           Abertura de tickets por dia
         </CardTitle>
-        <CardDescription>Tickets abertos por dia — {filtro.label}.</CardDescription>
+        <CardDescription>Tickets <strong>abertos</strong> por dia — {filtro.label}.</CardDescription>
         {filtro.ui}
       </CardHeader>
       <CardContent>
@@ -390,6 +417,8 @@ function ResponsavelCard({
   opcoes,
   infoDe,
   resolvidoEmMap,
+  erroResolvidoEm,
+  carregandoResolvidoEm,
   onAbrirCard,
 }: {
   tickets: ChamadoSuporte[];
@@ -398,10 +427,16 @@ function ResponsavelCard({
   /** chamado.id → ISO da conclusão (timeline). Usado pra separar o modal em
    * dentro/fora do prazo, igual à tabela de SLA. */
   resolvidoEmMap: Record<number, string>;
+  /** true = não foi possível carregar as datas de conclusão. */
+  erroResolvidoEm: boolean;
+  /** true = as datas de conclusão ainda estão a caminho (segunda requisição). */
+  carregandoResolvidoEm: boolean;
   /** Abre o card real do Suporte por cima, sem fechar esta lista. */
   onAbrirCard: (t: ChamadoSuporte) => void;
 }) {
-  const filtro = useTicketFilter(tickets, opcoes);
+  // RECORTA PELA RESOLUÇÃO, não pela abertura: este card é sobre o que
+  // foi resolvido no período. Ver `ticketDate`.
+  const filtro = useTicketFilter(tickets, opcoes, resolvidoEmMap);
   const [sel, setSel] = useState<string | null>(null);
   const [tab, setTab] = useState<'onTime' | 'late' | 'sem'>('onTime');
   const rows = useMemo(
@@ -447,14 +482,28 @@ function ResponsavelCard({
           <Trophy className="h-5 w-5" />
           Responsável pela solução
         </CardTitle>
-        <CardDescription>Quem mais resolveu tickets — {filtro.label}.</CardDescription>
+        <CardDescription>Quem mais resolveu tickets — <strong>resolvidos</strong> em {filtro.label}.</CardDescription>
         {filtro.ui}
         {podio.length > 0 && <Podio top={podio} />}
       </CardHeader>
       <CardContent>
-        {rows.length === 0 ? (
+        {/* TRÊS ESTADOS, e não dois. Desde que o período passou a recortar pela
+            conclusão, este card depende de uma segunda requisição; enquanto ela
+            não chega, "nenhum ticket" seria mentira, e se ela falhar seria
+            mentira permanente. */}
+        {carregandoResolvidoEm ? (
+          <div className="flex items-center justify-center py-8">
+            <Loader2 className="h-5 w-5 animate-spin text-[var(--color-primary)]" />
+          </div>
+        ) : erroResolvidoEm ? (
+          <p className="py-8 text-center text-sm text-[var(--color-destructive)]">
+            Não foi possível carregar as datas de conclusão dos tickets. Este gráfico
+            conta por data de resolução, então preferimos não exibir números do que
+            exibir errado. Recarregue a página; se persistir, avise o time de tecnologia.
+          </p>
+        ) : rows.length === 0 ? (
           <p className="py-8 text-center text-sm text-[var(--color-muted-foreground)]">
-            Nenhum ticket com responsável no período.
+            Nenhum ticket resolvido no período.
           </p>
         ) : (
           <div
@@ -666,7 +715,15 @@ function ResponsavelCard({
   );
 }
 
-/** SLA de resolução dos tickets: 24h entre a abertura e a resolução. */
+/** SLA de resolução dos tickets: 24h ÚTEIS entre a abertura e a resolução.
+ *
+ * ÚTEIS, e isso era o defeito: a conta era de relógio cru, enquanto o selo
+ * "atrasado" da tela de Suporte já descontava o fim de semana. Um chamado
+ * aberto sexta 16h e resolvido segunda 10h saía "no prazo" numa tela e
+ * "66 horas, atrasado" na outra — o mesmo chamado, dois veredictos.
+ *
+ * A constante continua aqui porque é o rótulo mostrado ao usuário ("prazo de
+ * 24h"). Quem DECIDE é `add24BusinessHours`, em `lib/businessHours.ts`. */
 const SLA_HORAS = 24;
 
 /** Ticket já medido: guarda as duas pontas e o tempo, pra listar no modal
@@ -675,7 +732,11 @@ type SlaTicket = {
   ticket: ChamadoSuporte;
   abertura: Date;
   resolucao: Date;
+  /** Horas ÚTEIS decorridas (sem sábado e domingo) — é o número exibido. */
   horas: number;
+  /** O veredicto. Vem de `add24BusinessHours`, a MESMA função do selo da tela
+   *  de Suporte, para as duas não poderem divergir. */
+  noPrazo: boolean;
 };
 
 type SlaLinha = {
@@ -701,7 +762,11 @@ function medirSla(t: ChamadoSuporte, resolvidoEmMap: Record<number, string>): Sl
     ticket: t,
     abertura,
     resolucao,
-    horas: (resolucao.getTime() - abertura.getTime()) / 3_600_000,
+    horas: businessHoursBetween(abertura, resolucao),
+    // O veredicto NÃO é `horas <= 24`: é a comparação com o prazo calculado
+    // pela mesma função que o selo da tela usa. Derivar os dois da mesma
+    // origem é o que impede a divergência de voltar.
+    noPrazo: resolucao.getTime() <= add24BusinessHours(abertura).getTime(),
   };
 }
 
@@ -714,7 +779,7 @@ function agruparPorSla(tickets: ChamadoSuporte[], resolvidoEmMap: Record<number,
   for (const t of tickets) {
     const medida = medirSla(t, resolvidoEmMap);
     if (!medida) semMedicao.push(t);
-    else if (medida.horas <= SLA_HORAS) onTime.push(medida);
+    else if (medida.noPrazo) onTime.push(medida);
     else late.push(medida);
   }
   const recentesPrimeiro = (a: SlaTicket, b: SlaTicket) => b.resolucao.getTime() - a.resolucao.getTime();
@@ -761,7 +826,7 @@ function SlaTicketRow({
   /** Abre o card real no quadro de Suporte. */
   onSelect: (ticket: ChamadoSuporte) => void;
 }) {
-  const variant = medida ? (medida.horas <= SLA_HORAS ? 'onTime' : 'late') : 'sem';
+  const variant = medida ? (medida.noPrazo ? 'onTime' : 'late') : 'sem';
   const aberturaTxt = t.data_abertura ? formatDataHora(new Date(t.data_abertura)) : '—';
   return (
     <li>
@@ -837,6 +902,7 @@ function TabelaSlaSuporte({
   infoDe,
   resolvidoEmMap,
   erroResolvidoEm,
+  carregandoResolvidoEm,
   onAbrirCard,
 }: {
   tickets: ChamadoSuporte[];
@@ -849,16 +915,35 @@ function TabelaSlaSuporte({
   /** true = não foi possível carregar as datas de conclusão. Sem elas o SLA
    * não é calculável — mostramos o aviso em vez de números incorretos. */
   erroResolvidoEm: boolean;
+  /** true = as datas de conclusão ainda estão a caminho (segunda requisição).
+   *  Sem isto o card mostraria "nenhum ticket no período" por um instante, que
+   *  é indistinguível de não ter havido nada. */
+  carregandoResolvidoEm: boolean;
   /** Abre o card real do Suporte por cima, sem fechar esta lista. */
   onAbrirCard: (t: ChamadoSuporte) => void;
 }) {
-  const filtro = useTicketFilter(tickets, opcoes);
+  // RECORTA PELA RESOLUÇÃO, não pela abertura: este card é sobre o que
+  // foi resolvido no período. Ver `ticketDate`.
+  const filtro = useTicketFilter(tickets, opcoes, resolvidoEmMap);
   /** Responsável selecionado (clique na linha) → abre o modal com os tickets. */
   const [sel, setSel] = useState<string | null>(null);
   const [tab, setTab] = useState<'onTime' | 'late'>('onTime');
   const { linhas, semDataConclusao } = useMemo(() => {
     const map = new Map<string, SlaLinha>();
-    let semData = 0;
+
+    // CONTADO SOBRE A LISTA INTEIRA, não sobre `filtro.filtrados` — e isso é
+    // de propósito. Desde que o período passou a recortar pela CONCLUSÃO, um
+    // ticket resolvido sem data de conclusão registrada não tem data nenhuma
+    // para cair em mês algum, então ele nunca passaria pelo filtro e o aviso
+    // abaixo nunca mais apareceria. Ele sumiria em silêncio — exatamente a
+    // falha que este aviso existe para impedir.
+    //
+    // Por isso o número não é "deste período": é "resolvidos sem data de
+    // conclusão em lugar nenhum", e o texto na tela diz isso.
+    const semData = tickets.filter(
+      (t) => t.status === 'Resolvido' && !resolvidoEmMap[t.id],
+    ).length;
+
     for (const t of filtro.filtrados) {
       if (t.status !== 'Resolvido') continue;
       const nome = (t.responsavel_solucao ?? '').trim();
@@ -870,13 +955,10 @@ function TabelaSlaSuporte({
       // 11 sem nenhuma mudança de etapa real). Ticket sem esse evento
       // registrado fica de fora do cálculo em vez de entrar com data errada.
       const item = medirSla(t, resolvidoEmMap);
-      if (!item) {
-        semData += 1;
-        continue;
-      }
+      if (!item) continue;  // já contabilizado em `semData`, acima
       const rec = map.get(nome) ?? { total: 0, onTime: 0, late: 0, onTimeTickets: [], lateTickets: [] };
       rec.total += 1;
-      if (item.horas <= SLA_HORAS) {
+      if (item.noPrazo) {
         rec.onTime += 1;
         rec.onTimeTickets.push(item);
       } else {
@@ -900,7 +982,7 @@ function TabelaSlaSuporte({
         (a, b) => b.pct - a.pct || b.total - a.total || a.nome.localeCompare(b.nome, 'pt-BR'),
       );
     return { linhas, semDataConclusao: semData };
-  }, [filtro.filtrados, infoDe, resolvidoEmMap]);
+  }, [tickets, filtro.filtrados, infoDe, resolvidoEmMap]);
 
   const totalResolvidos = linhas.reduce((s, l) => s + l.total, 0);
   const totalOnTime = linhas.reduce((s, l) => s + l.onTime, 0);
@@ -917,8 +999,9 @@ function TabelaSlaSuporte({
           Consistência de SLA (24h)
         </CardTitle>
         <CardDescription>
-          Tickets resolvidos dentro do prazo de {SLA_HORAS}h (da abertura até a data em que o
-          card foi movido pra etapa Concluído), por responsável — {filtro.label}.
+          Tickets <strong>resolvidos em {filtro.label}</strong>, por responsável, dentro do
+          prazo de {SLA_HORAS}h úteis — sábado e domingo não contam. O prazo corre da abertura
+          até a data em que o card foi movido pra etapa Concluído.
           {totalResolvidos > 0 && (
             <>
               {' '}
@@ -931,7 +1014,7 @@ function TabelaSlaSuporte({
               {' '}
               <span className="text-[var(--color-warning,#b45309)]">
                 {semDataConclusao} ticket{semDataConclusao > 1 ? 's' : ''} resolvido
-                {semDataConclusao > 1 ? 's' : ''} sem data de conclusão registrada — fora deste
+                {semDataConclusao > 1 ? 's' : ''} sem data de conclusão registrada — fora de todo
                 cálculo (o card nunca teve a etapa alterada pelo quadro do BWA).
               </span>
             </>
@@ -940,7 +1023,11 @@ function TabelaSlaSuporte({
         {filtro.ui}
       </CardHeader>
       <CardContent>
-        {erroResolvidoEm ? (
+        {carregandoResolvidoEm ? (
+          <div className="flex items-center justify-center py-6">
+            <Loader2 className="h-5 w-5 animate-spin text-[var(--color-primary)]" />
+          </div>
+        ) : erroResolvidoEm ? (
           <p className="py-6 text-center text-sm text-[var(--color-destructive)]">
             Não foi possível carregar as datas de conclusão dos tickets. O SLA depende delas para
             ser calculado corretamente, então preferimos não exibir números do que exibir errado.
@@ -1283,6 +1370,12 @@ export function MetricasSuporte() {
   const [users, setUsers] = useState<User[]>([]);
   const [resolvidoEmMap, setResolvidoEmMap] = useState<Record<number, string>>({});
   const [erroResolvidoEm, setErroResolvidoEm] = useState(false);
+  // O mapa de conclusões vem numa SEGUNDA requisição, depois de a tela já ter
+  // renderizado. Desde que o período passou a recortar pela conclusão, os cards
+  // que dependem dele ficam legitimamente vazios até ele chegar — e "vazio" é
+  // indistinguível de "não houve nada no mês". Esta flag deixa os dois cards
+  // dizerem que estão esperando, em vez de mentirem um zero.
+  const [carregandoResolvidoEm, setCarregandoResolvidoEm] = useState(true);
   const [loading, setLoading] = useState(true);
   const [erro, setErro] = useState<string | null>(null);
 
@@ -1367,6 +1460,9 @@ export function MetricasSuporte() {
           })
           .catch(() => {
             if (!cancelled) setErroResolvidoEm(true);
+          })
+          .finally(() => {
+            if (!cancelled) setCarregandoResolvidoEm(false);
           });
       })
       .catch(() => {
@@ -1479,6 +1575,7 @@ export function MetricasSuporte() {
         infoDe={infoDe}
         resolvidoEmMap={resolvidoEmMap}
         erroResolvidoEm={erroResolvidoEm}
+        carregandoResolvidoEm={carregandoResolvidoEm}
         onAbrirCard={setDetailChamado}
       />
 
@@ -1487,6 +1584,8 @@ export function MetricasSuporte() {
         opcoes={opcoes}
         infoDe={infoDe}
         resolvidoEmMap={resolvidoEmMap}
+        erroResolvidoEm={erroResolvidoEm}
+        carregandoResolvidoEm={carregandoResolvidoEm}
         onAbrirCard={setDetailChamado}
       />
 

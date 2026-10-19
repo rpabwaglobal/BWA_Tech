@@ -16,7 +16,7 @@ from apps.projects.models import (
     Project,
     Sprint,
 )
-from apps.formularios.models import ChamadoSuporte, ChamadoSuporteStatus
+from ..suporte import chamados_resolvidos_no_periodo
 from apps.suggestions.models import ProjectSuggestion
 
 from .base import BaseReport, FilterDisplay, TableColumn
@@ -83,19 +83,32 @@ class Report(BaseReport):
         active_projects = self.projetos_visiveis().filter(arquivado=False, is_system=False).count()
 
         # Operação geral (filtrada pelo mesmo período do report).
-        # `support_resolved`: chamados marcados como 'Resolvido' (atualização
-        # final dentro da janela — `data_atualizacao` reflete a transição).
+        #
+        # `support_resolved`: chamados resolvidos DENTRO da janela, medidos
+        # pela data em que o card foi movido de etapa pela última vez.
+        #
+        # ERA `data_atualizacao`, E ESTAVA ERRADO. Aquele campo é `auto_now`:
+        # reescrito em QUALQUER save — mover entre abas, o proxy do portal
+        # re-tocando o registro, corrigir uma nota. Um chamado resolvido em
+        # 30/09 e tocado em 02/10 saía de setembro e aparecia em outubro, e
+        # quem puxava o relatório do mês não fechava a conta com o que a
+        # equipe tinha entregue.
+        #
+        # A tela de Métricas já havia abandonado esse campo pelo mesmo motivo
+        # e passado a usar a timeline; o relatório ficou para trás. Agora os
+        # dois leem a MESMA fonte e devolvem o mesmo número.
+        #
+        # Chamado resolvido SEM evento de troca de etapa registrado fica de
+        # fora: sem data de conclusão ele não pertence a mês nenhum, e entrar
+        # com a data errada é pior que não entrar. A tela de Métricas mostra
+        # um aviso com a contagem desses casos.
         # `date_changes_approved`: solicitações que efetivamente mudaram a
         # data de entrega (status 'approved', usa `reviewed_at`).
         # `projects_proposed`: TODAS as sugestões abertas no período, sem
         # filtrar por status (a "proposição" é o evento que conta).
         self.set_progress(80, 'Apurando operação geral...')
-        support_qs = ChamadoSuporte.objects.filter(status=ChamadoSuporteStatus.RESOLVIDO)
-        if period_start:
-            support_qs = support_qs.filter(data_atualizacao__gte=period_start)
-        if period_end:
-            support_qs = support_qs.filter(data_atualizacao__lt=period_end)
-        support_resolved = support_qs.count()
+        support_resolved = chamados_resolvidos_no_periodo(
+            period_start, period_end).count()
 
         date_changes_qs = CardDueDateChangeRequest.objects.filter(
             status=CardDateChangeRequestStatus.APPROVED,
