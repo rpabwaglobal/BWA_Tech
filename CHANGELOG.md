@@ -100,6 +100,39 @@ antes de reverter, e reverta a migração antes do código.
 
 ---
 
+## 2.7.1
+
+Data: 19/10/2026 · migração de banco: **não**
+
+Correções nas métricas de chamados do Suporte.
+
+- **O SLA deixou de contar sábado e domingo.** Um chamado aberto na sexta às 16h
+  e resolvido na segunda às 10h contava 66 horas e saía como atrasado; agora
+  conta 18 horas úteis e está no prazo. A tela de Suporte já descontava o fim de
+  semana — eram duas contas diferentes no mesmo sistema, e o mesmo chamado podia
+  sair "no prazo" numa tela e "atrasado" na outra.
+- **As métricas passam a contar o chamado no mês em que foi RESOLVIDO.** Escolher
+  "setembro" mostrava os chamados *abertos* em setembro, inclusive os resolvidos
+  em outubro. Os gráficos de abertura continuam contando por abertura, e cada
+  card agora diz no título qual data usa.
+- Enquanto as datas de conclusão carregam, os cards que dependem delas avisam que
+  estão carregando em vez de mostrarem "nenhum ticket no período"; se a busca
+  falhar, dizem que falhou.
+
+### Para quem acompanha os números
+
+**Os números de meses anteriores mudam** — é a correção, não um erro novo. Um
+relatório tirado depois desta versão não vai bater com um tirado antes.
+
+### Em aberto
+
+O campo "chamados resolvidos" dos relatórios Executivo e Métricas Globais
+**mostra zero, e sempre mostrou**: os chamados vivem no portal externo e a tabela
+local está vazia. A consulta foi corrigida, mas falta a fonte. Decidir entre
+contar pela linha do tempo, buscar no portal ou remover o campo.
+
+---
+
 ## 2.7.0
 
 Data: 28/09/2026 · migração de banco: **não**
