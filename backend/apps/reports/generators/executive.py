@@ -16,7 +16,7 @@ from apps.projects.models import (
     Project,
     Sprint,
 )
-from ..suporte import chamados_resolvidos_no_periodo
+from ..suporte import contar_resolvidos_no_periodo
 from apps.suggestions.models import ProjectSuggestion
 
 from .base import BaseReport, FilterDisplay, TableColumn
@@ -107,8 +107,7 @@ class Report(BaseReport):
         # `projects_proposed`: TODAS as sugestões abertas no período, sem
         # filtrar por status (a "proposição" é o evento que conta).
         self.set_progress(80, 'Apurando operação geral...')
-        support_resolved = chamados_resolvidos_no_periodo(
-            period_start, period_end).count()
+        support_resolved = contar_resolvidos_no_periodo(period_start, period_end)
 
         date_changes_qs = CardDueDateChangeRequest.objects.filter(
             status=CardDateChangeRequestStatus.APPROVED,

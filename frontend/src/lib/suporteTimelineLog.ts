@@ -12,6 +12,8 @@ async function postTimelineSafe(
 }
 
 export type SuporteStageLabelFn = (c: ChamadoSuporte) => string;
+/** Devolve a CHAVE da etapa (`finalizado`, `em_desenvolvimento`, …). */
+export type SuporteStageKeyFn = (c: ChamadoSuporte) => string;
 
 function normResp(v: string | null | undefined): string {
   return (v ?? '').trim();
@@ -25,6 +27,11 @@ export async function logSuporteChamadoChanges(
   before: ChamadoSuporte,
   after: ChamadoSuporte,
   getKanbanStageLabel: SuporteStageLabelFn,
+  /** OBRIGATÓRIA de propósito. Deixá-la opcional faria um chamador esquecido
+   *  gravar o evento sem a chave, e aquele chamado sumiria da contagem de
+   *  resolvidos dos relatórios sem erro nenhum — o defeito que este campo veio
+   *  consertar. Obrigatória, o TypeScript cobra em cada um dos chamadores. */
+  getKanbanStageKey: SuporteStageKeyFn,
 ): Promise<void> {
   if (before.id !== after.id) return;
 
@@ -35,7 +42,10 @@ export async function logSuporteChamadoChanges(
     await postTimelineSafe({
       chamado_id: id,
       tipo_evento: 'etapa_alterada',
+      // O rótulo vai na descrição, para quem lê a timeline na tela. A CHAVE vai
+      // no campo próprio, para o relatório não precisar ler o texto.
       descricao: `Etapa do quadro: "${fromStage}" → "${toStage}".`,
+      etapa_destino: getKanbanStageKey(after),
     });
   }
 

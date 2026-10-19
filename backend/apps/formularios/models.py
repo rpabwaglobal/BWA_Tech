@@ -164,6 +164,35 @@ class ChamadoSuporteTimeline(models.Model):
         default=ChamadoSuporteTimelineTipo.COMENTARIO,
     )
     descricao = models.TextField()
+
+    # A CHAVE da etapa de destino, quando o evento é `etapa_alterada`.
+    #
+    # EXISTE PARA O RELATÓRIO NÃO PRECISAR LER A `descricao`. Aquele texto é
+    # montado pelo FRONTEND (`lib/suporteTimelineLog.ts`) com o RÓTULO de
+    # exibição de `STAGES` (`pages/Support.tsx`):
+    #
+    #     Etapa do quadro: "Em desenvolvimento" → "Concluído".
+    #
+    # Contar "quantos chamados foram concluídos no mês" a partir dali faria um
+    # relatório do backend depender de um texto de interface: renomear a etapa
+    # na tela derrubaria o número em silêncio, e eventos antigos e novos
+    # passariam a discordar entre si. É a dívida de "acoplamento por nome
+    # literal" que este projeto já paga em outros lugares.
+    #
+    # Guardando a chave, o parsing acontece UMA VEZ — na migração que preencheu
+    # o histórico — em vez de a cada consulta, para sempre. A chave é estável
+    # por contrato; o rótulo é livre para mudar.
+    #
+    # Vazio em eventos que não são troca de etapa, e nos registros anteriores à
+    # migração cujo rótulo não pôde ser mapeado (ver a migração: foram zero).
+    etapa_destino = models.CharField(
+        max_length=30,
+        blank=True,
+        default='',
+        db_index=True,
+        verbose_name='Chave da etapa de destino',
+    )
+
     usuario = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.SET_NULL,

@@ -14,6 +14,13 @@
 services:
   db:
     image: postgres:16.6-alpine
+    # SOBE SOZINHO DEPOIS DE REINICIAR A MAQUINA, e isso nao e preferencia.
+    # Sem esta linha o BWA Tech cai a cada reinicio da VPS: o backend tem
+    # `unless-stopped` e volta, o banco nao, e o backend entra em laco de
+    # reinicio por nao achar o Postgres. Aconteceu em 19/10/2026 — `db` e
+    # `redis` simplesmente nao apareciam no `docker ps`, e backend e worker
+    # ficavam em `Restarting` ate alguem subi-los a mao.
+    restart: unless-stopped
     env_file:
       - .env
     ports:
@@ -33,6 +40,11 @@ services:
     image: redis:7.4-alpine
     # Exige senha (REDIS_PASSWORD do .env). Sem persistência em disco (broker apenas).
     command: ["sh", "-c", "redis-server --requirepass \"$$REDIS_PASSWORD\" --save \"\" --appendonly no --protected-mode yes"]
+    # Mesmo motivo do `db`: sem ele, o worker do Celery sobe e fica `unhealthy`
+    # para sempre, e com ele param o tempo real e TODAS as tarefas agendadas —
+    # fechamento de sprint por data, promocao de feedback, alertas de prazo.
+    # Em silencio, porque nada disso gera erro em tela.
+    restart: unless-stopped
     env_file:
       - .env
     volumes:

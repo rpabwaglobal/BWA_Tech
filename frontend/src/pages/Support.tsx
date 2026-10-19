@@ -335,6 +335,12 @@ function normalizeStatusEtapa(status: ChamadoSuporte['status'] | string | undefi
 }
 
 /** Colunas do quadro a partir do status retornado pela API (aceita pequenas variações de texto). */
+/** A CHAVE da etapa do chamado. Exportada porque a timeline grava a chave,
+ *  e não o rótulo: é por ela que os relatórios contam chamados resolvidos. */
+export function getKanbanStageKey(c: ChamadoSuporte): StageKey {
+  return chamadoToStage(c);
+}
+
 function chamadoToStage(c: ChamadoSuporte): StageKey {
   const desc = c.descricao_resolucao ?? '';
   const pendencia = hasPendenciaMarker(desc);
@@ -1055,7 +1061,7 @@ export default function Support() {
       const updated = await suporteService.patch(id, patch);
       setItems((prev) => prev.map((x) => (x.id === id ? updated : x)));
       setDetailChamado((d) => (d?.id === id ? updated : d));
-      await logSuporteChamadoChanges(before, updated, getKanbanStageLabel);
+      await logSuporteChamadoChanges(before, updated, getKanbanStageLabel, getKanbanStageKey);
       bumpTimeline();
     },
     [bumpTimeline],
@@ -1242,7 +1248,7 @@ export default function Support() {
         const updated = await suporteService.patchResolucao(chamado.id, patch, arquivo);
         setItems((prev) => prev.map((x) => (x.id === chamado.id ? updated : x)));
         setDetailChamado((d) => (d?.id === chamado.id ? updated : d));
-        await logSuporteChamadoChanges(chamado, updated, getKanbanStageLabel);
+        await logSuporteChamadoChanges(chamado, updated, getKanbanStageLabel, getKanbanStageKey);
         bumpTimeline();
         // O portal não tem campo de link — o link (se houver) fica no Django local.
         if (link) {
@@ -2397,7 +2403,7 @@ export function ChamadoDetailDialog({
         responsavel_solucao: nomeSolucao || null,
       });
       onUpdated(updated);
-      await logSuporteChamadoChanges(antes, updated, getKanbanStageLabel);
+      await logSuporteChamadoChanges(antes, updated, getKanbanStageLabel, getKanbanStageKey);
       bumpTimeline();
     } catch (e: unknown) {
       setResponsavelUserId(userIdFromResponsavelNome(users, chamado.responsavel_solucao));
@@ -2427,7 +2433,7 @@ export function ChamadoDetailDialog({
       });
       setResponsavelUserId(userIdFromResponsavelNome(users, updated.responsavel_solucao));
       onUpdated(updated);
-      await logSuporteChamadoChanges(antes, updated, getKanbanStageLabel);
+      await logSuporteChamadoChanges(antes, updated, getKanbanStageLabel, getKanbanStageKey);
       bumpTimeline();
     } catch {
       onError('Erro ao atribuir ticket.');

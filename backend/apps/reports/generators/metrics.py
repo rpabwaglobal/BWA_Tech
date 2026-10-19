@@ -28,7 +28,7 @@ from apps.projects.models import (
     CardDueDateChangeRequest,
     Sprint,
 )
-from ..suporte import chamados_resolvidos_no_periodo
+from ..suporte import contar_resolvidos_no_periodo
 from apps.suggestions.models import ProjectSuggestion
 
 from .base import BaseReport, FilterDisplay, TableColumn
@@ -212,7 +212,7 @@ class Report(BaseReport):
         # Operação geral (mesma janela do report) — mantém regra dos
         # relatórios Executivo/Métricas em sincronia.
         self.set_progress(90, 'Apurando operação geral...')
-        support_qs = chamados_resolvidos_no_periodo(period_start, period_end)
+        support_resolved = contar_resolvidos_no_periodo(period_start, period_end)
 
         date_changes_qs = CardDueDateChangeRequest.objects.filter(
             status=CardDateChangeRequestStatus.APPROVED,
@@ -229,7 +229,7 @@ class Report(BaseReport):
             suggestions_qs = suggestions_qs.filter(created_at__lt=period_end)
 
         operations = {
-            'support_resolved': support_qs.count(),
+            'support_resolved': support_resolved,
             'date_changes_approved': date_changes_qs.count(),
             'projects_proposed': suggestions_qs.count(),
         }
