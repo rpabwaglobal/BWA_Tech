@@ -11,6 +11,7 @@ from .views import (
     CardAnexoViewSet,
 )
 from .dashboard import DashboardResumoView
+from .feriados_api import FeriadosView
 
 router = DefaultRouter()
 router.register(r'sprints', SprintViewSet, basename='sprint')
@@ -32,6 +33,8 @@ router.register(r'card-anexos', CardAnexoViewSet, basename='cardanexo')
 
 urlpatterns = [
     path('dashboard/resumo/', DashboardResumoView.as_view(), name='dashboard-resumo'),
+    # Feriados para o SLA do Suporte, calculado no navegador. Ver feriados_api.py.
+    path('feriados/', FeriadosView.as_view(), name='feriados'),
     # Preferências de notificação (single-resource — não usa router)
     path('notifications/preferences/', NotificationPreferenceView.as_view(), name='notification-preferences'),
     path('', include(router.urls)),

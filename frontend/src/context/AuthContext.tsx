@@ -1,6 +1,7 @@
 import { createContext, useContext, useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import type { ReactNode } from 'react';
 import { authService } from '../services/authService';
+import { feriadosService } from '@/services/feriadosService';
 import type { User, RegisterData } from '../services/authService';
 import { userService } from '../services/userService';
 import { setCargoCatalog, setSetorCatalog } from '../lib/catalog-style';
@@ -131,6 +132,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     document.addEventListener('visibilitychange', handleVisibility);
     return () => document.removeEventListener('visibilitychange', handleVisibility);
   }, [performLogout, refreshUser]);
+
+  // FERIADOS CADASTRADOS, UMA VEZ POR SESSAO AUTENTICADA.
+  //
+  // Entram os estaduais do RN, municipais de Natal e recessos da empresa, que
+  // dependem de decisao humana e vivem no banco. Os nacionais o frontend
+  // calcula sozinho (`@/lib/feriados`), e e por isso que este carregamento pode
+  // falhar sem consequencia visivel: sem ele o SLA desconta os nacionais, com
+  // ele desconta tudo.
+  //
+  // DEPOIS DA AUTENTICACAO, porque o endpoint exige login. Nao bloqueia nada e
+  // nao lanca — `feriadosService.carregar` trata o erro e devolve o que houver.
+  useEffect(() => {
+    if (!user) return;
+    void feriadosService.carregar();
+  }, [user]);
 
   const login = useCallback(async (email: string, password: string) => {
     const response = await authService.login({ email, password });

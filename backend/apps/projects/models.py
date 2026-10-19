@@ -665,26 +665,49 @@ class CardAnexo(models.Model):
         return f'{self.nome_original or self.arquivo.name} (card #{self.card_id})'
 
 
-class CachedHoliday(models.Model):
-    """Cache local de feriados (Feriados API) para cálculo de dias úteis em Natal/RN."""
+class FeriadoAbrangencia(models.TextChoices):
+    ESTADUAL = 'estadual', 'Estadual (RN)'
+    MUNICIPAL = 'municipal', 'Municipal (Natal)'
+    EMPRESA = 'empresa', 'Recesso ou ponto facultativo da empresa'
 
-    date = models.DateField(verbose_name='Data')
-    year = models.PositiveSmallIntegerField(verbose_name='Ano')
-    name = models.CharField(max_length=200, verbose_name='Nome')
-    tipo = models.CharField(max_length=20, verbose_name='Tipo')
-    ibge = models.PositiveIntegerField(default=2408102, verbose_name='Código IBGE')
-    synced_at = models.DateTimeField(auto_now=True, verbose_name='Sincronizado em')
+
+class Feriado(models.Model):
+    """Dias não úteis que NÃO dá para calcular — a metade cadastrada da regra.
+
+    SUBSTITUI `CachedHoliday`, que era cache de uma API externa. Aquela tabela
+    tinha ZERO linhas em produção, a chave da API nunca foi configurada e o sync
+    só rodava por comando manual que ninguém chamava; o cálculo caía num
+    fallback de oito datas fixas e ninguém percebia. Um caminho que falha em
+    silêncio é pior que um caminho que não existe.
+
+    AQUI SÓ ENTRA O QUE DEPENDE DE DECISÃO HUMANA: feriado estadual do RN,
+    municipal de Natal, recesso da empresa. Os nacionais são CALCULADOS em
+    `apps/projects/feriados.py` e não devem ser cadastrados aqui — cadastrá-los
+    criaria duas respostas para o mesmo dia, que é exatamente o problema que
+    este modelo existe para encerrar.
+
+    `data` é única porque o sistema só pergunta "este dia é útil?". Dois
+    registros para o mesmo dia responderiam a mesma coisa duas vezes.
+    """
+
+    data = models.DateField(unique=True, verbose_name='Data')
+    nome = models.CharField(max_length=200, verbose_name='Nome')
+    abrangencia = models.CharField(
+        max_length=20,
+        choices=FeriadoAbrangencia.choices,
+        default=FeriadoAbrangencia.MUNICIPAL,
+        verbose_name='Abrangência',
+    )
+    observacao = models.TextField(blank=True, default='', verbose_name='Observação')
+    criado_em = models.DateTimeField(auto_now_add=True, verbose_name='Criado em')
 
     class Meta:
-        verbose_name = 'Feriado em cache'
-        verbose_name_plural = 'Feriados em cache'
-        constraints = [
-            models.UniqueConstraint(fields=['date', 'ibge'], name='projects_cachedholiday_date_ibge_uniq'),
-        ]
-        ordering = ['date']
+        verbose_name = 'Feriado cadastrado'
+        verbose_name_plural = 'Feriados cadastrados'
+        ordering = ['data']
 
     def __str__(self):
-        return f'{self.date} — {self.name}'
+        return f'{self.data} — {self.nome}'
 
 
 # CardTodo e CardTodoStatus REMOVIDOS — sistema de subtarefas por card foi
