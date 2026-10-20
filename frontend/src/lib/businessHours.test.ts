@@ -16,9 +16,10 @@
  * As datas são de outubro de 2026, com os dias da semana conferidos:
  * 15 = quinta, 16 = sexta, 17 = sábado, 18 = domingo, 19 = segunda, 20 = terça.
  */
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 
 import { add24BusinessHours, businessHoursBetween, isSuporteOverdue } from './businessHours';
+import { definirFeriadosDoServidor } from './feriados';
 
 const SEG = '2026-10-19T00:00:00';
 const QUI_10H = new Date('2026-10-15T10:00:00');
@@ -142,5 +143,69 @@ describe('isSuporteOverdue', () => {
 
   it('aberto agora não está atrasado', () => {
     expect(isSuporteOverdue({ status: 'Aberto', data_abertura: new Date().toISOString() })).toBe(false);
+  });
+});
+
+/**
+ * FERIADO ENTROU NA REGRA DEPOIS DO FIM DE SEMANA, e pelo mesmo motivo: um
+ * chamado aberto na véspera de um feriado prolongado nascia atrasado.
+ *
+ * Datas de 2026, dias da semana conferidos:
+ *   20/04 segunda · 21/04 TERÇA, Tiradentes · 22/04 quarta
+ *   19/11 quinta · 20/11 SEXTA, Consciência Negra · 21-22 fim de semana · 23/11 segunda
+ */
+describe('o SLA desconta feriado', () => {
+  beforeEach(() => {
+    definirFeriadosDoServidor([]);
+  });
+
+  it('empurra o prazo que cairia num feriado nacional', () => {
+    const abertura = new Date('2026-04-20T10:00:00'); // segunda
+    // 24h daria terça 21/04 10h, que é Tiradentes.
+    expect(add24BusinessHours(abertura).toISOString())
+      .toBe(new Date('2026-04-22T10:00:00').toISOString());
+  });
+
+  it('atravessa feriado E fim de semana de uma vez', () => {
+    // Quinta 19/11 16h → sexta é feriado, sábado e domingo são fds.
+    const abertura = new Date('2026-11-19T16:00:00');
+    expect(add24BusinessHours(abertura).toISOString())
+      .toBe(new Date('2026-11-23T16:00:00').toISOString());
+  });
+
+  it('não conta as horas do feriado na medida exibida', () => {
+    const abertura = new Date('2026-11-19T16:00:00'); // quinta
+    const resolucao = new Date('2026-11-23T10:00:00'); // segunda
+
+    // 90h de relógio. Úteis: 8h de quinta + 10h de segunda. Sexta (feriado),
+    // sábado e domingo saem inteiros.
+    expect(businessHoursBetween(abertura, resolucao)).toBe(18);
+  });
+
+  it('o veredicto e a medida continuam concordando com feriado no meio', () => {
+    // A trava central desta suíte, agora com feriado. Se as duas funções
+    // derivarem, a tela volta a dizer "no prazo" ao lado de "90h".
+    const abertura = new Date('2026-11-19T16:00:00');
+    for (const resolucao of [
+      new Date('2026-11-23T10:00:00'), // segunda cedo — dentro
+      new Date('2026-11-23T15:59:00'), // um minuto antes do prazo
+      new Date('2026-11-23T16:01:00'), // um minuto depois
+      new Date('2026-11-24T09:00:00'), // terça — fora
+    ]) {
+      const dentroPelaMedida = businessHoursBetween(abertura, resolucao) <= 24;
+      const dentroPeloPrazo = resolucao <= add24BusinessHours(abertura);
+      expect(dentroPelaMedida, resolucao.toISOString()).toBe(dentroPeloPrazo);
+    }
+  });
+
+  it('respeita feriado municipal vindo do servidor', () => {
+    const abertura = new Date('2026-03-02T10:00:00'); // segunda comum
+    expect(add24BusinessHours(abertura).toISOString())
+      .toBe(new Date('2026-03-03T10:00:00').toISOString());
+
+    definirFeriadosDoServidor(['2026-03-03']);
+
+    expect(add24BusinessHours(abertura).toISOString())
+      .toBe(new Date('2026-03-04T10:00:00').toISOString());
   });
 });

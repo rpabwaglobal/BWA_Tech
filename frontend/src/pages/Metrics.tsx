@@ -41,6 +41,8 @@ import { ROUTES } from '@/routes';
 import { cachedFetch, METRICS_BUNDLE_CACHE_KEY } from '@/lib/cachedFetch';
 import { TelaComCarregamento } from '@/components/TelaComCarregamento';
 import { entregueNoPrazo } from '@/lib/prazoDoCard';
+import { chaveDoMes, resumirPontualidade, rotuloDoMes, type ItemPontualidade } from '@/lib/pontualidade';
+import { GraficoPontualidade } from '@/components/GraficoPontualidade';
 import { NumeroCrescente } from '@/components/NumeroCrescente';
 
 /** Alias usado em todo o módulo. Slim para todos os cálculos de métricas
@@ -362,6 +364,9 @@ export default function Metrics() {
     lateCards: CardType[];
   } | null>(null);
   const [chartCardsTab, setChartCardsTab] = useState<'onTime' | 'late'>('onTime');
+
+  /** Agrupamento do gráfico de % no prazo: por sprint ou por mês de entrega. */
+  const [pontualidadePor, setPontualidadePor] = useState<'sprint' | 'mes'>('sprint');
   const [onTimeViewCardOpen, setOnTimeViewCardOpen] = useState(false);
   const [onTimeViewCardLoading, setOnTimeViewCardLoading] = useState(false);
   // Recebe o Card COMPLETO (FullCardType) vindo de cardService.getById ao
@@ -509,6 +514,48 @@ export default function Metrics() {
       return visibleProjectIds.has(String(c.projeto));
     });
   }, [cards, visibleProjectIds]);
+
+  /** % de cards entregues no prazo, por sprint ou por mês de entrega.
+   *
+   * PARTE DOS FINALIZADOS, E NÃO DE `closedCards`. Aquela lista já exige
+   * `data_fim` e `finalizado_em`, então um card sem prazo definido sumiria
+   * ANTES de ser contado — e o aviso de excluídos mostraria zero justamente
+   * quando há mais o que avisar. Aqui a exclusão acontece dentro de
+   * `resumirPontualidade`, que a devolve somada.
+   *
+   * POR MÊS É O DA ENTREGA, não o da criação. Mesma regra que as métricas de
+   * suporte passaram a usar: um card criado em setembro e entregue em outubro
+   * conta em outubro, porque a pergunta é sobre a entrega. */
+  const pontualidadeDosCards = useMemo(() => {
+    const finalizados = cards.filter(
+      (c) =>
+        c.status === CLOSED_STATUS &&
+        !isSystemProject(c) &&
+        visibleProjectIds.has(String(c.projeto)),
+    );
+
+    const itens: ItemPontualidade[] = finalizados.map((card) => {
+      const noPrazo = entregueNoPrazo(card);
+
+      if (pontualidadePor === 'mes') {
+        const chave = card.finalizado_em ? chaveDoMes(card.finalizado_em) : null;
+        return { chave, rotulo: chave ? rotuloDoMes(chave) : '—', noPrazo };
+      }
+
+      const sprint = getSprintForCard(card);
+      return {
+        chave: sprint ? String(sprint.id) : null,
+        rotulo: sprint?.nome ?? '—',
+        // Sprint não ordena por nome ("Sprint 10" antes de "Sprint 2"), nem por
+        // id. A data de início é a única ordem que a pessoa reconhece.
+        ordem: sprint ? new Date(sprint.data_inicio).getTime() : undefined,
+        noPrazo,
+      };
+    });
+
+    return resumirPontualidade(itens);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cards, visibleProjectIds, pontualidadePor, sprints, projectToSprint]);
 
   /** Em qual dia da sprint o card foi entregue de fato (usa finalizado_em). */
   const getDayOfSprint = (card: CardType): { sprint: Sprint; day: number } | null => {
@@ -1625,6 +1672,38 @@ export default function Metrics() {
           </CardContent>
         </Card>
       </div>
+
+      {/* Gráfico: % entregue no prazo */}
+      <GraficoPontualidade
+        resumo={pontualidadeDosCards}
+        titulo="Cards entregues no prazo"
+        icone={<Target className="h-5 w-5" />}
+        descricao="Percentual de cards finalizados dentro do prazo combinado."
+        rotuloItem={{ singular: 'card', plural: 'cards' }}
+        textoVazio="Nenhum card finalizado com prazo e data de conclusão registrados."
+        acoes={
+          <div className="flex items-center gap-1 rounded-md border border-[var(--color-border)] p-[2px]">
+            {([
+              ['sprint', 'Por sprint'],
+              ['mes', 'Por mês'],
+            ] as const).map(([valor, rotulo]) => (
+              <Button
+                key={valor}
+                variant="ghost"
+                size="sm"
+                onClick={() => setPontualidadePor(valor)}
+                className={
+                  pontualidadePor === valor
+                    ? 'bg-[var(--color-primary)] text-[var(--color-primary-foreground)] hover:bg-[var(--color-primary)]'
+                    : 'text-[var(--color-muted-foreground)]'
+                }
+              >
+                {rotulo}
+              </Button>
+            ))}
+          </div>
+        }
+      />
 
       {/* Gráfico: Cards fechados por usuário */}
       <Card>

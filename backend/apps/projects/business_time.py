@@ -1,6 +1,12 @@
 """
 Cálculo de tempo em desenvolvimento: dias corridos, dias úteis e horas de expediente.
 Expediente: 07:30–12:30 e 13:30–17:30 (America/Sao_Paulo), excluindo fins de semana e feriados.
+
+QUAIS FERIADOS: os de `apps/projects/feriados.py`, que é a única fonte do
+sistema. Antes este módulo lia a tabela de cache da API externa e, quando ela
+vinha vazia — que era SEMPRE, medido em produção —, caía num fallback de oito
+datas fixas: sem Carnaval, sem Sexta-feira Santa, sem Corpus Christi, sem 20/11.
+O cálculo nunca quebrou, só deu outro número em silêncio.
 """
 from __future__ import annotations
 
@@ -9,7 +15,7 @@ from zoneinfo import ZoneInfo
 
 from django.utils import timezone
 
-from .holiday_sync import holiday_dates_between
+from .feriados import feriados_entre
 from .models import Card, CardStatus
 
 LOCAL_TZ = ZoneInfo('America/Sao_Paulo')
@@ -17,12 +23,6 @@ WORK_WINDOWS = (
     (time(7, 30), time(12, 30)),
     (time(13, 30), time(17, 30)),
 )
-
-# Fallback mínimo (nacionais fixos) se cache de feriados estiver vazio
-_FALLBACK_FIXED = (
-    (1, 1), (4, 21), (5, 1), (9, 7), (10, 12), (11, 2), (11, 15), (12, 25),
-)
-
 
 def _to_local(dt: datetime) -> datetime:
     if timezone.is_naive(dt):
@@ -32,15 +32,6 @@ def _to_local(dt: datetime) -> datetime:
 
 def _is_weekend(d: date) -> bool:
     return d.weekday() >= 5
-
-
-def _fallback_holiday(d: date) -> bool:
-    return (d.month, d.day) in _FALLBACK_FIXED
-
-
-def _is_holiday(d: date, holidays: set[date]) -> bool:
-    # Cache cobre móveis/municipais; fallback garante nacionais fixos mesmo com cache parcial.
-    return d in holidays or _fallback_holiday(d)
 
 
 def _minutes_in_window(day: date, period_start: datetime, period_end: datetime, win_start: time, win_end: time) -> int:
@@ -55,7 +46,7 @@ def _minutes_in_window(day: date, period_start: datetime, period_end: datetime, 
 
 
 def _business_minutes_on_day(day: date, period_start: datetime, period_end: datetime, holidays: set[date]) -> int:
-    if _is_weekend(day) or _is_holiday(day, holidays):
+    if _is_weekend(day) or day in holidays:
         return 0
     day_start = datetime.combine(day, time.min, tzinfo=period_start.tzinfo)
     day_end = datetime.combine(day, time(23, 59, 59), tzinfo=period_start.tzinfo)
@@ -81,7 +72,7 @@ def calculate_development_time(data_inicio: datetime, finalizado_em: datetime) -
     if end < start:
         return None
 
-    holidays = holiday_dates_between(start.date(), end.date())
+    holidays = feriados_entre(start.date(), end.date())
 
     total_minutes = 0
     business_days = 0

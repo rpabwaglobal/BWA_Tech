@@ -3,29 +3,40 @@
  *
  * Regra atual (combinada com o usuário):
  *  - 24h CORRIDAS a partir da data de abertura,
- *  - SE o prazo cair em sábado/domingo, soma o tempo que falta de fds + 24h.
- *  - SEM feriados (pragmático — não dependemos de lib externa).
+ *  - descontando sábado, domingo E FERIADO.
+ *
+ * FERIADO ENTROU DEPOIS, E A FALTA DELE TINHA EFEITO REAL. O comentário que
+ * ficava aqui dizia "SEM feriados (pragmático — não dependemos de lib
+ * externa)". Não era preciso lib externa nenhuma: `dateUtils.ts` já calculava
+ * feriados brasileiros neste mesmo projeto, e o cálculo dos cards já os usava.
+ * Só o SLA é que não — um chamado aberto na véspera de um feriado prolongado
+ * nascia atrasado.
+ *
+ * A resposta vem de `@/lib/feriados`, única no frontend e espelhada no backend
+ * (`apps/projects/feriados.py`). Os nacionais são calculados e valem de
+ * imediato; estaduais, municipais e recessos chegam por `/api/feriados/`.
  *
  * Não tenta modelar horário comercial (9h-18h) — qualquer hora dentro do dia
- * conta. Se um dia precisarmos disso, vale revisitar com uma lib (date-fns ou
- * dayjs) e arquivo de feriados.
+ * conta.
  */
+import { isFeriado, isFimDeSemana } from '@/lib/feriados';
 import type { ChamadoSuporte } from '@/services/suporteService';
 
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 
-/** True se a data cai em sábado (6) ou domingo (0). */
-function isWeekend(d: Date): boolean {
-  const day = d.getDay();
-  return day === 0 || day === 6;
+/** True se o dia não conta para o prazo: fim de semana ou feriado. */
+function isNaoUtil(d: Date): boolean {
+  return isFimDeSemana(d) || isFeriado(d);
 }
 
 /**
- * Adiciona 24h corridas a `start`, mas se o resultado cair em fim de semana
- * (sáb ou dom), empurra pra próxima segunda no MESMO horário.
+ * Adiciona 24h corridas a `start`, e enquanto o resultado cair em dia não útil
+ * (fim de semana ou feriado), empurra um dia inteiro, no MESMO horário.
  *
  * Mais simples que "skipar enquanto conta" — cobre o caso comum em que a
- * abertura é numa quinta/sexta e o prazo bate no fds.
+ * abertura é numa véspera e o prazo bate no descanso. Empurrar em DIAS INTEIROS
+ * é o que preserva o horário do dia, e é disso que depende a consistência com
+ * `businessHoursBetween` descrita mais abaixo.
  */
 export function add24BusinessHours(start: Date): Date {
   // Guard: data inválida entra, data inválida sai — quem chamou decide o que
@@ -37,7 +48,7 @@ export function add24BusinessHours(start: Date): Date {
   // por ser explícito sobre a intenção, não por evitar travamento.
   if (Number.isNaN(start.getTime())) return start;
   const result = new Date(start.getTime() + ONE_DAY_MS);
-  while (isWeekend(result)) {
+  while (isNaoUtil(result)) {
     result.setTime(result.getTime() + ONE_DAY_MS);
   }
   return result;
@@ -59,7 +70,7 @@ export function isSuporteOverdue(chamado: Pick<ChamadoSuporte, 'status' | 'data_
 }
 
 /**
- * Horas decorridas entre dois instantes, DESCONTANDO sábado e domingo.
+ * Horas decorridas entre dois instantes, DESCONTANDO sábado, domingo e feriado.
  *
  * Existe para a tabela de SLA mostrar um número coerente com o veredicto. O
  * veredicto sai de `add24BusinessHours` (a mesma função do selo "atrasado" da
@@ -92,9 +103,9 @@ export function businessHoursBetween(start: Date, end: Date): number {
   while (cursor < fim) {
     const passo = Math.min(UMA_HORA, fim - cursor);
     // O passo conta pelo dia em que COMEÇA. Com passo de uma hora, o erro
-    // máximo é de uma hora na virada de domingo para segunda — e o veredicto
-    // não depende disso, porque quem decide é `add24BusinessHours`.
-    if (!isWeekend(new Date(cursor))) uteis += passo / UMA_HORA;
+    // máximo é de uma hora na virada de um dia não útil para um útil — e o
+    // veredicto não depende disso, porque quem decide é `add24BusinessHours`.
+    if (!isNaoUtil(new Date(cursor))) uteis += passo / UMA_HORA;
     cursor += passo;
   }
   return uteis;

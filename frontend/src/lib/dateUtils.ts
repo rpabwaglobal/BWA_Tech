@@ -1,93 +1,17 @@
 import { prazoVencido } from './prazoDoCard';
-// Feriados nacionais brasileiros (fixos)
-const FERIADOS_FIXOS = [
-  { mes: 1, dia: 1 },   // Confraternização Universal
-  { mes: 4, dia: 21 },  // Tiradentes
-  { mes: 5, dia: 1 },   // Dia do Trabalhador
-  { mes: 9, dia: 7 },   // Independência do Brasil
-  { mes: 10, dia: 12 }, // Nossa Senhora Aparecida
-  { mes: 11, dia: 2 },  // Finados
-  { mes: 11, dia: 15 }, // Proclamação da República
-  { mes: 12, dia: 25 }, // Natal
-];
-
-// Calcula a Páscoa usando o algoritmo de Meeus/Jones/Butcher
-function calcularPascoa(ano: number): Date {
-  const a = ano % 19;
-  const b = Math.floor(ano / 100);
-  const c = ano % 100;
-  const d = Math.floor(b / 4);
-  const e = b % 4;
-  const f = Math.floor((b + 8) / 25);
-  const g = Math.floor((b - f + 1) / 3);
-  const h = (19 * a + b - d - g + 15) % 30;
-  const i = Math.floor(c / 4);
-  const k = c % 4;
-  const l = (32 + 2 * e + 2 * i - h - k) % 7;
-  const m = Math.floor((a + 11 * h + 22 * l) / 451);
-  const mes = Math.floor((h + l - 7 * m + 114) / 31);
-  const dia = ((h + l - 7 * m + 114) % 31) + 1;
-  return new Date(ano, mes - 1, dia);
-}
-
-// Retorna feriados móveis baseados na Páscoa
-function getFeriadosMoveis(ano: number): Date[] {
-  const pascoa = calcularPascoa(ano);
-  const feriadosMoveis: Date[] = [];
-
-  // Carnaval (47 dias antes da Páscoa - segunda e terça)
-  const carnavalTerca = new Date(pascoa);
-  carnavalTerca.setDate(pascoa.getDate() - 47);
-  const carnavalSegunda = new Date(carnavalTerca);
-  carnavalSegunda.setDate(carnavalTerca.getDate() - 1);
-  feriadosMoveis.push(carnavalSegunda, carnavalTerca);
-
-  // Sexta-feira Santa (2 dias antes da Páscoa)
-  const sextaSanta = new Date(pascoa);
-  sextaSanta.setDate(pascoa.getDate() - 2);
-  feriadosMoveis.push(sextaSanta);
-
-  // Corpus Christi (60 dias após a Páscoa)
-  const corpusChristi = new Date(pascoa);
-  corpusChristi.setDate(pascoa.getDate() + 60);
-  feriadosMoveis.push(corpusChristi);
-
-  return feriadosMoveis;
-}
-
-// Verifica se uma data é feriado
-function isFeriado(data: Date): boolean {
-  const ano = data.getFullYear();
-  const mes = data.getMonth() + 1;
-  const dia = data.getDate();
-
-  // Verifica feriados fixos
-  for (const feriado of FERIADOS_FIXOS) {
-    if (feriado.mes === mes && feriado.dia === dia) {
-      return true;
-    }
-  }
-
-  // Verifica feriados móveis
-  const feriadosMoveis = getFeriadosMoveis(ano);
-  for (const feriado of feriadosMoveis) {
-    if (
-      feriado.getFullYear() === ano &&
-      feriado.getMonth() === data.getMonth() &&
-      feriado.getDate() === dia
-    ) {
-      return true;
-    }
-  }
-
-  return false;
-}
-
-// Verifica se é final de semana
-function isFimDeSemana(data: Date): boolean {
-  const diaSemana = data.getDay();
-  return diaSemana === 0 || diaSemana === 6; // Domingo = 0, Sábado = 6
-}
+// A REGRA DE FERIADO SAIU DAQUI, e isso conserta mais do que uma duplicação.
+//
+// Este arquivo tinha a única implementação de feriados do frontend — fixos mais
+// os móveis derivados da Páscoa — e ela era PRIVADA ao módulo. Resultado: o SLA
+// dos chamados de suporte (`businessHours.ts`) não tinha como usá-la e contava
+// feriado como dia normal, e o 20/11 faltava aqui desde que virou feriado
+// nacional, em 2024.
+//
+// Agora a resposta vem de `@/lib/feriados`, que é a única do frontend e espelha
+// `apps/projects/feriados.py` no backend. Lá também entram os feriados
+// estaduais, municipais e recessos que a equipe cadastra — coisa que uma lista
+// fixa no código nunca poderia cobrir.
+import { isFeriado, isFimDeSemana } from './feriados';
 
 // Calcula dias totais entre duas datas
 export function calcularDiasTotais(dataInicio: string, dataFim: string): number {

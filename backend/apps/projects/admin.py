@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import UserNotificationPreference, UserNote, UserNoteItem, CardPin
+from .models import Feriado, UserNotificationPreference, UserNote, UserNoteItem, CardPin
 
 
 class UserNoteItemInline(admin.TabularInline):
@@ -42,3 +42,20 @@ class UserNotificationPreferenceAdmin(admin.ModelAdmin):
     )
     search_fields = ('user__username', 'user__email')
     readonly_fields = ('updated_at',)
+
+
+@admin.register(Feriado)
+class FeriadoAdmin(admin.ModelAdmin):
+    """Onde a equipe mantém a metade CADASTRADA dos feriados.
+
+    Os nacionais (fixos e os derivados da Páscoa) são calculados em
+    `apps/projects/feriados.py` e NÃO aparecem aqui — cadastrá-los criaria duas
+    respostas para o mesmo dia. Aqui entram estaduais do RN, municipais de Natal
+    e recessos da empresa.
+    """
+
+    list_display = ('data', 'nome', 'abrangencia', 'criado_em')
+    list_filter = ('abrangencia',)
+    search_fields = ('nome', 'observacao')
+    ordering = ('-data',)
+    date_hierarchy = 'data'
