@@ -103,7 +103,7 @@ class FeriadoSerializer(serializers.ModelSerializer):
     class Meta:
         model = Feriado
         fields = ('id', 'data', 'nome', 'abrangencia', 'abrangencia_display',
-                  'observacao', 'criado_em')
+                  'recorrente', 'observacao', 'criado_em')
         read_only_fields = ('id', 'criado_em')
 
     def validate_data(self, valor):
@@ -113,6 +113,15 @@ class FeriadoSerializer(serializers.ModelSerializer):
         fazendo falta. O registro não mudaria nada — o dia já não é útil — mas
         passaria a existir uma segunda resposta para o mesmo dia, que é
         exatamente o que o módulo de feriados foi criado para encerrar.
+
+        A CHECAGEM É SOBRE O ANO DA DATA INFORMADA, inclusive para recorrente.
+        Para os nacionais FIXOS isso basta, porque eles caem no mesmo dia todo
+        ano. Para os MÓVEIS não cobre tudo: um recorrente em 3 de abril coincide
+        com a Sexta-feira Santa em 2026 e não em outros anos. Varrer todos os
+        anos futuros para recusar uma colisão eventual seria recusar um cadastro
+        legítimo por causa de um ano distante — e a sobreposição, quando
+        acontece, não produz número errado: o dia já não é útil pelos dois
+        motivos.
         """
         from .feriados import nacionais_do_ano
 

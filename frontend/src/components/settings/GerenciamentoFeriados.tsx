@@ -7,6 +7,7 @@ import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Switch } from '@/components/ui/switch';
 import { useAuth } from '@/context/AuthContext';
 import { hasPermission } from '@/lib/permissions';
 import {
@@ -173,6 +174,7 @@ export function GerenciamentoFeriados() {
                   <tr className="border-b border-[var(--color-border)] text-left text-[var(--color-muted-foreground)]">
                     <th className="px-[12px] py-[8px] font-medium">Data</th>
                     <th className="px-[12px] py-[8px] font-medium">Nome</th>
+                    <th className="px-[12px] py-[8px] font-medium">Repete</th>
                     <th className="px-[12px] py-[8px] font-medium">Abrangência</th>
                     <th className="px-[12px] py-[8px] font-medium">Observação</th>
                     {podeEditar && <th className="w-[96px] px-[12px] py-[8px]" />}
@@ -185,6 +187,9 @@ export function GerenciamentoFeriados() {
                         {formatarData(f.data)}
                       </td>
                       <td className="px-[12px] py-[8px]">{f.nome}</td>
+                      <td className="whitespace-nowrap px-[12px] py-[8px] text-[var(--color-muted-foreground)]">
+                        {f.recorrente ? 'Todo ano' : 'Só nesta data'}
+                      </td>
                       <td className="px-[12px] py-[8px] text-[var(--color-muted-foreground)]">
                         {f.abrangencia_display ??
                           ABRANGENCIAS.find((a) => a.valor === f.abrangencia)?.label ??
@@ -277,6 +282,7 @@ function FeriadoFormDialog({
   const [data, setData] = useState('');
   const [nome, setNome] = useState('');
   const [abrangencia, setAbrangencia] = useState<FeriadoAbrangencia>('municipal');
+  const [recorrente, setRecorrente] = useState(true);
   const [observacao, setObservacao] = useState('');
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState('');
@@ -285,6 +291,10 @@ function FeriadoFormDialog({
     setData(item?.data ?? '');
     setNome(item?.nome ?? '');
     setAbrangencia(item?.abrangencia ?? 'municipal');
+    // Novo cadastro já vem marcado: feriado estadual e municipal é data fixa
+    // anual na esmagadora maioria. Recesso de um ano só é a exceção, e quem o
+    // cadastra desmarca — a coluna "Repete" na tabela deixa o resultado à vista.
+    setRecorrente(item?.recorrente ?? true);
     setObservacao(item?.observacao ?? '');
     setErro('');
   }, [item, open]);
@@ -300,6 +310,7 @@ function FeriadoFormDialog({
       data,
       nome: nome.trim(),
       abrangencia,
+      recorrente,
       observacao: observacao.trim(),
     };
     try {
@@ -359,6 +370,21 @@ function FeriadoFormDialog({
                 </option>
               ))}
             </select>
+          </div>
+
+          <div className="flex items-start justify-between gap-4 rounded-md border border-[var(--color-border)] px-[12px] py-[10px]">
+            <div className="space-y-1">
+              <Label htmlFor="feriado-recorrente">Repete todo ano</Label>
+              <p className="text-xs text-[var(--color-muted-foreground)]">
+                Deixe marcado para feriados de data fixa, como o 3 de outubro. Desmarque
+                para recesso ou ponto facultativo de um ano só.
+              </p>
+            </div>
+            <Switch
+              id="feriado-recorrente"
+              checked={recorrente}
+              onCheckedChange={setRecorrente}
+            />
           </div>
 
           <div className="space-y-2">

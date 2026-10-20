@@ -237,7 +237,10 @@ class CadastroDeFeriadosTests(TestCase):
             'data': '2026-06-29', 'nome': 'Sao Pedro', 'abrangencia': 'municipal'})
 
         self.assertEqual(r.status_code, 403)
-        self.assertFalse(Feriado.objects.exists())
+        # A tabela NAO nasce vazia — a migration 0066 cadastra o feriado do RN.
+        # Conferir o total aqui daria falso negativo; o que importa e que ESTA
+        # data nao entrou.
+        self.assertFalse(Feriado.objects.filter(data=date(2026, 6, 29)).exists())
 
     def test_quem_nao_tem_a_permissao_ainda_consegue_LER(self):
         """A tela mostra a lista a quem so consulta.
@@ -324,3 +327,102 @@ class CadastroDeFeriadosTests(TestCase):
 
         self.assertIn('2026-06-29', datas)
         self.assertNotIn('2026-12-25', datas)
+
+
+class FeriadoRecorrenteTests(TestCase):
+    """Feriado anual de data fixa vale todo ano, sem recadastro.
+
+    POR QUE ISTO EXISTE. Sem a marcacao, cadastrar o 3 de outubro resolveria
+    2026 e so 2026: alguem teria de voltar la em 2027, 2028, e um dia
+    esqueceria. E o mesmo envelhecimento silencioso que a tabela de cache da API
+    externa produziu, so que movido para a mao da equipe — e com o agravante de
+    que o 03/10 cai em sabado em 2026 e domingo em 2027, entao a falta so
+    apareceria em 2028 e ninguem ligaria a causa ao efeito.
+    """
+
+    def _no_ano(self, ano):
+        return feriados_entre(date(ano, 1, 1), date(ano, 12, 31))
+
+    # A data destes testes e NEUTRA de proposito: 10 de agosto nao e feriado
+    # nacional nem e a linha que a migration 0066 semeia (03/10). Usar a do RN
+    # aqui faria o teste colidir com o seed e, pior, passar por causa dele.
+    BASE = date(2026, 8, 10)
+
+    def test_vale_nos_anos_seguintes(self):
+        Feriado.objects.create(
+            data=self.BASE, nome='Aniversario da cidade',
+            abrangencia='municipal', recorrente=True)
+
+        for ano in (2026, 2027, 2028, 2035):
+            self.assertIn(date(ano, 8, 10), self._no_ano(ano),
+                          'recorrente sumiu em %d' % ano)
+
+    def test_NAO_vale_para_tras(self):
+        """Aplicar para tras mudaria cards ja fechados, em silencio."""
+        Feriado.objects.create(
+            data=self.BASE, nome='Aniversario da cidade',
+            abrangencia='municipal', recorrente=True)
+
+        self.assertNotIn(date(2025, 8, 10), self._no_ano(2025))
+        self.assertNotIn(date(2024, 8, 10), self._no_ano(2024))
+
+    def test_nao_recorrente_vale_so_no_ano_cadastrado(self):
+        """Recesso de um ano so nao pode virar feriado perpetuo."""
+        Feriado.objects.create(
+            data=date(2026, 12, 28), nome='Recesso de fim de ano',
+            abrangencia='empresa', recorrente=False)
+
+        self.assertIn(date(2026, 12, 28), self._no_ano(2026))
+        self.assertNotIn(date(2027, 12, 28), self._no_ano(2027))
+
+    def test_29_de_fevereiro_pula_o_ano_sem_o_dia(self):
+        """Nao existe 29/02 em ano comum. Pular e a unica resposta honesta.
+
+        Empurrar para 28/02 ou 01/03 inventaria um feriado em data que ninguem
+        cadastrou — e o calculo de prazo passaria a tirar um dia util que a
+        empresa nunca declarou.
+        """
+        Feriado.objects.create(
+            data=date(2024, 2, 29), nome='Dia inventado', abrangencia='empresa',
+            recorrente=True)
+
+        self.assertIn(date(2024, 2, 29), self._no_ano(2024))
+        self.assertIn(date(2028, 2, 29), self._no_ano(2028), 'proximo bissexto')
+
+        de_2025 = self._no_ano(2025)
+        self.assertNotIn(date(2025, 2, 28), de_2025)
+        self.assertNotIn(date(2025, 3, 1), de_2025)
+
+    def test_recorrente_entra_no_calculo_de_dias_uteis(self):
+        """Fecha o circuito ate o numero que a pessoa ve."""
+        from apps.projects.business_time import calculate_development_time
+        from django.utils import timezone
+        import datetime as dt
+        from zoneinfo import ZoneInfo
+
+        tz = ZoneInfo('America/Sao_Paulo')
+        def dia_inteiro(ano):
+            return calculate_development_time(
+                timezone.make_aware(dt.datetime(ano, 8, 10, 8), tz),
+                timezone.make_aware(dt.datetime(ano, 8, 10, 17), tz))
+
+        # 10/08/2028 e uma QUINTA: dia util ate alguem dizer o contrario.
+        self.assertEqual(dia_inteiro(2028)['dias_uteis_desenvolvimento'], 1)
+
+        Feriado.objects.create(
+            data=self.BASE, nome='Aniversario da cidade',
+            abrangencia='municipal', recorrente=True)
+
+        self.assertEqual(dia_inteiro(2028)['dias_uteis_desenvolvimento'], 0)
+
+    def test_o_feriado_do_RN_veio_pela_migration(self):
+        """A linha que a migration 0066 cadastra chega mesmo ao banco.
+
+        Uma migration de dados que falha em silencio deixaria a lista vazia, e o
+        03/10 voltaria a contar como dia util sem ninguem desconfiar.
+        """
+        f = Feriado.objects.filter(data=date(2026, 10, 3)).first()
+
+        self.assertIsNotNone(f, 'a migration 0066 nao cadastrou o feriado do RN')
+        self.assertTrue(f.recorrente, 'o feriado do RN precisa valer todo ano')
+        self.assertEqual(f.abrangencia, 'estadual')

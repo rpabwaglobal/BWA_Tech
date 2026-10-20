@@ -44,6 +44,8 @@ export type FeriadoCadastrado = {
   nome: string;
   abrangencia: FeriadoAbrangencia;
   abrangencia_display?: string;
+  /** true = vale todo ano nesta data. `data` é a PRIMEIRA ocorrência. */
+  recorrente: boolean;
   observacao?: string;
   criado_em?: string;
 };
@@ -52,6 +54,7 @@ export type FeriadoCadastradoInput = {
   data: string;
   nome: string;
   abrangencia: FeriadoAbrangencia;
+  recorrente: boolean;
   observacao?: string;
 };
 

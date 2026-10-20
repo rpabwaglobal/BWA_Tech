@@ -28,8 +28,15 @@ DUAS METADES, E A DIVISÃO NÃO É ARBITRÁRIA:
   convidar o problema que acabamos de ter: dado que envelhece e ninguém percebe.
 
   CADASTRADO — estaduais do RN, municipais de Natal e recessos da empresa. Não
-  há como calcular: são decisão de alguém. Ficam no modelo `Feriado`, que a
-  equipe mantém pelo admin.
+  há como calcular: são decisão de alguém. Ficam no modelo `Feriado`, mantido
+  pela equipe na tela de Configurações.
+
+  Um cadastrado pode ser RECORRENTE, e isso importa: feriado estadual e
+  municipal costuma ser data fixa anual. Sem a marcação, alguém teria de
+  recadastrar todo ano e um dia esqueceria — o mesmo envelhecimento silencioso
+  que a tabela de cache produziu, só que movido para a mão da equipe. O
+  recorrente vale do ano da `data` EM DIANTE, nunca para trás: aplicar para trás
+  mudaria o tempo de desenvolvimento de cards já fechados.
 
 SOBRE CARNAVAL E CORPUS CHRISTI: juridicamente são PONTO FACULTATIVO, não
 feriado nacional. Entram aqui porque a empresa não trabalha nesses dias, e
@@ -126,10 +133,21 @@ def feriados_entre(inicio: date, fim: date) -> set[date]:
     # importar de volta no topo fecharia o ciclo.
     from .models import Feriado
 
-    dias.update(
-        Feriado.objects.filter(data__gte=inicio, data__lte=fim)
-        .values_list('data', flat=True)
-    )
+    # NÃO DÁ PARA FILTRAR OS RECORRENTES PELO INTERVALO. Um feriado cadastrado
+    # com data de 2026 vale em 2030, e um `filter(data__lte=fim)` o perderia. A
+    # tabela é de dezenas de linhas — lê-se inteira e expande-se em memória.
+    for data_base, recorrente in Feriado.objects.values_list('data', 'recorrente'):
+        if not recorrente:
+            dias.add(data_base)
+            continue
+        for ano in range(max(inicio.year, data_base.year), fim.year + 1):
+            try:
+                dias.add(data_base.replace(year=ano))
+            except ValueError:
+                # 29 de fevereiro em ano não bissexto: aquele ano não tem o dia.
+                # Pular é a única resposta honesta — empurrar para 28 ou 1º
+                # inventaria um feriado em data que ninguém cadastrou.
+                continue
 
     return {d for d in dias if inicio <= d <= fim}
 

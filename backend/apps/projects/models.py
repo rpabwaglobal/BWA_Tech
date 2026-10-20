@@ -688,10 +688,30 @@ class Feriado(models.Model):
 
     `data` é única porque o sistema só pergunta "este dia é útil?". Dois
     registros para o mesmo dia responderiam a mesma coisa duas vezes.
+
+    `recorrente` EXISTE PARA O CADASTRO NÃO ENVELHECER. Sem ele, um feriado
+    anual de data fixa exigiria uma linha nova todo ano, e alguém esqueceria —
+    o mesmo envelhecimento silencioso que a tabela de cache da API externa
+    produziu, só que movido para a mão da equipe. Com ele, `data` passa a ser a
+    PRIMEIRA ocorrência e o feriado vale de lá em diante.
+
+    DE LÁ EM DIANTE, E NÃO PARA TRÁS. Um recorrente cadastrado hoje não
+    reescreve anos anteriores: fazer isso mudaria em silêncio o tempo de
+    desenvolvimento de cards já fechados, que é exatamente o tipo de surpresa
+    que este projeto vem removendo.
     """
 
     data = models.DateField(unique=True, verbose_name='Data')
     nome = models.CharField(max_length=200, verbose_name='Nome')
+    recorrente = models.BooleanField(
+        default=True,
+        verbose_name='Repete todo ano',
+        help_text=(
+            'Marque para feriados de data fixa que valem em todos os anos '
+            '(ex.: 3 de outubro, Mártires de Cunhaú e Uruaçu). Desmarque para '
+            'recesso ou ponto facultativo de um ano só.'
+        ),
+    )
     abrangencia = models.CharField(
         max_length=20,
         choices=FeriadoAbrangencia.choices,
