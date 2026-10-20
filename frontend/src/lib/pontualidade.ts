@@ -51,7 +51,7 @@ export type ResumoPontualidade = {
 /**
  * Agrupa e calcula o percentual no prazo de cada grupo.
  *
- * Grupo sem nenhum item julgável NÃO aparece: uma barra de 0% que na verdade
+ * Grupo sem nenhum item julgável NÃO aparece: um ponto em 0% que na verdade
  * significa "não havia o que medir" leria como fracasso.
  *
  * `semResposta` conta sobre a lista INTEIRA, inclusive itens sem grupo. Se o

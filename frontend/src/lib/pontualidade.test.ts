@@ -98,8 +98,8 @@ describe('o que não dá para julgar', () => {
     expect(semGrupo).toBe(1);
   });
 
-  it('grupo sem nada julgável não vira barra de 0%', () => {
-    // Uma barra zerada leria como fracasso, quando na verdade não havia o que
+  it('grupo sem nada julgável não vira ponto de 0%', () => {
+    // Um ponto zerado leria como fracasso, quando na verdade não havia o que
     // medir. O grupo simplesmente não aparece.
     const { grupos, semResposta } = resumirPontualidade([
       item('x', null),
