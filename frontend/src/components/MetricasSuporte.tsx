@@ -11,8 +11,10 @@ import {
   Tooltip,
   ResponsiveContainer,
 } from 'recharts';
-import { Loader2, Headset, Trophy, Users, Layers, Tag, Target } from 'lucide-react';
+import { Loader2, Headset, Trophy, Users, Layers, Tag, Target, Timer } from 'lucide-react';
 import { add24BusinessHours, businessHoursBetween } from '@/lib/businessHours';
+import { chaveDoMes, resumirPontualidade, rotuloDoMes, type ItemPontualidade } from '@/lib/pontualidade';
+import { GraficoPontualidade } from '@/components/GraficoPontualidade';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -897,6 +899,100 @@ function SlaTicketRow({
 /** Tabela de consistência de SLA (mesmo layout da "Consistência de entrega" dos
  * projetos/cards), por responsável pela solução. Considera apenas tickets
  * resolvidos e classifica dentro/fora do prazo de 24h. */
+/** Quantos meses de histórico o gráfico mostra. Doze cobre o ano inteiro e
+ *  cabe no eixo; mais que isso vira um amontoado de barras finas. */
+const MESES_NO_GRAFICO = 12;
+
+/**
+ * % de chamados resolvidos dentro do SLA, mês a mês.
+ *
+ * NÃO OBEDECE AO FILTRO DE PERÍODO ACIMA, de propósito, e o texto do cartão diz
+ * isso. O filtro recorta UM mês; um gráfico de evolução recortado a um mês vira
+ * uma barra só e não responde a pergunta que ele existe para responder — "está
+ * melhorando ou piorando?".
+ *
+ * O MÊS É O DA RESOLUÇÃO, igual aos cartões de SLA: um chamado aberto em
+ * setembro e resolvido em outubro conta em outubro.
+ */
+function GraficoSlaPorMes({
+  tickets,
+  resolvidoEmMap,
+  erroResolvidoEm,
+  carregandoResolvidoEm,
+}: {
+  tickets: ChamadoSuporte[];
+  resolvidoEmMap: Record<number, string>;
+  erroResolvidoEm: boolean;
+  carregandoResolvidoEm: boolean;
+}) {
+  const resumo = useMemo(() => {
+    const itens: ItemPontualidade[] = [];
+
+    for (const t of tickets) {
+      if (t.status !== 'Resolvido') continue;
+
+      const iso = resolvidoEmMap[t.id];
+      // Sem data de conclusão não há mês NEM veredicto. Entra com os dois em
+      // branco para `resumirPontualidade` contá-lo no aviso, em vez de sumir.
+      if (!iso) {
+        itens.push({ chave: null, rotulo: '—', noPrazo: null });
+        continue;
+      }
+
+      const chave = chaveDoMes(iso);
+      const medida = medirSla(t, resolvidoEmMap);
+      itens.push({
+        chave,
+        rotulo: chave ? rotuloDoMes(chave) : '—',
+        noPrazo: medida ? medida.noPrazo : null,
+      });
+    }
+
+    const todos = resumirPontualidade(itens);
+    // Os mais recentes, mantendo a ordem cronológica das barras.
+    return { ...todos, grupos: todos.grupos.slice(-MESES_NO_GRAFICO) };
+  }, [tickets, resolvidoEmMap]);
+
+  if (carregandoResolvidoEm) {
+    return (
+      <Card>
+        <CardContent className="py-12 text-center text-sm text-[var(--color-muted-foreground)]">
+          Carregando as datas de conclusão...
+        </CardContent>
+      </Card>
+    );
+  }
+
+  if (erroResolvidoEm) {
+    return (
+      <Card>
+        <CardContent className="py-12 text-center text-sm text-[var(--color-muted-foreground)]">
+          Não foi possível carregar as datas de conclusão dos tickets. Este gráfico depende
+          delas para saber em que mês cada chamado entrou e se ele saiu no prazo.
+        </CardContent>
+      </Card>
+    );
+  }
+
+  return (
+    <GraficoPontualidade
+      resumo={resumo}
+      titulo="Chamados no prazo por mês"
+      icone={<Timer className="h-[18px] w-[18px]" />}
+      descricao={
+        <>
+          Percentual de chamados resolvidos dentro das 24 horas úteis, pelo mês da
+          resolução. Mostra os últimos {MESES_NO_GRAFICO} meses e <strong>não segue o
+          filtro de período acima</strong> — ele recorta um mês, e a evolução precisa de
+          vários.
+        </>
+      }
+      rotuloItem={{ singular: 'chamado', plural: 'chamados' }}
+      textoVazio="Nenhum chamado resolvido com data de conclusão registrada."
+    />
+  );
+}
+
 function TabelaSlaSuporte({
   tickets,
   opcoes,
@@ -1588,6 +1684,13 @@ export function MetricasSuporte() {
         erroResolvidoEm={erroResolvidoEm}
         carregandoResolvidoEm={carregandoResolvidoEm}
         onAbrirCard={setDetailChamado}
+      />
+
+      <GraficoSlaPorMes
+        tickets={tickets}
+        resolvidoEmMap={resolvidoEmMap}
+        erroResolvidoEm={erroResolvidoEm}
+        carregandoResolvidoEm={carregandoResolvidoEm}
       />
 
       <GraficoAberturaPorDia tickets={tickets} opcoes={opcoes} />
