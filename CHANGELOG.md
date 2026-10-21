@@ -100,6 +100,87 @@ antes de reverter, e reverta a migração antes do código.
 
 ---
 
+## 2.8.1
+
+Data: 21/10/2026 · migração de banco: **sim** (`projects.0067`)
+
+- **O feriado municipal de Natal entra na lista:** 21 de novembro, Dia de Nossa
+  Senhora da Apresentação, padroeira da cidade. Já estava lá o estadual do RN
+  (3 de outubro, Mártires de Cunhaú e Uruaçu).
+- Os dois são **recorrentes**: valem todo ano, sem recadastro.
+
+### Quando isso muda algum número
+
+**Em 2028.** As duas datas caem em fim de semana em 2026 e 2027 — 03/10 no
+sábado e depois no domingo, 21/11 no sábado e depois no domingo. O primeiro ano
+em que elas tiram um dia útil é 2028, numa terça. É por isso que entram marcadas
+como recorrentes: sem isso, a falta só apareceria daqui a dois anos e ninguém
+ligaria a causa ao efeito.
+
+### De onde vieram as datas
+
+Do projeto aberto feriados.dev, usado como REFERÊNCIA e não como fonte: ele é
+self-hosted, a base dele é inconsistente (o 21/11 aparece no arquivo de 2027 e
+não no de 2026) e não tem nada de 2028. As duas datas foram conferidas fora dele
+antes de entrar. O número da lei municipal que institui o 21/11 não foi
+localizado — o feriado está registrado pelo fato, não pela norma.
+
+---
+
+## 2.8.0
+
+Data: 20/10/2026 · migração de banco: **sim** (`formularios.0013`/`0014`,
+`projects.0064`–`0066`, `accounts.0027`/`0028`)
+
+> **Esta entrada e a 2.7.2 foram escritas depois.** As duas levas foram para
+> produção sem subir a versão nem registrar nada aqui — falha de processo, não
+> do código. O número não identifica o commit delas como deveria; o que está
+> descrito abaixo é o que de fato está no ar desde 20/10.
+
+- **O prazo dos chamados deixou de contar feriado.** Já não contava sábado e
+  domingo desde a 2.7.1; agora um chamado aberto na véspera de um feriado
+  prolongado não nasce mais atrasado. Medido sobre os 300 chamados mais
+  recentes: **2 saíram de "fora do prazo" para "no prazo"** (ambos abertos na
+  sexta 09/10 e entregues na terça 13/10, por causa do feriado de 12/10).
+- **Tela nova: Configurações → Feriados.** Quem tem a permissão nova
+  `manage_feriados` cadastra feriados estaduais, municipais e recessos da
+  empresa. Os feriados nacionais NÃO aparecem lá: são calculados
+  automaticamente, inclusive Carnaval, Sexta-feira Santa e Corpus Christi.
+- **Dois gráficos novos de "% entregue no prazo"**, em Métricas: na aba
+  Projetos & Cards (por sprint ou por mês) e na aba Suporte (por mês). O que não
+  dá para julgar — card sem prazo, chamado sem data de conclusão — fica fora da
+  conta e **aparece escrito** no rodapé do gráfico.
+
+### O que mudou nos números de cards
+
+O cálculo de dias úteis dos cards vinha ignorando Carnaval, Sexta-feira Santa e
+Corpus Christi, porque dependia de um cache que estava vazio. Com a correção,
+**5 dos 1188 cards finalizados mudam de dias úteis**, todos um dia a menos. Os
+valores já gravados não foram reescritos; o comando
+`recalcular_tempo_desenvolvimento_cards` aplica, para quem quiser.
+
+Faltava também o **20 de novembro** (Consciência Negra), feriado nacional desde
+2024 e ausente das listas antigas.
+
+---
+
+## 2.7.2
+
+Data: 19/10/2026 · migração de banco: **sim** (`formularios.0013`/`0014`)
+
+Fecha o item "Em aberto" da 2.7.1 e dois problemas de infraestrutura.
+
+- **O campo "chamados resolvidos" dos relatórios deixou de mostrar zero.**
+  Setembro passa de 0 para **119**, outubro para **85**. A contagem passou a ler
+  a linha do tempo, que é a única fonte que existe neste banco — os chamados
+  vivem no portal externo e a tabela local está vazia.
+- **O banco e o Redis voltam sozinhos** se pararem. Faltava a política de
+  reinício nos dois, e foi a causa da queda de 19/10.
+- **Celery deixou de aparecer como "doente" sem estar.** O worker e o beat
+  herdavam da imagem um teste de saúde que só faz sentido para o backend web.
+
+---
+
 ## 2.7.1
 
 Data: 19/10/2026 · migração de banco: **não**

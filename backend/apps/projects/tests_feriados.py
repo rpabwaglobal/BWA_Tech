@@ -415,6 +415,29 @@ class FeriadoRecorrenteTests(TestCase):
 
         self.assertEqual(dia_inteiro(2028)['dias_uteis_desenvolvimento'], 0)
 
+    def test_os_feriados_de_natal_rn_vieram_pelas_migrations(self):
+        """As duas linhas semeadas chegam ao banco, e valem todo ano.
+
+        Uma migration de dados que falhasse em silencio deixaria a lista vazia e
+        os dias voltariam a contar como uteis sem ninguem desconfiar. Os dois
+        caem em fim de semana em 2026 e 2027, entao a falta so apareceria em
+        2028 — tarde demais para alguem ligar a causa ao efeito.
+        """
+        esperados = {
+            date(2026, 10, 3): ('Martires de Cunhau e Uruacu', 'estadual'),
+            date(2026, 11, 21): ('Nossa Senhora da Apresentacao', 'municipal'),
+        }
+        for dia, (_, abrangencia) in esperados.items():
+            f = Feriado.objects.filter(data=dia).first()
+            self.assertIsNotNone(f, 'nao cadastrado: %s' % dia)
+            self.assertTrue(f.recorrente, '%s precisa valer todo ano' % dia)
+            self.assertEqual(f.abrangencia, abrangencia)
+
+        # 2028 e o primeiro ano em que os dois caem em dia de semana.
+        de_2028 = feriados_entre(date(2028, 1, 1), date(2028, 12, 31))
+        self.assertIn(date(2028, 10, 3), de_2028)
+        self.assertIn(date(2028, 11, 21), de_2028)
+
     def test_o_feriado_do_RN_veio_pela_migration(self):
         """A linha que a migration 0066 cadastra chega mesmo ao banco.
 
