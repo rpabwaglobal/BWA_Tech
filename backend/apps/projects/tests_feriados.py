@@ -415,6 +415,45 @@ class FeriadoRecorrenteTests(TestCase):
 
         self.assertEqual(dia_inteiro(2028)['dias_uteis_desenvolvimento'], 0)
 
+    def test_os_feriados_de_natal_rn_vieram_pelas_migrations(self):
+        """As duas linhas semeadas chegam ao banco, e valem todo ano.
+
+        Uma migration de dados que falhasse em silencio deixaria a lista vazia e
+        os dias voltariam a contar como uteis sem ninguem desconfiar. Os dois
+        caem em fim de semana em 2026 e 2027, entao a falta so apareceria em
+        2028 — tarde demais para alguem ligar a causa ao efeito.
+        """
+        esperados = {
+            date(2026, 1, 6): ('Dia de Santos Reis', 'municipal'),
+            date(2026, 10, 3): ('Martires de Cunhau e Uruacu', 'estadual'),
+            date(2026, 11, 21): ('Nossa Senhora da Apresentacao', 'municipal'),
+        }
+        for dia, (_, abrangencia) in esperados.items():
+            f = Feriado.objects.filter(data=dia).first()
+            self.assertIsNotNone(f, 'nao cadastrado: %s' % dia)
+            self.assertTrue(f.recorrente, '%s precisa valer todo ano' % dia)
+            self.assertEqual(f.abrangencia, abrangencia)
+
+        # Todos valem em 2028, que e quando o 03/10 e o 21/11 finalmente caem
+        # em dia de semana. O 06/01 ja cai em dia de semana desde 2026.
+        de_2028 = feriados_entre(date(2028, 1, 1), date(2028, 12, 31))
+        for dia in (date(2028, 1, 6), date(2028, 10, 3), date(2028, 11, 21)):
+            self.assertIn(dia, de_2028)
+
+    def test_a_fonte_legal_de_cada_feriado_fica_registrada(self):
+        """Sem a norma anotada, a proxima pessoa refaz a busca inteira.
+
+        As tres entraram por migration a partir de fontes diferentes — duas de
+        um decreto municipal, uma de lei estadual. A `observacao` e onde isso
+        fica, e e o que permite auditar a lista sem confiar na memoria de
+        ninguem.
+        """
+        for dia in (date(2026, 1, 6), date(2026, 10, 3), date(2026, 11, 21)):
+            f = Feriado.objects.get(data=dia)
+            self.assertTrue(
+                f.observacao.strip(),
+                'feriado %s cadastrado sem dizer de onde veio' % dia)
+
     def test_o_feriado_do_RN_veio_pela_migration(self):
         """A linha que a migration 0066 cadastra chega mesmo ao banco.
 
@@ -426,3 +465,59 @@ class FeriadoRecorrenteTests(TestCase):
         self.assertIsNotNone(f, 'a migration 0066 nao cadastrou o feriado do RN')
         self.assertTrue(f.recorrente, 'o feriado do RN precisa valer todo ano')
         self.assertEqual(f.abrangencia, 'estadual')
+
+
+class CarnavalContaComoNaoUtilTests(TestCase):
+    """Carnaval nao e feriado por lei — e por decisao da empresa.
+
+    OS DECRETOS DE 2026 O CLASSIFICAM COMO PONTO FACULTATIVO. Tanto o municipal
+    de Natal (13.643/2025) quanto o estadual (35.209/2025) listam a segunda e a
+    terca de Carnaval como ponto facultativo, e NAO como feriado. Mesmo assim o
+    sistema os conta como dias nao uteis, porque a BWA nao trabalha neles —
+    decisao confirmada pelo usuario em 21/10/2026.
+
+    Esta suite existe porque a decisao e invisivel no codigo: quem ler a lei e
+    for "corrigir" o sistema tirando o Carnaval estara certo juridicamente e
+    errado para esta empresa. O teste cai e explica por que.
+
+    QUARTA-FEIRA DE CINZAS FICA DE FORA de proposito: o decreto a trata como
+    ponto facultativo ate as 14h, e o sistema nao modela meio expediente.
+    """
+
+    #: Segunda e terca de Carnaval, conferidas contra a Pascoa de cada ano.
+    CARNAVAIS = {
+        2026: (date(2026, 2, 16), date(2026, 2, 17)),
+        2027: (date(2027, 2, 8), date(2027, 2, 9)),
+        2028: (date(2028, 2, 28), date(2028, 2, 29)),
+    }
+
+    def test_carnaval_nao_e_dia_util(self):
+        for ano, (segunda, terca) in self.CARNAVAIS.items():
+            self.assertFalse(e_dia_util(segunda), 'carnaval %d, segunda' % ano)
+            self.assertFalse(e_dia_util(terca), 'carnaval %d, terca' % ano)
+
+    def test_as_datas_batem_com_a_pascoa(self):
+        """A trava contra uma tabela decorada que envelhece.
+
+        Se alguem mexer no calculo da Pascoa, as datas acima deixam de ser
+        Carnaval — e o teste acima continuaria passando por coincidencia, sobre
+        dias que nao sao mais feriado nenhum.
+        """
+        from datetime import timedelta
+
+        for ano, (segunda, terca) in self.CARNAVAIS.items():
+            domingo = pascoa(ano)
+            self.assertEqual(segunda, domingo - timedelta(days=48), 'ano %d' % ano)
+            self.assertEqual(terca, domingo - timedelta(days=47), 'ano %d' % ano)
+
+    def test_quarta_feira_de_cinzas_NAO_entra(self):
+        """Ponto facultativo ate as 14h; o sistema nao modela meio expediente.
+
+        Conta-la inteira tiraria um dia util que a empresa so perde pela
+        metade.
+        """
+        for ano, (_, terca) in self.CARNAVAIS.items():
+            from datetime import timedelta
+            cinzas = terca + timedelta(days=1)
+            if cinzas.weekday() < 5:
+                self.assertTrue(e_dia_util(cinzas), 'cinzas %d virou feriado' % ano)

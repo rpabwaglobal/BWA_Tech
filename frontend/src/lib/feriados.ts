@@ -85,10 +85,14 @@ const nacionaisPorAno = new Map<number, Set<string>>();
 /**
  * Feriados nacionais do ano, como chaves YYYY-MM-DD.
  *
- * Carnaval e Corpus Christi entram embora sejam juridicamente PONTO
- * FACULTATIVO: a empresa não trabalha neles, e o cálculo dos cards já os
- * contava assim. Tirá-los mudaria o tempo de desenvolvimento de todo card já
- * fechado, sem ninguém ter pedido.
+ * CARNAVAL entra embora seja juridicamente PONTO FACULTATIVO — os decretos de
+ * 2026, municipal e estadual, o classificam assim. Conta como dia não útil por
+ * **decisão da empresa, confirmada em 21/10/2026**: a BWA não trabalha nesses
+ * dias. Era herança não decidida do código antigo dos cards; agora é decisão
+ * registrada, espelhando `apps/projects/feriados.py`.
+ *
+ * Corpus Christi é diferente: o decreto MUNICIPAL de Natal o trata como feriado
+ * municipal de fato, não como decisão interna.
  */
 export function nacionaisDoAno(ano: number): Set<string> {
   const emCache = nacionaisPorAno.get(ano);

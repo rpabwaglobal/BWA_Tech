@@ -38,12 +38,24 @@ DUAS METADES, E A DIVISÃO NÃO É ARBITRÁRIA:
   recorrente vale do ano da `data` EM DIANTE, nunca para trás: aplicar para trás
   mudaria o tempo de desenvolvimento de cards já fechados.
 
-SOBRE CARNAVAL E CORPUS CHRISTI: juridicamente são PONTO FACULTATIVO, não
-feriado nacional. Entram aqui porque a empresa não trabalha nesses dias, e
-porque o frontend já os contava assim — tirá-los agora mudaria o tempo de
-desenvolvimento de todos os cards já fechados, sem ninguém ter pedido. Se algum
-dia a empresa passar a trabalhar num deles, o lugar de resolver é aqui, num
-lugar só, e não em três.
+SOBRE CARNAVAL: juridicamente é PONTO FACULTATIVO, não feriado. Os decretos de
+2026 — o municipal 13.643 e o estadual 35.209 — classificam a segunda e a terça
+assim, e não como feriado. Ele conta aqui como dia NÃO ÚTIL por **decisão da
+empresa, confirmada em 21/10/2026**: a BWA não trabalha no Carnaval.
+
+Isso era uma herança não decidida — o código antigo dos cards já contava assim e
+ninguém tinha perguntado. Agora é decisão registrada, e há teste fixando-a
+(`CarnavalContaComoNaoUtilTests`). Se um dia a empresa passar a trabalhar no
+Carnaval, o lugar de mudar é aqui, num lugar só, e o teste cai junto para avisar.
+
+CORPUS CHRISTI É OUTRO CASO, e vale não confundir: o decreto MUNICIPAL de Natal
+o classifica como feriado municipal, embora o estadual o chame de ponto
+facultativo. Como a empresa fica em Natal, vale o municipal — ele é feriado de
+fato, não decisão interna.
+
+QUARTA-FEIRA DE CINZAS NÃO ENTRA. O decreto a trata como ponto facultativo até
+as 14h, e o sistema não modela meio expediente: ou o dia conta inteiro, ou não
+conta. Contá-la inteira tiraria um dia útil que a empresa só perde pela metade.
 
 LIMITAÇÃO CONHECIDA: a lista cadastrada só ACRESCENTA dias não úteis. Não há
 como marcar um feriado nacional como dia de expediente. Nunca foi preciso; se
