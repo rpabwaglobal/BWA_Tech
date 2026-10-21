@@ -465,3 +465,59 @@ class FeriadoRecorrenteTests(TestCase):
         self.assertIsNotNone(f, 'a migration 0066 nao cadastrou o feriado do RN')
         self.assertTrue(f.recorrente, 'o feriado do RN precisa valer todo ano')
         self.assertEqual(f.abrangencia, 'estadual')
+
+
+class CarnavalContaComoNaoUtilTests(TestCase):
+    """Carnaval nao e feriado por lei — e por decisao da empresa.
+
+    OS DECRETOS DE 2026 O CLASSIFICAM COMO PONTO FACULTATIVO. Tanto o municipal
+    de Natal (13.643/2025) quanto o estadual (35.209/2025) listam a segunda e a
+    terca de Carnaval como ponto facultativo, e NAO como feriado. Mesmo assim o
+    sistema os conta como dias nao uteis, porque a BWA nao trabalha neles —
+    decisao confirmada pelo usuario em 21/10/2026.
+
+    Esta suite existe porque a decisao e invisivel no codigo: quem ler a lei e
+    for "corrigir" o sistema tirando o Carnaval estara certo juridicamente e
+    errado para esta empresa. O teste cai e explica por que.
+
+    QUARTA-FEIRA DE CINZAS FICA DE FORA de proposito: o decreto a trata como
+    ponto facultativo ate as 14h, e o sistema nao modela meio expediente.
+    """
+
+    #: Segunda e terca de Carnaval, conferidas contra a Pascoa de cada ano.
+    CARNAVAIS = {
+        2026: (date(2026, 2, 16), date(2026, 2, 17)),
+        2027: (date(2027, 2, 8), date(2027, 2, 9)),
+        2028: (date(2028, 2, 28), date(2028, 2, 29)),
+    }
+
+    def test_carnaval_nao_e_dia_util(self):
+        for ano, (segunda, terca) in self.CARNAVAIS.items():
+            self.assertFalse(e_dia_util(segunda), 'carnaval %d, segunda' % ano)
+            self.assertFalse(e_dia_util(terca), 'carnaval %d, terca' % ano)
+
+    def test_as_datas_batem_com_a_pascoa(self):
+        """A trava contra uma tabela decorada que envelhece.
+
+        Se alguem mexer no calculo da Pascoa, as datas acima deixam de ser
+        Carnaval — e o teste acima continuaria passando por coincidencia, sobre
+        dias que nao sao mais feriado nenhum.
+        """
+        from datetime import timedelta
+
+        for ano, (segunda, terca) in self.CARNAVAIS.items():
+            domingo = pascoa(ano)
+            self.assertEqual(segunda, domingo - timedelta(days=48), 'ano %d' % ano)
+            self.assertEqual(terca, domingo - timedelta(days=47), 'ano %d' % ano)
+
+    def test_quarta_feira_de_cinzas_NAO_entra(self):
+        """Ponto facultativo ate as 14h; o sistema nao modela meio expediente.
+
+        Conta-la inteira tiraria um dia util que a empresa so perde pela
+        metade.
+        """
+        for ano, (_, terca) in self.CARNAVAIS.items():
+            from datetime import timedelta
+            cinzas = terca + timedelta(days=1)
+            if cinzas.weekday() < 5:
+                self.assertTrue(e_dia_util(cinzas), 'cinzas %d virou feriado' % ano)

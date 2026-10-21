@@ -140,3 +140,40 @@ describe('isFimDeSemana e isDiaUtil', () => {
     expect(isFeriado(dia(2026, 3, 7))).toBe(false);
   });
 });
+
+describe('Carnaval: decisão da empresa, não lei', () => {
+  // Os decretos de 2026 — municipal 13.643 e estadual 35.209 — classificam a
+  // segunda e a terça de Carnaval como PONTO FACULTATIVO, não feriado. O
+  // sistema os conta como não úteis porque a BWA não trabalha neles, decisão
+  // confirmada em 21/10/2026.
+  //
+  // O teste existe porque a decisão é invisível no código: quem ler a lei e for
+  // "corrigir" tirando o Carnaval estará certo juridicamente e errado para esta
+  // empresa. Espelha `CarnavalContaComoNaoUtilTests` no backend.
+  const CARNAVAIS: Record<number, [string, string]> = {
+    2026: ['2026-02-16', '2026-02-17'],
+    2027: ['2027-02-08', '2027-02-09'],
+    2028: ['2028-02-28', '2028-02-29'],
+  };
+
+  it('a segunda e a terça não são dia útil', () => {
+    for (const [ano, [segunda, terca]] of Object.entries(CARNAVAIS)) {
+      const dias = nacionaisDoAno(Number(ano));
+      expect(dias.has(segunda), `carnaval ${ano}, segunda`).toBe(true);
+      expect(dias.has(terca), `carnaval ${ano}, terça`).toBe(true);
+    }
+  });
+
+  it('as datas batem com a Páscoa — não são tabela decorada', () => {
+    // Se alguém mexer no cálculo da Páscoa, as datas acima deixam de ser
+    // Carnaval, e o teste anterior passaria por coincidência sobre dias que já
+    // não são feriado nenhum.
+    for (const [ano, [segunda, terca]] of Object.entries(CARNAVAIS)) {
+      const domingo = pascoa(Number(ano));
+      const menos = (n: number) =>
+        chaveDoDia(new Date(domingo.getFullYear(), domingo.getMonth(), domingo.getDate() - n));
+      expect(menos(48), `ano ${ano}`).toBe(segunda);
+      expect(menos(47), `ano ${ano}`).toBe(terca);
+    }
+  });
+});
