@@ -100,6 +100,43 @@ antes de reverter, e reverta a migração antes do código.
 
 ---
 
+## 2.8.2
+
+Data: 21/10/2026 · migração de banco: **sim** (`projects.0068`)
+
+- **Entra o terceiro feriado municipal de Natal: 6 de janeiro, Dia de Santos
+  Reis.** Diferente dos outros dois, **este já muda número**: cai em dia de
+  semana em 2026 (terça), 2027 (quarta) e 2028 (quinta).
+- Cada feriado cadastrado passa a dizer **de onde veio** (lei ou decreto) no
+  campo de observação.
+
+### A lista ficou completa, e dá para auditar
+
+Conferida contra o **Decreto municipal 13.643, de 30/12/2025** (Anexo Único, o
+calendário oficial de Natal para 2026) e a **Lei Estadual 8.913/2006**:
+
+| Data | Feriado | Nível |
+| --- | --- | --- |
+| 06/01 | Dia de Santos Reis | Municipal |
+| 03/10 | Protomártires de Uruaçu e Cunhaú | Estadual |
+| 21/11 | Nossa Senhora da Apresentação | Municipal |
+
+Os demais do decreto o sistema já produzia sozinho: Paixão de Cristo e Corpus
+Christi aparecem lá como municipais, mas são derivados da Páscoa e são
+calculados; o resto é nacional.
+
+### O que o decreto chama de ponto facultativo NÃO entrou
+
+Carnaval, Quarta-feira de Cinzas, São Pedro (29/06), Dia do Servidor Público
+(28/10) e as vésperas de Natal e Ano Novo são **ponto facultativo da
+prefeitura**, não feriado. **Atenção:** o sistema conta Carnaval (segunda e
+terça) como dia não útil, herdado do cálculo antigo dos cards. Se a BWA
+trabalha nesses dias, isso está errado e precisa de decisão — o lugar de
+registrar um recesso da empresa é a tela de Configurações, com abrangência
+"empresa".
+
+---
+
 ## 2.8.1
 
 Data: 21/10/2026 · migração de banco: **sim** (`projects.0067`)

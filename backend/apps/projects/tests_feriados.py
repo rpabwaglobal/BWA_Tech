@@ -424,6 +424,7 @@ class FeriadoRecorrenteTests(TestCase):
         2028 — tarde demais para alguem ligar a causa ao efeito.
         """
         esperados = {
+            date(2026, 1, 6): ('Dia de Santos Reis', 'municipal'),
             date(2026, 10, 3): ('Martires de Cunhau e Uruacu', 'estadual'),
             date(2026, 11, 21): ('Nossa Senhora da Apresentacao', 'municipal'),
         }
@@ -433,10 +434,25 @@ class FeriadoRecorrenteTests(TestCase):
             self.assertTrue(f.recorrente, '%s precisa valer todo ano' % dia)
             self.assertEqual(f.abrangencia, abrangencia)
 
-        # 2028 e o primeiro ano em que os dois caem em dia de semana.
+        # Todos valem em 2028, que e quando o 03/10 e o 21/11 finalmente caem
+        # em dia de semana. O 06/01 ja cai em dia de semana desde 2026.
         de_2028 = feriados_entre(date(2028, 1, 1), date(2028, 12, 31))
-        self.assertIn(date(2028, 10, 3), de_2028)
-        self.assertIn(date(2028, 11, 21), de_2028)
+        for dia in (date(2028, 1, 6), date(2028, 10, 3), date(2028, 11, 21)):
+            self.assertIn(dia, de_2028)
+
+    def test_a_fonte_legal_de_cada_feriado_fica_registrada(self):
+        """Sem a norma anotada, a proxima pessoa refaz a busca inteira.
+
+        As tres entraram por migration a partir de fontes diferentes — duas de
+        um decreto municipal, uma de lei estadual. A `observacao` e onde isso
+        fica, e e o que permite auditar a lista sem confiar na memoria de
+        ninguem.
+        """
+        for dia in (date(2026, 1, 6), date(2026, 10, 3), date(2026, 11, 21)):
+            f = Feriado.objects.get(data=dia)
+            self.assertTrue(
+                f.observacao.strip(),
+                'feriado %s cadastrado sem dizer de onde veio' % dia)
 
     def test_o_feriado_do_RN_veio_pela_migration(self):
         """A linha que a migration 0066 cadastra chega mesmo ao banco.
